@@ -95,6 +95,17 @@ no sea un `Error` solo deja su tipo.
 Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
 valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
 
+## Conexión a la base de datos
+
+El backend se conecta con un Pool de `pg` y el rol `writer`. El Pool se configura con `max` (conexiones simultáneas),
+`idleTimeoutMillis` (cuánto vive una conexión inactiva) y `connectionTimeoutMillis` (cuánto se espera para obtener una
+conexión). Los valores por defecto son 10, 30000 y 5000 ms y se cambian en el `.env` (`DB_POOL_MAX`,
+`DB_POOL_IDLE_TIMEOUT_MS` y `DB_POOL_CONNECTION_TIMEOUT_MS`). Si una conexión inactiva falla (por ejemplo, el servidor
+la cierra), el error se registra en el log y NO tumba el proceso. Los fallos de conexión (servidor caído, plazo
+agotado, credenciales rechazadas, sesión terminada o Pool cerrado) se convierten en un error de mensaje fijo, «Base de
+datos no disponible.», que no revela host, URL ni texto del driver; los errores de SQL de una consulta (por ejemplo,
+una restricción violada) llegan sin cambios. El cierre del Pool espera a que terminen las consultas en curso.
+
 ## Instalación
 
 Pendiente: se documenta cuando existan los proyectos.
