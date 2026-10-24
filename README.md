@@ -27,10 +27,16 @@ Las versiones se fijan al crear cada proyecto.
 
 ## Estructura del repositorio
 
-- `backend/`: API con Express y TypeScript, y esquema y migraciones con Prisma (próximamente).
+- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y, en los siguientes PR, el servicio HTTP con Express.
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
-- `queries.sql`: consultas SQL de la prueba (próximamente).
+- `backend/queries.sql`: consultas SQL de la prueba (próximamente).
+
+## Backend (estado actual)
+
+Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR (servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
+
+Comandos disponibles (dentro de `backend/`): `npm run lint`, `npm run format`, `npm run typecheck`, `npm test`, `npm run build`.
 
 ## Instalación
 
