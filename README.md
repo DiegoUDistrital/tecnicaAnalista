@@ -82,6 +82,19 @@ La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con test
    `docker compose -f docker-compose.dev.yml logs postgres`: no debe volver a ejecutarse el script de inicio
    (aparece el aviso de que el directorio ya contiene una base de datos).
 
+## Logs
+
+El backend escribe los logs como una línea JSON por registro (`level`, `event`, `time` y, si procede, campos de
+contexto). Solo se escriben campos de una lista permitida y de valor simple (`host`, `port`, `signal`, `exitCode` y
+`timeoutMs`): nunca contraseñas, URL de conexión, API key, cuerpos de petición ni datos de usuario. De un error se
+registra la clase, el SQLSTATE (o el código de sistema, como `EPIPE`) y una traza construida solo con marcos de pila,
+sin el texto del mensaje. El mensaje solo se registra en los errores propios del proyecto y en los de base de datos
+fuera de la clase 22 (datos inválidos), cuyo mensaje puede contener el valor enviado por el usuario. Lo que se lance y
+no sea un `Error` solo deja su tipo.
+
+Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
+valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
+
 ## Instalación
 
 Pendiente: se documenta cuando existan los proyectos.
