@@ -29,6 +29,7 @@ Las versiones se fijan al crear cada proyecto.
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y, en los siguientes PR, el servicio HTTP con Express.
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
+- `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
 - `backend/queries.sql`: consultas SQL de la prueba (próximamente).
 
@@ -37,6 +38,49 @@ Las versiones se fijan al crear cada proyecto.
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR (servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
 
 Comandos disponibles (dentro de `backend/`): `npm run lint`, `npm run format`, `npm run typecheck`, `npm test`, `npm run build`.
+
+## Base de datos de desarrollo
+
+PostgreSQL 16 se levanta con Docker (`docker-compose.dev.yml`, solo para desarrollo y pruebas; el despliegue se
+documenta más adelante). Hace falta Docker Desktop en marcha.
+
+```powershell
+Copy-Item .env.example .env
+docker compose -f docker-compose.dev.yml up -d --wait
+```
+
+- La primera vez, con el volumen vacío, el script `docker/postgres/init/01-roles-and-databases.sh` crea los roles
+  `owner`, `writer` y `reader` (sin pertenencias entre ellos y sin privilegios especiales) y las bases de desarrollo
+  y de pruebas (UTF8, propietario `owner`). Los permisos concretos de cada rol se aplican en un paso posterior.
+- **Reinicio de volumen.** El script de roles solo se ejecuta la primera vez, con el volumen vacío. Para empezar de
+  cero: `docker compose -f docker-compose.dev.yml down -v` (borra los datos).
+- **Contraseñas.** Solo se admiten los caracteres `[A-Za-z0-9._~-]`: otros (`@ : / ' %` y espacios) rompen las URL de
+  conexión o el SQL de creación de roles, y el script de inicio se detiene nombrando la variable (nunca su valor).
+  Para generar una aleatoria: `node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"`.
+  `change-me` es solo un valor de ejemplo. La contraseña de cada rol debe coincidir en su variable `*_PASSWORD` y en
+  sus URL de conexión.
+- **Solo en tu máquina.** PostgreSQL escucha únicamente en `127.0.0.1` (puerto `DB_LOCAL_PORT`, por defecto 5433):
+  no es accesible desde la red.
+- **Tests de base de datos.** Necesitan el contenedor arriba y el `.env` presente; si falta algo, fallan con un
+  mensaje claro (nunca se omiten en silencio). Una guarda aborta si la base de pruebas no es local o no termina en
+  `_test`, para no tocar nunca la base de desarrollo.
+
+### Lista de comprobación manual
+
+La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con tests automáticos.
+
+1. **`.env` ausente.** Crear un archivo vacío (`New-Item $env:TEMP\vacio.env -Force`) y ejecutar
+   `docker compose --env-file $env:TEMP\vacio.env -f docker-compose.dev.yml config --quiet`. Debe fallar nombrando
+   una variable obligatoria que falta. Si hay variables de PostgreSQL definidas en la sesión la comprobación queda
+   falseada: mirar solo los NOMBRES con
+   `Get-ChildItem Env: | Where-Object Name -match 'POSTGRES|OWNER|WRITER|READER|DB_' | Select-Object Name`.
+   No usar `config` sin `--quiet` con el `.env` real: imprimiría las contraseñas.
+2. **Volumen vacío.** `docker compose -f docker-compose.dev.yml down -v`, luego `up -d --wait`, luego
+   `docker compose -f docker-compose.dev.yml exec postgres psql -U postgres -c "select rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls from pg_roles where rolname in ('owner','writer','reader')"`
+   y `\l` (propietario y codificación de las dos bases). Usar el valor real de `POSTGRES_USER` si no es `postgres`.
+3. **Reinicio con volumen existente.** `docker compose -f docker-compose.dev.yml down` (SIN `-v`), `up -d --wait` y
+   `docker compose -f docker-compose.dev.yml logs postgres`: no debe volver a ejecutarse el script de inicio
+   (aparece el aviso de que el directorio ya contiene una base de datos).
 
 ## Instalación
 

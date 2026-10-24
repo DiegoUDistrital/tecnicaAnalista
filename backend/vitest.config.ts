@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     // Los tests de BD comparten estado: se ejecutan de uno en uno.
     fileParallelism: false,
+    // Carga el .env de la raíz antes de cada archivo de test.
+    setupFiles: ['tests/helpers/load-env.ts'],
     testTimeout: 15000,
     hookTimeout: 60000,
     coverage: {

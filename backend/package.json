@@ -16,6 +16,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
     "@vitest/coverage-v8": "5.0.5",
     "eslint": "10.13.0",
     "eslint-config-prettier": "10.1.8",
@@ -23,6 +24,10 @@
     "prisma": "7.10.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.0",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "yaml": "2.9.1"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
   }
 }
