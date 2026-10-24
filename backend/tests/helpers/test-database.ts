@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { assertSafeTestDatabase } from './database-guard';
 
@@ -52,6 +54,44 @@ export async function resetSchema(): Promise<void> {
   } finally {
     await owner.end();
   }
+}
+
+export interface PrismaResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Lanza el CLI de Prisma contra la base de pruebas con un proceso hijo, sin shell.
+ * La URL de owner viaja solo en el entorno del hijo (OWNER_DATABASE_URL), nunca por argumento.
+ */
+export function runPrisma(args: string[]): PrismaResult {
+  getTestDatabase(); // aplica la guarda antes de lanzar nada
+  const ownerUrl = requireEnv('TEST_OWNER_DATABASE_URL');
+  const cli = require.resolve('prisma/build/index.js');
+  const result = spawnSync(process.execPath, [cli, ...args], {
+    cwd: resolve(__dirname, '..', '..'),
+    env: { ...process.env, OWNER_DATABASE_URL: ownerUrl },
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * PROVISIONAL hasta T8: aplica las migraciones con `prisma migrate deploy`.
+ * T8 lo sustituye por el comando único (migrar y aplicar permisos) y este código desaparece.
+ */
+export function applySchema(): Promise<void> {
+  const result = runPrisma(['migrate', 'deploy']);
+  if (result.status !== 0) {
+    // La salida puede nombrar el host; se oculta la URL por si apareciera completa.
+    const ownerUrl = requireEnv('TEST_OWNER_DATABASE_URL');
+    const detail = `${result.stdout}\n${result.stderr}`.split(ownerUrl).join('<url>');
+    return Promise.reject(new Error(`prisma migrate deploy falló (código ${String(result.status)}):\n${detail}`));
+  }
+  return Promise.resolve();
 }
 
 /** Vacía la tabla tasks entre pruebas; no hace nada mientras la tabla no exista. */

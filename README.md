@@ -106,6 +106,26 @@ agotado, credenciales rechazadas, sesión terminada o Pool cerrado) se convierte
 datos no disponible.», que no revela host, URL ni texto del driver; los errores de SQL de una consulta (por ejemplo,
 una restricción violada) llegan sin cambios. El cierre del Pool espera a que terminen las consultas en curso.
 
+## Esquema y migraciones
+
+La tabla `tasks` se define en `backend/prisma/schema.prisma` y se crea con la migración
+`backend/prisma/migrations/<fecha>_create_tasks/migration.sql`. Esa migración NO se generó con `prisma migrate dev`: se
+escribió a mano sobre la salida de `prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script` y se
+completó con lo que Prisma no modela (las restricciones `CHECK` y los comentarios del catálogo). El motivo es el mínimo
+privilegio: `migrate dev` necesita una base «sombra» temporal, y para crearla el rol `owner` tendría que poder crear
+bases de datos, algo que no se le concede.
+
+Restricciones en la base (defensa en profundidad; la API ya valida): título de 1 a 100 caracteres y no formado solo por
+espacios (`tasks_title_length`, `tasks_title_not_blank`) y descripción de hasta 500 (`tasks_description_length`).
+
+Nota sobre emojis: la base cuenta caracteres como puntos de código Unicode. Un emoji simple cuenta como 1, pero uno
+compuesto (con modificadores o uniones) puede contar como varios.
+
+Detección de deriva (que la base migrada y `schema.prisma` no se desvíen), con la URL de `owner` en la variable de
+entorno `OWNER_DATABASE_URL`: `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`
+(código 0 = sin diferencias, 2 = hay deriva). Los tests lo ejecutan contra la base de pruebas ya migrada y comprueban
+con una columna añadida a mano que la deriva se detecta.
+
 ## Instalación
 
 Pendiente: se documenta cuando existan los proyectos.
@@ -124,10 +144,11 @@ Pendiente: se documenta cuando existan los proyectos.
 
 Pendiente de implementar:
 
-- Migración documentada del esquema de la tabla `tasks`.
 - `queries.sql` con dos consultas escritas a mano: filtro por `completed` y conteo agrupado por estado.
-- Índice sobre `completed`. Justificación honesta: con pocas filas aporta poco beneficio; se justifica por el patrón
-  de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado de la tabla.
+
+Ya implementado: migración documentada de la tabla `tasks` (ver «Esquema y migraciones») e índice sobre `completed`
+(`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio; se justifica por el
+patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado de la tabla.
 
 ## Despliegue en Ubuntu
 
