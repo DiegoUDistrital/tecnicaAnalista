@@ -126,6 +126,33 @@ entorno `OWNER_DATABASE_URL`: `prisma migrate diff --from-config-datasource --to
 (código 0 = sin diferencias, 2 = hay deriva). Los tests lo ejecutan contra la base de pruebas ya migrada y comprueban
 con una columna añadida a mano que la deriva se detecta.
 
+La vista `task_counts` (conteo de tareas por estado) se crea con una segunda migración,
+`backend/prisma/migrations/<fecha>_create_task_counts_view/migration.sql`, también escrita a mano. No se modela en
+`schema.prisma` (en Prisma las vistas siguen siendo una función en preview) y, aun así, la detección de deriva no
+muestra diferencias. La vista se ejecuta con los privilegios de su propietario (`owner`), sin `security_invoker`: así el
+rol `reader` podrá leer los conteos sin acceso a la tabla `tasks`. Devuelve `completed` y `total` (entero de 32 bits) y
+solo tiene fila para los estados que tienen tareas.
+
+## Consultas SQL (`backend/queries.sql`)
+
+El archivo contiene las dos consultas pedidas por la prueba:
+
+1. Tareas filtradas por estado (`completed`), de la más reciente a la más antigua (desempate por `id`).
+2. Cantidad de tareas por estado.
+
+La consulta 2 no lleva parámetros: se pega tal cual en `psql`. La consulta 1 usa el parámetro `$1` (el mismo patrón
+parametrizado que utiliza la API, nunca se concatena el valor), por lo que `psql -f backend/queries.sql` no puede
+ejecutarla tal cual. Para probarla, abra `psql` dentro del contenedor y use `\bind` (disponible desde `psql` 16, que es
+la versión de la imagen):
+
+```
+docker compose -f docker-compose.dev.yml exec postgres psql -U owner -d todo_app
+todo_app=> SELECT id, title, description, completed, "createdAt" FROM tasks WHERE completed = $1 ORDER BY "createdAt" DESC, id ASC \bind true \g
+```
+
+Cambie `true` por `false` para ver las pendientes. Dentro del contenedor, `psql` entra por el socket local sin pedir
+contraseña. La base de desarrollo debe estar migrada antes de probarlas.
+
 ## Instalación
 
 Pendiente: se documenta cuando existan los proyectos.

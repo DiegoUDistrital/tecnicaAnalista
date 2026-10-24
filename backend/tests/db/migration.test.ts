@@ -69,6 +69,24 @@ describe('RF-D6: migración de la tabla tasks', () => {
     }
   });
 
+  it('RF-D6: la segunda migración crea la vista task_counts y la deriva sigue en 0 sin modelarla', async () => {
+    const owner = await getTestDatabase().ownerClient();
+    try {
+      const migrations = await owner.query<{ migration_name: string }>(
+        'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name',
+      );
+      expect(migrations.rows.map((row) => row.migration_name.replace(/^\d+_/, ''))).toEqual([
+        'create_tasks',
+        'create_task_counts_view',
+      ]);
+      const view = await owner.query(`SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'task_counts'`);
+      expect(view.rowCount).toBe(1);
+    } finally {
+      await owner.end();
+    }
+    expect(runPrisma(DRIFT_ARGS).status).toBe(0);
+  });
+
   it('RF-D6: ningún comentario de los objetos contiene la palabra PASSWORD', async () => {
     const owner = await getTestDatabase().ownerClient();
     try {
