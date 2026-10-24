@@ -1,0 +1,31 @@
+# --- Documentos de trabajo SDD (no se suben) ---
+/CLAUDE.md
+/MEMORY.md
+/docs/
+/specs/
+/.claude/
+/Prueba*.pdf
+
+# --- Dependencias y artefactos de compilación ---
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# --- Secretos y entorno (se sube solo .env.example) ---
+.env
+.env.*
+!.env.example
+
+# --- Logs y sistema ---
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# --- Editor ---
+.vscode/
+.idea/
