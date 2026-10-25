@@ -2,7 +2,10 @@ import type { Client } from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createCaptureLogger } from '../helpers/capture-logger';
-import { createClosedPortDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
+import { guard } from '../../src/http/guard';
+import { FRAME_PATTERN } from '../../src/logging/error-fields';
+import { createTaskRepository } from '../../src/repositories/task-repository';
+import { createClosedPortDatabase, createWriterDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
 import { getTestDatabase } from '../helpers/test-database';
 import {
   dropResidualChecks,
@@ -14,12 +17,32 @@ import {
 const SECRET_TITLE = 'titulo secreto prohibido';
 const GENERIC_500 = { error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] } };
 
+// Id que no es UUID: PostgreSQL lo rechaza con SQLSTATE 22P02 y su message reproduce el valor.
+const HOSTILE_ID = 'not-a-uuid-SECRETO-ZZZ';
+
 const capture = createCaptureLogger();
 let api: ApiApp;
 let owner: Client;
 
 beforeAll(async () => {
-  api = await startApiApp({ capture });
+  // Rutas de prueba: llaman al repositorio real con el id hostil; el error real de PostgreSQL pasa por guard y por
+  // el manejador central, como pasaría en un endpoint.
+  const database = createWriterDatabase(capture.logger);
+  const repository = createTaskRepository(database);
+  api = await startApiApp({
+    capture,
+    database,
+    registerRoutes: (app) => {
+      app.post(
+        '/test/hostile-update',
+        guard(async () => void (await repository.update(HOSTILE_ID, { completed: true }))),
+      );
+      app.post(
+        '/test/hostile-remove',
+        guard(async () => void (await repository.remove(HOSTILE_ID))),
+      );
+    },
+  });
   owner = await getTestDatabase().ownerClient();
   await dropResidualChecks(owner);
 });
@@ -82,6 +105,32 @@ describe('RF-C2 (ii): violación real de restricción', () => {
     );
     expect(await listTemporaryChecks(owner)).toEqual([]);
   });
+});
+
+describe('RF-C2 (iii): identificador hostil que llega a PostgreSQL', () => {
+  it.each(['update', 'remove'])(
+    'RF-C2 (iii): %s con id hostil da 500 genérico; log con clase, 22P02 y traza de marcos, sin message ni valor',
+    async (operation) => {
+      const res = await request(api.app).post(`/test/hostile-${operation}`);
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual(GENERIC_500);
+      const records = capture.records();
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        level: 'error',
+        event: 'request_error',
+        errorClass: 'DatabaseError',
+        sqlstate: '22P02',
+      });
+      const stack = String(records[0]?.['stack']);
+      expect(stack.split('\n').every((line) => FRAME_PATTERN.test(line))).toBe(true);
+      for (const forbidden of [HOSTILE_ID, 'SECRETO', 'invalid input syntax']) {
+        expect(capture.output()).not.toContain(forbidden);
+        expect(res.text).not.toContain(forbidden);
+      }
+    },
+  );
 });
 
 describe('RF-C2 (i): base de datos inalcanzable en escritura', () => {

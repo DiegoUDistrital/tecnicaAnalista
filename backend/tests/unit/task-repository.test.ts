@@ -15,16 +15,21 @@ const ROW = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
-function spyDatabase(): { database: Pick<Database, 'query'>; calls: Call[] } {
+function spyDatabase(result: { rows: unknown[]; rowCount: number | null } = { rows: [ROW], rowCount: 1 }): {
+  database: Pick<Database, 'query'>;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   const database: Pick<Database, 'query'> = {
     query: (text: string, values?: unknown[]) => {
       calls.push({ text, values });
-      return Promise.resolve({ rows: [ROW], rowCount: 1, command: '', oid: 0, fields: [] }) as never;
+      return Promise.resolve({ ...result, command: '', oid: 0, fields: [] }) as never;
     },
   };
   return { database, calls };
 }
+
+const ID = '3f2b8c1e-0000-4000-8000-0000000000aa';
 
 describe('Repositorio de tareas (SQL enviado)', () => {
   it('RF-C21: insert envía el SQL con $1 y $2 y los valores solo en el arreglo de parámetros', async () => {
@@ -85,5 +90,102 @@ describe('Repositorio de tareas (SQL enviado)', () => {
   it('RF-C20: insert devuelve la fila que entrega la base de datos', async () => {
     const { database } = spyDatabase();
     expect(await createTaskRepository(database).insert({ title: 't', description: '' })).toEqual(ROW);
+  });
+});
+
+describe('Repositorio de tareas: update y remove (SQL enviado)', () => {
+  it('RF-C15: update solo pone en SET las claves presentes (en orden fijo) y el id va el último', async () => {
+    const { database, calls } = spyDatabase();
+    const repository = createTaskRepository(database);
+    // Las claves se dan en desorden a propósito: el orden del SQL no depende del orden del objeto.
+    await repository.update(ID, { completed: true, title: 'nuevo' });
+    await repository.update(ID, { description: 'd' });
+    await repository.update(ID, { completed: false, description: 'd', title: 't' });
+    expect(
+      calls.map((call) =>
+        call.text
+          .replace(/\s+/g, ' ')
+          .match(/SET (.*?) WHERE (.*?) RETURNING/)
+          ?.slice(1),
+      ),
+    ).toEqual([
+      ['title = $1, completed = $2', 'id = $3'],
+      ['description = $1', 'id = $2'],
+      ['title = $1, description = $2, completed = $3', 'id = $4'],
+    ]);
+    expect(calls.map((call) => call.values)).toEqual([
+      ['nuevo', true, ID],
+      ['d', ID],
+      ['t', 'd', false, ID],
+    ]);
+  });
+
+  it('RF-C15: update no reescribe los ausentes: el SQL no contiene COALESCE ni columnas no enviadas', async () => {
+    const { database, calls } = spyDatabase();
+    await createTaskRepository(database).update(ID, { completed: true });
+    const set = (calls[0]?.text.match(/SET (.*?) WHERE/s)?.[1] ?? '').trim();
+    expect(set).toBe('completed = $1');
+    expect(calls[0]?.text).not.toMatch(/COALESCE/i);
+    expect(calls[0]?.text).not.toMatch(/SET[^]*\b(title|description)\b[^]*WHERE/);
+  });
+
+  it('RF-C21: update y remove envían valores e id solo como parámetros (el SQL no contiene título ni id)', async () => {
+    const { database, calls } = spyDatabase();
+    const repository = createTaskRepository(database);
+    await repository.update(ID, { title: 'secret-title-sentinel', description: 'secret-desc-sentinel' });
+    await repository.remove(ID);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.text).not.toContain('secret-title-sentinel');
+      expect(call.text).not.toContain('secret-desc-sentinel');
+      expect(call.text).not.toContain(ID);
+      expect(call.values).toContain(ID);
+    }
+    expect(calls[1]?.text.trim()).toBe('DELETE FROM tasks WHERE id = $1');
+    expect(calls[1]?.values).toEqual([ID]);
+  });
+
+  it('RF-C17: update emite una sola sentencia y sin SELECT; devuelve la fila, o undefined si no hay fila', async () => {
+    const found = spyDatabase();
+    expect(await createTaskRepository(found.database).update(ID, { completed: true })).toEqual(ROW);
+    expect(found.calls).toHaveLength(1);
+    expect(found.calls[0]?.text).not.toMatch(/SELECT/i);
+    expect(found.calls[0]?.text).toMatch(/^\s*UPDATE tasks SET /);
+
+    const missing = spyDatabase({ rows: [], rowCount: 0 });
+    expect(await createTaskRepository(missing.database).update(ID, { completed: true })).toBeUndefined();
+    expect(missing.calls).toHaveLength(1);
+  });
+
+  it.each([
+    [1, true],
+    [0, false],
+    [null, false],
+  ])(
+    'RF-C19: remove emite una sola sentencia y sin SELECT; con rowCount %s devuelve %s',
+    async (rowCount, expected) => {
+      const { database, calls } = spyDatabase({ rows: [], rowCount });
+      expect(await createTaskRepository(database).remove(ID)).toBe(expected);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.text).not.toMatch(/SELECT/i);
+    },
+  );
+
+  it(`RF-C20: update pide createdAt con date_trunc('milliseconds') y AT TIME ZONE 'UTC' como insert/list`, async () => {
+    const { database, calls } = spyDatabase();
+    const repository = createTaskRepository(database);
+    await repository.insert({ title: 't', description: '' });
+    await repository.update(ID, { title: 't' });
+    const [insertCall, updateCall] = calls;
+    expect(updateCall?.text).toContain(`date_trunc('milliseconds'`);
+    expect(updateCall?.text).toContain(`AT TIME ZONE 'UTC'`);
+    const returning = (text: string | undefined): string => (text ?? '').split('RETURNING')[1] ?? '';
+    expect(returning(updateCall?.text)).toBe(returning(insertCall?.text));
+  });
+
+  it('RF-C15: update con un objeto vacío lanza TypeError sin consultar', async () => {
+    const { database, calls } = spyDatabase();
+    await expect(createTaskRepository(database).update(ID, {})).rejects.toThrow(TypeError);
+    expect(calls).toHaveLength(0);
   });
 });

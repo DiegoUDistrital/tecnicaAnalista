@@ -222,6 +222,16 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 - Hay dos consultas de lista (con y sin filtro `completed`) en lugar de una con condición opcional, para que
   PostgreSQL pueda usar el índice sobre `completed`.
 - La lista no tiene paginación: devuelve todas las tareas.
+- Actualizar y borrar una tarea son UNA sola sentencia SQL cada una, sin consulta previa. La existencia se decide por las
+  filas afectadas: un `DELETE` que borra una fila es un éxito y uno que no encuentra nada es «no existe». Por eso dos
+  borrados simultáneos de la misma tarea dan un éxito y un «no existe», y una actualización concurrente con un borrado
+  da «actualizada» o «no existe», pero nunca un error del servidor (con un `SELECT` previo habría una carrera entre
+  la lectura y la escritura).
+- El `UPDATE` solo escribe las columnas enviadas y no reescribe las demás, así que dos actualizaciones simultáneas de
+  campos distintos (por ejemplo, título desde una pestaña y estado desde otra) conservan ambos cambios. Los nombres de
+  columna salen de una lista fija del código, nunca del cliente; los valores y el identificador viajan solo como
+  parámetros. La fila devuelta lleva las mismas cinco columnas y el mismo formato de `createdAt` que la lectura.
+- Todavía no hay endpoints PUT/DELETE; es la capa de datos que usarán.
 
 ## API de tareas
 
