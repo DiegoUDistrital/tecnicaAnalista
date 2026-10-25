@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --coverage",
+    "start": "npm run build && node --env-file=../.env dist/index.js",
     "db:deploy": "npm run build && node --env-file=../.env dist/db/migrate-cli.js"
   },
   "devDependencies": {

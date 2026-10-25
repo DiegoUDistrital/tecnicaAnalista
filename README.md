@@ -36,7 +36,7 @@ Las versiones se fijan al crear cada proyecto.
 ## Backend (estado actual)
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
-del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; todavía no hay un comando que arranque el servicio.
+del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -45,6 +45,7 @@ Comandos disponibles (dentro de `backend/`):
 - `npm run typecheck`: comprobación de tipos con `tsc` sin generar archivos.
 - `npm test`: tests con Vitest y cobertura (falla por debajo del 95 %).
 - `npm run build`: compila a `backend/dist`.
+- `npm start`: compila y arranca el servicio con el `.env` de la raíz (ver «Cómo ejecutar»).
 - `npm run db:deploy`: aplica las migraciones y los permisos (ver «Migrar y aplicar permisos»).
 
 ## Base de datos de desarrollo
@@ -296,8 +297,8 @@ segunda señal durante el aborto, o tras un fallo de arranque, termina de inmedi
 Límite conocido: una base de datos caída y una señal casi simultánea terminan con código 0, porque ese fallo es
 indistinguible del que provoca el cierre del Pool. Con la base de datos caída y sin señal, el código es 1.
 
-Todavía no hay un comando que lance el servicio (llega en una tarea posterior): esta parte del arranque se comprueba
-con los tests.
+El punto de entrada (`backend/src/index.ts`) solo conecta la función de arranque con el proceso: aplica su código de
+salida con `process.exit`. El comando es `npm start` (ver «Cómo ejecutar»).
 
 ## Cierre ordenado
 
@@ -346,9 +347,25 @@ El frontend se documentará cuando exista.
 
 ## Cómo ejecutar
 
-Todavía no hay servicio HTTP que arrancar (Express se añade en un PR posterior). Hoy se puede preparar la base de
-datos con `npm run db:deploy` (dentro de `backend/`) y comprobar el proyecto con los comandos de «Pruebas». La
-ejecución de la aplicación completa se documentará cuando existan el servicio y el frontend.
+Con el contenedor de PostgreSQL arriba y el `.env` creado (ver «Base de datos de desarrollo»), dentro de `backend/`:
+
+```
+npm start
+```
+
+`npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
+código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; se
+detiene con Ctrl+C (cierre ordenado, código 0).
+
+`/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
+healthcheck de contenedor debe usar GET (HEAD no está permitido).
+
+Aviso de seguridad: por ahora el servicio solo responde `/health`, escucha solo en loopback y NO tiene seguridad (ni
+API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe
+exponerse a ninguna red hasta entonces.
+
+La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
+cuando exista el frontend.
 
 ## Pruebas
 
@@ -356,6 +373,9 @@ ejecución de la aplicación completa se documentará cuando existan el servicio
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
   Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+  Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
+  Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
+  a mano en Linux.
 - Frontend: se documentará cuando exista.
 
 ## Base de datos
