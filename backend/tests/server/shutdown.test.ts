@@ -285,7 +285,8 @@ describe('RF-S4: cierre ordenado con servidor falso', () => {
     const exit = vi.spyOn(process, 'exit');
     const realBefore = PROCESS_EVENTS.map((name) => process.listenerCount(name));
     const { harness, result } = await startFake();
-    expect(harness.fakeProcess.listenerTotal()).toBe(2);
+    // Dos señales y, desde la T7, los manejadores de excepciones y rechazos.
+    expect(harness.fakeProcess.listenerTotal()).toBe(4);
 
     harness.fakeProcess.signal('SIGINT');
     await result;

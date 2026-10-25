@@ -109,17 +109,20 @@ export interface FakeServer {
   readonly listenCalls: { port: unknown; host: unknown }[];
   /** Cuántas veces se llamó a `closeAllConnections`. */
   closeAllCalls(): number;
+  /** Con `close: 'manual'`, termina el cierre pendiente del servidor (llama al callback de `close`). */
+  releaseClose(): void;
 }
 
 /** Servidor falso: `listen` responde con `listening`, con `error` o no responde (el test emite a mano). */
 export function createFakeServer(
   behavior: ListenBehavior,
   calls: string[] = [],
-  close: 'resolve' | 'hang' = 'resolve',
+  close: 'resolve' | 'hang' | 'manual' = 'resolve',
 ): FakeServer {
   const emitter = new EventEmitter();
   const listenCalls: { port: unknown; host: unknown }[] = [];
   let closeAllCalls = 0;
+  let pendingClose: (() => void) | undefined;
   const server = Object.assign(emitter, {
     listen(port: unknown, host: unknown) {
       calls.push('listen');
@@ -135,6 +138,8 @@ export function createFakeServer(
       calls.push('server_close');
       if (close === 'resolve') {
         queueMicrotask(() => callback?.());
+      } else if (close === 'manual') {
+        pendingClose = callback;
       }
       return server;
     },
@@ -142,7 +147,13 @@ export function createFakeServer(
       closeAllCalls += 1;
     },
   });
-  return { server: server as unknown as ServerLike, emitter, listenCalls, closeAllCalls: () => closeAllCalls };
+  return {
+    server: server as unknown as ServerLike,
+    emitter,
+    listenCalls,
+    closeAllCalls: () => closeAllCalls,
+    releaseClose: () => pendingClose?.(),
+  };
 }
 
 export interface FakeDatabaseOptions {
@@ -150,8 +161,8 @@ export interface FakeDatabaseOptions {
   queryError?: Error;
   /** Con `'pending'`, `query` no termina hasta que el test llama a `pendingQuery.resolve()` o `.reject()`. */
   query?: 'pending';
-  /** Comportamiento de `close`: termina, rechaza o no termina nunca. */
-  close?: 'resolve' | 'reject' | 'hang';
+  /** Comportamiento de `close`: termina, rechaza, no termina nunca o lo decide el test (`closeControl`). */
+  close?: 'resolve' | 'reject' | 'hang' | 'manual';
   /** Registro compartido del orden de las llamadas. */
   calls?: string[];
 }
@@ -162,6 +173,8 @@ export interface FakeDatabase {
   /** Control de la consulta en modo `'pending'` (si no, se resuelve sola). */
   readonly pendingQuery: Deferred;
   closeCalls(): number;
+  /** Control de `close` en modo `'manual'`: el test lo resuelve o lo rechaza cuando quiere. */
+  readonly closeControl: Deferred;
 }
 
 export function createFakeDatabase(options: FakeDatabaseOptions = {}): FakeDatabase {
@@ -169,6 +182,7 @@ export function createFakeDatabase(options: FakeDatabaseOptions = {}): FakeDatab
   const queries: string[] = [];
   let closeCalls = 0;
   const pendingQuery = deferred();
+  const closeControl = deferred();
   const database = {
     query(text: string): Promise<QueryResult> {
       calls.push('query');
@@ -184,10 +198,13 @@ export function createFakeDatabase(options: FakeDatabaseOptions = {}): FakeDatab
       if (options.close === 'hang') {
         return new Promise<void>(() => undefined);
       }
+      if (options.close === 'manual') {
+        return closeControl.promise;
+      }
       return options.close === 'reject' ? Promise.reject(new Error('close failed')) : Promise.resolve();
     },
   };
-  return { database, queries, pendingQuery, closeCalls: () => closeCalls };
+  return { database, queries, pendingQuery, closeControl, closeCalls: () => closeCalls };
 }
 
 export interface FakeProcess {
@@ -196,6 +213,8 @@ export interface FakeProcess {
   listenerTotal(): number;
   /** Emite una señal en el proceso falso. */
   signal(name: 'SIGTERM' | 'SIGINT'): void;
+  /** Emite una excepción o un rechazo no capturados SOLO en el proceso falso (nunca en el real). */
+  fatal(name: 'uncaughtException' | 'unhandledRejection', thrown: unknown): void;
 }
 
 export function createFakeProcess(): FakeProcess {
@@ -206,6 +225,9 @@ export function createFakeProcess(): FakeProcess {
     signal: (name) => {
       emitter.emit(name);
     },
+    fatal: (name, thrown) => {
+      emitter.emit(name, thrown);
+    },
   };
 }
 
@@ -213,8 +235,8 @@ export interface HarnessOptions {
   env?: Record<string, string | undefined>;
   listen?: ListenBehavior;
   database?: FakeDatabaseOptions;
-  /** Comportamiento de `server.close`: avisa al terminar o no termina nunca. */
-  serverClose?: 'resolve' | 'hang';
+  /** Comportamiento de `server.close`: avisa al terminar, no termina nunca o lo termina el test (`releaseClose`). */
+  serverClose?: 'resolve' | 'hang' | 'manual';
 }
 
 export interface Harness {

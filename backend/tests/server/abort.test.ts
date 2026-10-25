@@ -39,7 +39,8 @@ describe('RF-S4: señal durante la comprobación de la base de datos', () => {
 
     const result = startServer(harness.overrides);
 
-    expect(harness.fakeProcess.listenerTotal()).toBe(2);
+    // Dos señales y, desde la T7, los manejadores de excepciones y rechazos.
+    expect(harness.fakeProcess.listenerTotal()).toBe(4);
     harness.fakeProcess.signal('SIGTERM');
     harness.fakeDatabase.pendingQuery.resolve();
     return result;

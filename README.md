@@ -316,6 +316,32 @@ queden y termina con código 1. Una segunda señal mientras el cierre sigue en c
 En Windows, `SIGTERM` mata el proceso sin ejecutar manejadores; `Ctrl+C` (`SIGINT`) sí los ejecuta. La señal real
 se comprueba a mano en Linux; los tests la simulan con un proceso falso.
 
+## Códigos de salida y eventos
+
+Resumen de las once causas de terminación, con su código y los eventos de log que emiten (en orden cronológico):
+
+| Causa | Código | Eventos |
+|---|---|---|
+| 1. Configuración inválida | 1 | `startup_failed` |
+| 2. Base de datos no disponible al arrancar | 1 | `startup_failed` (y `shutdown_timeout` si el Pool no cierra a tiempo) |
+| 3. Fallo al escuchar (puerto ocupado, permisos) | 1 | `startup_failed` (y `shutdown_timeout` si el Pool no cierra a tiempo) |
+| 4. Señal durante el arranque | 0 | `shutdown_started`, `shutdown_completed` (`exitCode` 0) |
+| 5. Señal durante el arranque con fallo propio de la base de datos | 1 | `shutdown_started`, `startup_failed`, `shutdown_completed` (`exitCode` 1) |
+| 6. Señal en funcionamiento | 0 | `shutdown_started`, `shutdown_completed` (`exitCode` 0) |
+| 7. Plazo de cierre excedido | 1 | `shutdown_started`, `shutdown_timeout` |
+| 8. Segunda señal con un cierre en curso | 1 | ninguno adicional |
+| 9. Excepción o rechazo en funcionamiento | 1 | `uncaught_exception` o `unhandled_rejection`, `shutdown_started`, `shutdown_completed` (`exitCode` 1) |
+| 10. Excepción o rechazo durante el arranque | 1 | `uncaught_exception` o `unhandled_rejection`, `shutdown_started`, `shutdown_completed` (`exitCode` 1) |
+| 11. Excepción o rechazo durante un cierre | 1 | `uncaught_exception` o `unhandled_rejection`; el cierre sigue y termina con `shutdown_completed` (`exitCode` 1) |
+
+Si concurren varias causas prevalece el código distinto de cero. Un cierre ordenado iniciado por una causa de código 1
+termina con 1 aunque acabe a tiempo.
+
+Una excepción no capturada deja el proceso en un estado incierto: se registra, se cierra de forma ordenada y se
+termina con código 1. Las promesas rechazadas dentro de una petición NO llegan aquí: se responden como 500. Durante un
+cierre en curso, una excepción o un rechazo solo se registra: el cierre continúa, no cuenta como segunda señal y fuerza
+el código final a 1. Lo que se registra de lo lanzado sigue las reglas de «Logs»: si no es un `Error`, solo su tipo.
+
 El frontend se documentará cuando exista.
 
 ## Cómo ejecutar

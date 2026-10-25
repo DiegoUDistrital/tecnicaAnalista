@@ -272,3 +272,31 @@ describe('RF-S11: evento startup', () => {
     expect(settled).toBe(false);
   });
 });
+
+describe('RF-S11: dependencias reales por defecto', () => {
+  it('RF-S11: con el logger y el servidor por defecto escribe startup en stdout y responde /health', async () => {
+    const lines: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => {
+      lines.push(chunk);
+      return true;
+    }) as typeof process.stdout.write);
+    const port = await getFreePort();
+    const harness = createHarness({ env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
+    // Solo se sustituyen la base de datos, el proceso y los temporizadores; el logger y el servidor son los reales.
+    const running = startServer({
+      env: harness.overrides.env,
+      createDatabase: harness.overrides.createDatabase,
+      process: harness.fakeProcess.process,
+      timers: harness.timers,
+    });
+    await vi.waitFor(() => expect(lines.join('')).toContain('"event":"startup"'));
+
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    harness.fakeProcess.signal('SIGTERM');
+    const code = await running;
+
+    expect(response.status).toBe(200);
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('"event":"shutdown_completed"');
+  });
+});

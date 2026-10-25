@@ -11,7 +11,8 @@ export async function runWithin(
   ms: number,
   timers: Timers,
 ): Promise<'completed' | 'timeout'> {
-  let cancel = (): void => undefined;
+  // El ejecutor de `new Promise` corre de forma síncrona: `cancel` siempre está asignado antes de usarse.
+  let cancel!: () => void;
   const timeout = new Promise<'timeout'>((resolve) => {
     cancel = timers.setTimer(() => {
       resolve('timeout');

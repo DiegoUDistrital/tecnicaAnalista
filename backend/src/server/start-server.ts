@@ -64,8 +64,13 @@ function closeServer(server: ServerLike): Promise<void> {
  *   datos solo se considera provocado por el aborto si ya se había pedido y es un `DatabaseUnavailableError`
  *   (el Pool cerrado); cualquier otro fallo es causa propia y prevalece el código 1.
  * - Una segunda señal con un cierre o un fallo de arranque en curso termina de inmediato con código 1.
+ * - Excepción no capturada o promesa rechazada sin manejar: se registra (`uncaught_exception` o
+ *   `unhandled_rejection`) y el código final es 1. En funcionamiento o durante el arranque inicia el mismo cierre que
+ *   una señal (en el arranque, el aborto); durante un cierre en curso solo se registra, el cierre continúa y NO cuenta
+ *   como segunda señal. Las promesas rechazadas dentro de una petición no llegan aquí: las resuelve el manejador
+ *   central de errores.
  *
- * Las señales se registran al principio y se retiran antes de resolver.
+ * Las señales y los manejadores de excepciones se registran al principio y se retiran antes de resolver.
  */
 export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number> {
   const deps = { ...defaultDeps(), ...overrides };
@@ -87,14 +92,26 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
       deps.process.on(signal, handler);
     }
 
+    const onUncaughtException = (error: unknown): void => {
+      onFatal('uncaught_exception', error);
+    };
+    const onUnhandledRejection = (reason: unknown): void => {
+      onFatal('unhandled_rejection', reason);
+    };
+    deps.process.on('uncaughtException', onUncaughtException);
+    deps.process.on('unhandledRejection', onUnhandledRejection);
+
+    /**
+     * Termina una sola vez: todo el que la llama comprueba `done` justo antes (sin esperas entre medias) y las
+     * señales y excepciones ya no llegan porque sus manejadores se retiran aquí, así que no hace falta otra guarda.
+     */
     function finish(code: number): void {
-      if (done) {
-        return;
-      }
       done = true;
       for (const { signal, handler } of handlers) {
         deps.process.off(signal, handler);
       }
+      deps.process.off('uncaughtException', onUncaughtException);
+      deps.process.off('unhandledRejection', onUnhandledRejection);
       resolve(code);
     }
 
@@ -120,16 +137,17 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
     async function closePoolAfterFailure(): Promise<void> {
       const db = database;
       if (db !== undefined) {
+        let result: 'completed' | 'timeout' = 'completed';
         try {
-          const result = await runWithin(() => db.close(), timeoutMs, deps.timers);
-          if (done) {
-            return;
-          }
-          if (result === 'timeout') {
-            deps.logger.error('shutdown_timeout', { context: { timeoutMs } });
-          }
+          result = await runWithin(() => db.close(), timeoutMs, deps.timers);
         } catch (error) {
-          deps.logger.error('uncaught_exception', { thrown: error });
+          reportCloseFailure(error);
+        }
+        if (done) {
+          return;
+        }
+        if (result === 'timeout') {
+          deps.logger.error('shutdown_timeout', { context: { timeoutMs } });
         }
       }
       finish(1);
@@ -197,17 +215,31 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
       finish(exitCode);
     }
 
-    function onSignal(signal: (typeof SIGNALS)[number]): void {
-      if (phase === 'closing') {
-        finish(1);
-        return;
-      }
+    /** Inicia el único cierre ordenado. `signal` solo existe si la causa es una señal. */
+    function beginShutdown(signal?: (typeof SIGNALS)[number]): void {
       // La bandera se activa antes de cerrar el Pool: así el fallo que provoca el cierre se reconoce como aborto.
       abortRequested = phase === 'starting';
       phase = 'closing';
       deps.logger.info('shutdown_started', { signal });
       tracker.closeAfterResponses();
       void closeAll();
+    }
+
+    function onSignal(signal: (typeof SIGNALS)[number]): void {
+      if (phase === 'closing') {
+        finish(1);
+        return;
+      }
+      beginShutdown(signal);
+    }
+
+    /** Excepción o rechazo sin manejar: se registra y el código final es 1; solo inicia el cierre si no había uno. */
+    function onFatal(event: 'uncaught_exception' | 'unhandled_rejection', thrown: unknown): void {
+      deps.logger.error(event, { thrown });
+      exitCode = 1;
+      if (phase !== 'closing') {
+        beginShutdown();
+      }
     }
 
     let config: AppConfig;
