@@ -253,6 +253,29 @@ Todavía no hay endpoints: estas son las reglas que aplicará la API al crear ta
 
 Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `completed`.
 
+## Entrada de la API: tamaño y tipo de contenido
+
+Todavía no hay endpoints de tareas. Estas son las reglas de entrada que se aplican a las rutas de `/api/*`
+(`backend/src/http/input/`); `/health` queda fuera de ellas.
+
+- El cuerpo de una petición no puede superar 10 240 bytes, sea cual sea su tipo. Se lee con un lector propio que corta
+  al pasar el límite y responde 413 (`PAYLOAD_TOO_LARGE`). Tras un 413 el servidor cierra la conexión, para no seguir
+  recibiendo un cuerpo que ya no se va a leer. Si el cliente declara un `Content-Length` mayor que el límite, el 413 se
+  responde sin leer nada.
+- El tamaño se comprueba antes que el tipo: un cuerpo de 20 KB con `text/plain` o con `Content-Encoding: gzip` da 413,
+  no 415.
+- `Content-Encoding` solo puede faltar o ser `identity` (da igual la capitalización). Cualquier otro valor, una lista, un
+  valor vacío o la cabecera repetida da 415. El servidor nunca descomprime nada, así que no hay riesgo de bomba de
+  descompresión.
+- Si hay cuerpo, `Content-Type` debe ser `application/json` o `application/json; charset=utf-8` (415 en cualquier otro
+  caso: `charset=utf8`, comillas, parámetros extra, `;` final, `+json`, vacío o cabecera repetida). Las cabeceras
+  repetidas se detectan sobre las cabeceras crudas, porque Node oculta los duplicados en su vista normal.
+- «Hay cuerpo» se decide solo por las cabeceras (`Content-Length` mayor que 0, o `Transfer-Encoding`), nunca por los
+  bytes recibidos: un cuerpo de solo espacios cuenta como presente, y `Content-Length: 0` no. Sin cuerpo, el
+  `Content-Type` se ignora.
+- Un 415 con `Content-Length` se responde sin esperar al cuerpo y no cierra la conexión: Node descarta lo no leído y la
+  misma conexión sigue sirviendo la petición siguiente.
+
 ## Roles y permisos
 
 Hay tres roles de PostgreSQL, cada uno con el mínimo privilegio para su trabajo:
