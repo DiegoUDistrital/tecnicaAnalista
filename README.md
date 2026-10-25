@@ -103,6 +103,25 @@ no sea un `Error` solo deja su tipo.
 Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
 valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
 
+## Contrato de errores
+
+Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
+`details` es siempre un arreglo: vacío salvo en el 400, donde lleva entradas `{field, message}`.
+
+| Estado | `code`                   | `message`                                         |
+| ------ | ------------------------ | ------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`       | Datos inválidos.                                  |
+| 404    | `NOT_FOUND`              | Recurso no encontrado.                            |
+| 405    | `METHOD_NOT_ALLOWED`     | Método no permitido.                              |
+| 413    | `PAYLOAD_TOO_LARGE`      | El cuerpo de la petición supera el tamaño máximo. |
+| 415    | `UNSUPPORTED_MEDIA_TYPE` | Tipo de contenido no admitido.                    |
+| 500    | `INTERNAL_ERROR`         | Error interno del servidor.                       |
+
+Un error no previsto (una excepción, una promesa rechazada o cualquier valor lanzado, aunque no sea un `Error`)
+devuelve siempre el 500 genérico: nunca SQL, traza, rutas ni valores enviados. El detalle va solo al log como evento
+`request_error`, con las reglas de «Logs». Los errores 4xx conocidos no se registran. Si la respuesta ya había empezado
+cuando ocurre el fallo, no se escribe una segunda respuesta: se registra el error y se cierra la conexión.
+
 ## Conexión a la base de datos
 
 El backend se conecta con un Pool de `pg` y el rol `writer`. El Pool se configura con `max` (conexiones simultáneas),
