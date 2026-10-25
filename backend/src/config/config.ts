@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { ConfigError } from '../errors/config-error';
 
 /** Configuración validada que usa el resto del backend. */
@@ -8,10 +9,17 @@ export interface AppConfig {
     idleTimeoutMillis: number;
     connectionTimeoutMillis: number;
   };
+  server: {
+    port: number;
+    host: string;
+    shutdownTimeoutMs: number;
+  };
 }
 
 type VariableSpec =
-  { name: string; kind: 'writer-url' } | { name: string; kind: 'int'; min: number; max: number; fallback: number };
+  | { name: string; kind: 'writer-url' }
+  | { name: string; kind: 'host'; fallback: string }
+  | { name: string; kind: 'int'; min: number; max: number; fallback: number };
 
 /**
  * Esquema ÚNICO de variables validadas. El orden fija el orden de los mensajes de error.
@@ -22,6 +30,9 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'DB_POOL_MAX', kind: 'int', min: 1, max: 100, fallback: 10 },
   { name: 'DB_POOL_IDLE_TIMEOUT_MS', kind: 'int', min: 1000, max: 600000, fallback: 30000 },
   { name: 'DB_POOL_CONNECTION_TIMEOUT_MS', kind: 'int', min: 100, max: 60000, fallback: 5000 },
+  { name: 'PORT', kind: 'int', min: 1, max: 65535, fallback: 3000 },
+  { name: 'HOST', kind: 'host', fallback: '127.0.0.1' },
+  { name: 'SHUTDOWN_TIMEOUT_MS', kind: 'int', min: 1000, max: 120000, fallback: 10000 },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -29,6 +40,11 @@ export const CONFIG_VARIABLE_NAMES: readonly string[] = VARIABLES.map((variable)
 
 const URL_FORMAT_MESSAGE = 'DATABASE_URL: formato inválido';
 const URL_ROLE_MESSAGE = 'DATABASE_URL: debe usar el rol writer';
+
+/** Dirección IP literal (v4 o v6) sin corchetes ni zona (`%eth0`): no se admiten nombres de host. */
+function isLiteralIp(raw: string): boolean {
+  return isIP(raw) !== 0 && !raw.includes('%');
+}
 
 /** Entero decimal ASCII sin signo ni ceros a la izquierda, dentro de [min, max]. */
 function parseInteger(raw: string, min: number, max: number): number | undefined {
@@ -94,6 +110,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       }
       continue;
     }
+    if (variable.kind === 'host') {
+      const host = raw ?? variable.fallback;
+      if (isLiteralIp(host)) {
+        values.set(variable.name, host);
+      } else {
+        messages.push(`${variable.name}: dirección IP inválida`);
+      }
+      continue;
+    }
     const value = raw === undefined ? variable.fallback : parseInteger(raw, variable.min, variable.max);
     if (value === undefined) {
       messages.push(`${variable.name}: entero inválido o fuera de rango`);
@@ -112,6 +137,11 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       max: Number(values.get('DB_POOL_MAX')),
       idleTimeoutMillis: Number(values.get('DB_POOL_IDLE_TIMEOUT_MS')),
       connectionTimeoutMillis: Number(values.get('DB_POOL_CONNECTION_TIMEOUT_MS')),
+    },
+    server: {
+      port: Number(values.get('PORT')),
+      host: String(values.get('HOST')),
+      shutdownTimeoutMs: Number(values.get('SHUTDOWN_TIMEOUT_MS')),
     },
   };
 }

@@ -36,8 +36,7 @@ Las versiones se fijan al crear cada proyecto.
 ## Backend (estado actual)
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
-del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR
-(servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
+del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -46,6 +45,7 @@ Comandos disponibles (dentro de `backend/`):
 - `npm run typecheck`: comprobación de tipos con `tsc` sin generar archivos.
 - `npm test`: tests con Vitest y cobertura (falla por debajo del 95 %).
 - `npm run build`: compila a `backend/dist`.
+- `npm start`: compila y arranca el servicio con el `.env` de la raíz (ver «Cómo ejecutar»).
 - `npm run db:deploy`: aplica las migraciones y los permisos (ver «Migrar y aplicar permisos»).
 
 ## Base de datos de desarrollo
@@ -104,6 +104,38 @@ no sea un `Error` solo deja su tipo.
 Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
 valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
 
+## Rutas del servicio
+
+`GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
+que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Content-Type`, `Content-Encoding`,
+`Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
+ni `X-Powered-By`, y nunca responde `304`.
+
+Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y dan `404 NOT_FOUND`, igual que cualquier ruta
+desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también es 404, no
+400). Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
+ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta. Los 404 y
+405 usan el mismo sobre JSON del contrato de errores y no se registran en el log.
+
+## Contrato de errores
+
+Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
+`details` es siempre un arreglo: vacío salvo en el 400, donde lleva entradas `{field, message}`.
+
+| Estado | `code`                   | `message`                                         |
+| ------ | ------------------------ | ------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`       | Datos inválidos.                                  |
+| 404    | `NOT_FOUND`              | Recurso no encontrado.                            |
+| 405    | `METHOD_NOT_ALLOWED`     | Método no permitido.                              |
+| 413    | `PAYLOAD_TOO_LARGE`      | El cuerpo de la petición supera el tamaño máximo. |
+| 415    | `UNSUPPORTED_MEDIA_TYPE` | Tipo de contenido no admitido.                    |
+| 500    | `INTERNAL_ERROR`         | Error interno del servidor.                       |
+
+Un error no previsto (una excepción, una promesa rechazada o cualquier valor lanzado, aunque no sea un `Error`)
+devuelve siempre el 500 genérico: nunca SQL, traza, rutas ni valores enviados. El detalle va solo al log como evento
+`request_error`, con las reglas de «Logs». Los errores 4xx conocidos no se registran. Si la respuesta ya había empezado
+cuando ocurre el fallo, no se escribe una segunda respuesta: se registra el error y se cierra la conexión.
+
 ## Conexión a la base de datos
 
 El backend se conecta con un Pool de `pg` y el rol `writer`. El Pool se configura con `max` (conexiones simultáneas),
@@ -114,6 +146,18 @@ la cierra), el error se registra en el log y NO tumba el proceso. Los fallos de 
 agotado, credenciales rechazadas, sesión terminada o Pool cerrado) se convierten en un error de mensaje fijo, «Base de
 datos no disponible.», que no revela host, URL ni texto del driver; los errores de SQL de una consulta (por ejemplo,
 una restricción violada) llegan sin cambios. El cierre del Pool espera a que terminen las consultas en curso.
+
+## Variables del servicio
+
+| Variable | Valores | Por defecto | Descripción |
+| --- | --- | --- | --- |
+| `PORT` | entero 1-65535 | `3000` | Puerto en el que escuchará el servicio. |
+| `HOST` | dirección IP literal | `127.0.0.1` | Dirección en la que escuchará el servicio. |
+| `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
+
+`0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No
+se admiten nombres de host, corchetes ni zonas como `%eth0`. El servicio valida estas variables junto con las de la
+base de datos y, si alguna es inválida, no arranca y las nombra todas a la vez, sin mostrar sus valores.
 
 ## Esquema y migraciones
 
@@ -224,13 +268,104 @@ cd backend
 npm ci
 ```
 
+## Arranque
+
+La función de arranque del servicio sigue siempre el mismo orden:
+
+1. Valida la configuración (las variables de «Variables del servicio» y las de la base de datos).
+2. Abre el Pool y comprueba la base de datos con una consulta trivial (`SELECT 1`), antes de aceptar peticiones.
+3. Escucha en `HOST` y `PORT`.
+
+El servicio «falla rápido»: si la configuración es inválida, la base de datos no responde o no se puede escuchar (puerto
+ocupado, permiso denegado), registra el evento `startup_failed` y termina con código 1. Si el Pool ya estaba abierto,
+se cierra antes de terminar, dentro del plazo `SHUTDOWN_TIMEOUT_MS`; si el cierre no termina a tiempo se registra
+además `shutdown_timeout` y el código sigue siendo 1. Si el cierre del Pool falla, se registra como
+`uncaught_exception` y el código sigue siendo 1.
+
+Eventos de log del arranque (con las reglas de «Logs»: nunca contraseñas ni URL de conexión): `startup` (con `host` y
+`port`, solo cuando el servidor ya escucha), `startup_failed` (con la clase del error y, si es un error propio como
+una configuración inválida, su mensaje con los nombres de las variables, nunca sus valores) y `shutdown_timeout` (con
+`timeoutMs`).
+
+Una señal (`SIGTERM` o `SIGINT`) durante el arranque (antes de escuchar, durante la comprobación de la base de datos
+o justo al escuchar) aborta el arranque sin aceptar peticiones: si ya se había pedido escuchar, cierra el servidor de
+inmediato; después cierra el Pool y termina con código 0, porque es una parada pedida por el operador. Registra
+`shutdown_started` y `shutdown_completed`, y no `startup_failed` ni `startup`. Si la base de datos falla por una causa
+propia (por ejemplo un error de SQL) mientras se aborta, se registra además `startup_failed` y el código es 1. Una
+segunda señal durante el aborto, o tras un fallo de arranque, termina de inmediato con código 1.
+
+Límite conocido: una base de datos caída y una señal casi simultánea terminan con código 0, porque ese fallo es
+indistinguible del que provoca el cierre del Pool. Con la base de datos caída y sin señal, el código es 1.
+
+El punto de entrada (`backend/src/index.ts`) solo conecta la función de arranque con el proceso: aplica su código de
+salida con `process.exit`. El comando es `npm start` (ver «Cómo ejecutar»).
+
+## Cierre ordenado
+
+Con el servicio en funcionamiento, `SIGTERM` o `SIGINT` inician un único cierre ordenado:
+
+1. El servidor deja de aceptar conexiones nuevas y cierra las conexiones ociosas (keep-alive).
+2. Las peticiones en curso terminan con normalidad; su respuesta lleva `Connection: close`, así que su conexión se
+   cierra al acabar (también `/health`).
+3. Cuando ya no quedan conexiones, se cierra el Pool de la base de datos.
+
+Todo ocurre dentro del plazo `SHUTDOWN_TIMEOUT_MS`. Si el cierre es completo, el servicio registra
+`shutdown_started` (con la señal) y `shutdown_completed` (con `exitCode`) y termina con código 0. Si el plazo se
+agota (una petición que no termina o un Pool que no cierra), registra `shutdown_timeout`, corta las conexiones que
+queden y termina con código 1. Una segunda señal mientras el cierre sigue en curso termina de inmediato con código 1.
+
+En Windows, `SIGTERM` mata el proceso sin ejecutar manejadores; `Ctrl+C` (`SIGINT`) sí los ejecuta. La señal real
+se comprueba a mano en Linux; los tests la simulan con un proceso falso.
+
+## Códigos de salida y eventos
+
+Resumen de las once causas de terminación, con su código y los eventos de log que emiten (en orden cronológico):
+
+| Causa | Código | Eventos |
+|---|---|---|
+| 1. Configuración inválida | 1 | `startup_failed` |
+| 2. Base de datos no disponible al arrancar | 1 | `startup_failed` (y `shutdown_timeout` si el Pool no cierra a tiempo) |
+| 3. Fallo al escuchar (puerto ocupado, permisos) | 1 | `startup_failed` (y `shutdown_timeout` si el Pool no cierra a tiempo) |
+| 4. Señal durante el arranque | 0 | `shutdown_started`, `shutdown_completed` (`exitCode` 0) |
+| 5. Señal durante el arranque con fallo propio de la base de datos | 1 | `shutdown_started`, `startup_failed`, `shutdown_completed` (`exitCode` 1) |
+| 6. Señal en funcionamiento | 0 | `shutdown_started`, `shutdown_completed` (`exitCode` 0) |
+| 7. Plazo de cierre excedido | 1 | `shutdown_started`, `shutdown_timeout` |
+| 8. Segunda señal con un cierre en curso | 1 | ninguno adicional |
+| 9. Excepción o rechazo en funcionamiento | 1 | `uncaught_exception` o `unhandled_rejection`, `shutdown_started`, `shutdown_completed` (`exitCode` 1) |
+| 10. Excepción o rechazo durante el arranque | 1 | `uncaught_exception` o `unhandled_rejection`, `shutdown_started`, `shutdown_completed` (`exitCode` 1) |
+| 11. Excepción o rechazo durante un cierre | 1 | `uncaught_exception` o `unhandled_rejection`; el cierre sigue y termina con `shutdown_completed` (`exitCode` 1) |
+
+Si concurren varias causas prevalece el código distinto de cero. Un cierre ordenado iniciado por una causa de código 1
+termina con 1 aunque acabe a tiempo.
+
+Una excepción no capturada deja el proceso en un estado incierto: se registra, se cierra de forma ordenada y se
+termina con código 1. Las promesas rechazadas dentro de una petición NO llegan aquí: se responden como 500. Durante un
+cierre en curso, una excepción o un rechazo solo se registra: el cierre continúa, no cuenta como segunda señal y fuerza
+el código final a 1. Lo que se registra de lo lanzado sigue las reglas de «Logs»: si no es un `Error`, solo su tipo.
+
 El frontend se documentará cuando exista.
 
 ## Cómo ejecutar
 
-Todavía no hay servicio HTTP que arrancar (Express se añade en un PR posterior). Hoy se puede preparar la base de
-datos con `npm run db:deploy` (dentro de `backend/`) y comprobar el proyecto con los comandos de «Pruebas». La
-ejecución de la aplicación completa se documentará cuando existan el servicio y el frontend.
+Con el contenedor de PostgreSQL arriba y el `.env` creado (ver «Base de datos de desarrollo»), dentro de `backend/`:
+
+```
+npm start
+```
+
+`npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
+código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; se
+detiene con Ctrl+C (cierre ordenado, código 0).
+
+`/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
+healthcheck de contenedor debe usar GET (HEAD no está permitido).
+
+Aviso de seguridad: por ahora el servicio solo responde `/health`, escucha solo en loopback y NO tiene seguridad (ni
+API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe
+exponerse a ninguna red hasta entonces.
+
+La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
+cuando exista el frontend.
 
 ## Pruebas
 
@@ -238,6 +373,9 @@ ejecución de la aplicación completa se documentará cuando existan el servicio
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
   Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+  Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
+  Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
+  a mano en Linux.
 - Frontend: se documentará cuando exista.
 
 ## Base de datos

@@ -1,2 +1,9 @@
+# Regla general: todos los archivos de texto se guardan y se extraen con LF.
+# Evita que `autocrlf` en Windows los convierta a CRLF (Prettier exige LF).
+* text=auto eol=lf
+
+# Scripts de shell: deben ser LF siempre (si no, fallan dentro de Linux/Docker).
 *.sh text eol=lf
+
+# Scripts SQL: LF siempre, igual que el resto.
 *.sql text eol=lf
