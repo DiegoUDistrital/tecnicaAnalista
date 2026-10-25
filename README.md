@@ -267,6 +267,28 @@ cd backend
 npm ci
 ```
 
+## Arranque
+
+La función de arranque del servicio sigue siempre el mismo orden:
+
+1. Valida la configuración (las variables de «Variables del servicio» y las de la base de datos).
+2. Abre el Pool y comprueba la base de datos con una consulta trivial (`SELECT 1`), antes de aceptar peticiones.
+3. Escucha en `HOST` y `PORT`.
+
+El servicio «falla rápido»: si la configuración es inválida, la base de datos no responde o no se puede escuchar (puerto
+ocupado, permiso denegado), registra el evento `startup_failed` y termina con código 1. Si el Pool ya estaba abierto,
+se cierra antes de terminar, dentro del plazo `SHUTDOWN_TIMEOUT_MS`; si el cierre no termina a tiempo se registra
+además `shutdown_timeout` y el código sigue siendo 1. Si el cierre del Pool falla, se registra como
+`uncaught_exception` y el código sigue siendo 1.
+
+Eventos de log del arranque (con las reglas de «Logs»: nunca contraseñas ni URL de conexión): `startup` (con `host` y
+`port`, solo cuando el servidor ya escucha), `startup_failed` (con la clase del error y, si es un error propio como
+una configuración inválida, su mensaje con los nombres de las variables, nunca sus valores) y `shutdown_timeout` (con
+`timeoutMs`).
+
+Todavía no hay un comando que lance el servicio (llega en una tarea posterior): esta parte del arranque se comprueba
+con los tests.
+
 El frontend se documentará cuando exista.
 
 ## Cómo ejecutar
