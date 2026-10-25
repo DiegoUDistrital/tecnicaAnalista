@@ -286,6 +286,16 @@ Eventos de log del arranque (con las reglas de «Logs»: nunca contraseñas ni U
 una configuración inválida, su mensaje con los nombres de las variables, nunca sus valores) y `shutdown_timeout` (con
 `timeoutMs`).
 
+Una señal (`SIGTERM` o `SIGINT`) durante el arranque (antes de escuchar, durante la comprobación de la base de datos
+o justo al escuchar) aborta el arranque sin aceptar peticiones: si ya se había pedido escuchar, cierra el servidor de
+inmediato; después cierra el Pool y termina con código 0, porque es una parada pedida por el operador. Registra
+`shutdown_started` y `shutdown_completed`, y no `startup_failed` ni `startup`. Si la base de datos falla por una causa
+propia (por ejemplo un error de SQL) mientras se aborta, se registra además `startup_failed` y el código es 1. Una
+segunda señal durante el aborto, o tras un fallo de arranque, termina de inmediato con código 1.
+
+Límite conocido: una base de datos caída y una señal casi simultánea terminan con código 0, porque ese fallo es
+indistinguible del que provoca el cierre del Pool. Con la base de datos caída y sin señal, el código es 1.
+
 Todavía no hay un comando que lance el servicio (llega en una tarea posterior): esta parte del arranque se comprueba
 con los tests.
 

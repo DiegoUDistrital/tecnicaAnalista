@@ -2,8 +2,9 @@ import http from 'node:http';
 import { createApp } from '../app';
 import { type AppConfig, loadConfig } from '../config/config';
 import { createPool, type Database } from '../db/pool';
+import { DatabaseUnavailableError } from '../errors/database-unavailable-error';
 import { createLogger } from '../logging/logger';
-import { type ConnectionTracker, createConnectionTracker } from './connection-tracker';
+import { createConnectionTracker } from './connection-tracker';
 import { runWithin } from './deadline';
 import type { ServerDeps, ServerLike } from './server.types';
 
@@ -38,27 +39,7 @@ function listen(server: ServerLike, port: number, host: string): Promise<void> {
   });
 }
 
-/**
- * Cierra el Pool tras un fallo de arranque dentro del plazo. Si el cierre rechaza se registra como
- * `uncaught_exception`; si excede el plazo, como `shutdown_timeout`. En ningún caso cambia el código de salida.
- */
-async function closePoolAfterFailure(database: Database, timeoutMs: number, deps: ServerDeps): Promise<void> {
-  try {
-    const result = await runWithin(() => database.close(), timeoutMs, deps.timers);
-    if (result === 'timeout') {
-      deps.logger.error('shutdown_timeout', { context: { timeoutMs } });
-    }
-  } catch (error) {
-    deps.logger.error('uncaught_exception', { thrown: error });
-  }
-}
-
-interface Running {
-  server: ServerLike;
-  database: Database;
-  tracker: ConnectionTracker;
-  timeoutMs: number;
-}
+const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 /** Cierra el servidor (sin conexiones nuevas; espera a que terminen las abiertas). Ignora el error del callback. */
 function closeServer(server: ServerLike): Promise<void> {
@@ -69,24 +50,47 @@ function closeServer(server: ServerLike): Promise<void> {
   });
 }
 
-const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
-
 /**
- * Estado «funcionando»: espera una señal, hace UN cierre ordenado y devuelve el código de salida. Orden: 1) el
- * servidor deja de aceptar conexiones y termina las peticiones en curso, 2) se cierra el Pool; todo dentro de
- * `SHUTDOWN_TIMEOUT_MS`. Si el plazo vence se corta lo que quede y el código es 1. Una segunda señal con el cierre
- * en curso termina de inmediato con código 1. Los manejadores se retiran antes de resolver.
+ * Arranca el servicio en tres pasos: 1) valida la configuración y abre el Pool, 2) comprueba la base de datos con
+ * `SELECT 1`, 3) escucha. Devuelve el código de salida; nunca rechaza ni llama a `process.exit`: solo `index.ts`
+ * aplica el código. La promesa termina cuando el servicio ya no tiene nada pendiente.
+ *
+ * - Fallo propio al arrancar: registra `startup_failed`, cierra el Pool dentro de `SHUTDOWN_TIMEOUT_MS` y devuelve 1.
+ * - Arranque correcto: registra `startup` y espera una señal (SIGTERM o SIGINT) para hacer UN cierre ordenado: el
+ *   servidor deja de aceptar conexiones y termina las peticiones en curso, y después se cierra el Pool, todo dentro
+ *   del plazo. Devuelve 0 si todo cerró bien; si el plazo vence corta las conexiones que queden y devuelve 1.
+ * - Señal durante el arranque: aborta sin aceptar peticiones (no llega a escuchar, o cierra el servidor de
+ *   inmediato si ya había pedido `listen`), cierra el Pool y devuelve 0. Un fallo de la comprobación de la base de
+ *   datos solo se considera provocado por el aborto si ya se había pedido y es un `DatabaseUnavailableError`
+ *   (el Pool cerrado); cualquier otro fallo es causa propia y prevalece el código 1.
+ * - Una segunda señal con un cierre o un fallo de arranque en curso termina de inmediato con código 1.
+ *
+ * Las señales se registran al principio y se retiran antes de resolver.
  */
-function superviseUntilShutdown(running: Running, deps: ServerDeps): Promise<number> {
-  const { server, database, tracker, timeoutMs } = running;
+export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number> {
+  const deps = { ...defaultDeps(), ...overrides };
+
   return new Promise<number>((resolve) => {
-    let closing = false;
+    let phase: 'starting' | 'running' | 'closing' = 'starting';
+    let abortRequested = false;
     let done = false;
     let exitCode = 0;
+    let timeoutMs = 0;
+    let database: Database | undefined;
+    let server: ServerLike | undefined;
+    let listenCalled = false;
+    let pendingCheck: Promise<boolean> = Promise.resolve(true);
+    const tracker = createConnectionTracker();
 
     const handlers = SIGNALS.map((signal) => ({ signal, handler: () => onSignal(signal) }));
+    for (const { signal, handler } of handlers) {
+      deps.process.on(signal, handler);
+    }
 
     function finish(code: number): void {
+      if (done) {
+        return;
+      }
       done = true;
       for (const { signal, handler } of handlers) {
         deps.process.off(signal, handler);
@@ -94,27 +98,98 @@ function superviseUntilShutdown(running: Running, deps: ServerDeps): Promise<num
       resolve(code);
     }
 
+    function reportCloseFailure(error: unknown): void {
+      exitCode = 1;
+      deps.logger.error('uncaught_exception', { thrown: error });
+    }
+
+    /** Fallo propio del arranque: lo registra y, si no hay ya un cierre en curso, cierra el Pool y termina con 1. */
+    function startupFailed(error: unknown): void {
+      if (done) {
+        return;
+      }
+      exitCode = 1;
+      deps.logger.error('startup_failed', { thrown: error });
+      if (phase === 'closing') {
+        return;
+      }
+      phase = 'closing';
+      void closePoolAfterFailure();
+    }
+
+    async function closePoolAfterFailure(): Promise<void> {
+      const db = database;
+      if (db !== undefined) {
+        try {
+          const result = await runWithin(() => db.close(), timeoutMs, deps.timers);
+          if (done) {
+            return;
+          }
+          if (result === 'timeout') {
+            deps.logger.error('shutdown_timeout', { context: { timeoutMs } });
+          }
+        } catch (error) {
+          deps.logger.error('uncaught_exception', { thrown: error });
+        }
+      }
+      finish(1);
+    }
+
+    /** Comprueba la base de datos. Devuelve `false` si falla; nunca rechaza. */
+    async function checkDatabase(db: Database): Promise<boolean> {
+      try {
+        await db.query('SELECT 1');
+        return true;
+      } catch (error) {
+        // Con la bandera, el `DatabaseUnavailableError` es el del Pool cerrado por el aborto: no es una causa.
+        if (!(abortRequested && error instanceof DatabaseUnavailableError)) {
+          startupFailed(error);
+        }
+        return false;
+      }
+    }
+
+    /** Crea el servidor y escucha. Tras cada espera comprueba si se pidió el aborto. */
+    async function listenIfNotAborted(port: number, host: string): Promise<void> {
+      if (!(await pendingCheck) || abortRequested) {
+        return;
+      }
+      try {
+        server = deps.createServer(deps.logger);
+        tracker.attach(server);
+        listenCalled = true;
+        await listen(server, port, host);
+      } catch (error) {
+        startupFailed(error);
+        return;
+      }
+      if (abortRequested) {
+        return;
+      }
+      phase = 'running';
+      deps.logger.info('startup', { host, port });
+    }
+
+    async function closeResources(): Promise<void> {
+      if (server !== undefined && listenCalled) {
+        await closeServer(server);
+      }
+      await Promise.all([database?.close(), pendingCheck]);
+    }
+
     async function closeAll(): Promise<void> {
       let result: 'completed' | 'timeout' = 'completed';
       try {
-        result = await runWithin(
-          async () => {
-            await closeServer(server);
-            await database.close();
-          },
-          timeoutMs,
-          deps.timers,
-        );
+        result = await runWithin(closeResources, timeoutMs, deps.timers);
       } catch (error) {
-        exitCode = 1;
-        deps.logger.error('uncaught_exception', { thrown: error });
+        reportCloseFailure(error);
       }
       if (done) {
         return;
       }
       if (result === 'timeout') {
         deps.logger.error('shutdown_timeout', { context: { timeoutMs } });
-        server.closeAllConnections();
+        server?.closeAllConnections();
         finish(1);
         return;
       }
@@ -123,59 +198,28 @@ function superviseUntilShutdown(running: Running, deps: ServerDeps): Promise<num
     }
 
     function onSignal(signal: (typeof SIGNALS)[number]): void {
-      if (closing) {
+      if (phase === 'closing') {
         finish(1);
         return;
       }
-      closing = true;
+      // La bandera se activa antes de cerrar el Pool: así el fallo que provoca el cierre se reconoce como aborto.
+      abortRequested = phase === 'starting';
+      phase = 'closing';
       deps.logger.info('shutdown_started', { signal });
       tracker.closeAfterResponses();
       void closeAll();
     }
 
-    for (const { signal, handler } of handlers) {
-      deps.process.on(signal, handler);
+    let config: AppConfig;
+    try {
+      config = loadConfig(deps.env);
+      timeoutMs = config.server.shutdownTimeoutMs;
+      database = deps.createDatabase(config, deps.logger);
+    } catch (error) {
+      startupFailed(error);
+      return;
     }
+    pendingCheck = checkDatabase(database);
+    void listenIfNotAborted(config.server.port, config.server.host);
   });
-}
-
-/**
- * Arranca el servicio en tres pasos: 1) valida la configuración, 2) abre el Pool y comprueba la base de datos con
- * `SELECT 1`, 3) escucha. Si algo falla registra `startup_failed`, cierra el Pool dentro de `SHUTDOWN_TIMEOUT_MS` y
- * devuelve 1. Nunca rechaza ni llama a `process.exit`: solo `index.ts` aplica el código. Si arranca, registra
- * `startup` y la promesa queda pendiente hasta el cierre ordenado ante SIGTERM o SIGINT, que la resuelve con el
- * código de salida (0 solo si todo cerró bien).
- */
-export async function startServer(overrides: Partial<ServerDeps> = {}): Promise<number> {
-  const deps = { ...defaultDeps(), ...overrides };
-
-  let config: AppConfig;
-  try {
-    config = loadConfig(deps.env);
-  } catch (error) {
-    deps.logger.error('startup_failed', { thrown: error });
-    return 1;
-  }
-
-  const { port, host, shutdownTimeoutMs } = config.server;
-  let database: Database | undefined;
-  let server: ServerLike;
-  const tracker = createConnectionTracker();
-  try {
-    database = deps.createDatabase(config, deps.logger);
-    await database.query('SELECT 1');
-    server = deps.createServer(deps.logger);
-    tracker.attach(server);
-    await listen(server, port, host);
-  } catch (error) {
-    deps.logger.error('startup_failed', { thrown: error });
-    if (database !== undefined) {
-      await closePoolAfterFailure(database, shutdownTimeoutMs, deps);
-    }
-    return 1;
-  }
-
-  const running = superviseUntilShutdown({ server, database, tracker, timeoutMs: shutdownTimeoutMs }, deps);
-  deps.logger.info('startup', { host, port });
-  return running;
 }

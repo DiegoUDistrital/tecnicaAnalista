@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { startServer } from '../../src/server/start-server';
+import { DatabaseUnavailableError } from '../../src/errors/database-unavailable-error';
 import { createHarness, type Harness } from '../helpers/server-fakes';
 
 const LISTEN_FAILURE = { error: Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' }) };
@@ -119,5 +120,65 @@ describe('RF-S13: códigos de salida del cierre en funcionamiento', () => {
     const code = await running;
 
     expectOutcome(harness, code, { events: ['startup', 'shutdown_started'], code: 1 });
+  });
+});
+
+/** Arranca y espera a que el arranque haya llegado a la llamada pedida del registro común. */
+async function startUntil(harness: Harness, call: 'query' | 'listen'): Promise<{ running: Promise<number> }> {
+  const running = startServer(harness.overrides);
+  await vi.waitFor(() => expect(harness.calls).toContain(call));
+  return { running };
+}
+
+describe('RF-S13: códigos de salida del aborto del arranque', () => {
+  it('RF-S13 fila 4a: señal antes de escuchar', async () => {
+    const harness = createHarness({ database: { query: 'pending' } });
+    const { running } = await startUntil(harness, 'query');
+
+    harness.fakeProcess.signal('SIGTERM');
+    harness.fakeDatabase.pendingQuery.resolve();
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['shutdown_started', 'shutdown_completed'], code: 0 });
+    expect(harness.capture.records()).toMatchObject([{ signal: 'SIGTERM' }, { exitCode: 0 }]);
+  });
+
+  it('RF-S13 fila 4b: consulta rechazada tras la señal', async () => {
+    const harness = createHarness({ database: { query: 'pending' } });
+    const { running } = await startUntil(harness, 'query');
+
+    harness.fakeProcess.signal('SIGINT');
+    harness.fakeDatabase.pendingQuery.reject(new DatabaseUnavailableError());
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['shutdown_started', 'shutdown_completed'], code: 0 });
+    expect(harness.capture.records()).toMatchObject([{ signal: 'SIGINT' }, { exitCode: 0 }]);
+  });
+
+  it('RF-S13 fila 4c: señal entre listen y listening', async () => {
+    const harness = createHarness({ listen: 'never' });
+    const { running } = await startUntil(harness, 'listen');
+
+    harness.fakeProcess.signal('SIGTERM');
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['shutdown_started', 'shutdown_completed'], code: 0 });
+    expect(harness.capture.records()).toMatchObject([{ signal: 'SIGTERM' }, { exitCode: 0 }]);
+  });
+
+  it('RF-S13 fila 5: señal y fallo propio de la BD', async () => {
+    const harness = createHarness({ database: { query: 'pending' } });
+    const { running } = await startUntil(harness, 'query');
+
+    harness.fakeProcess.signal('SIGTERM');
+    harness.fakeDatabase.pendingQuery.reject(new Error('syntax error'));
+    const code = await running;
+
+    // El orden cronológico es shutdown_started y después startup_failed; se comprueba el conjunto y el último.
+    expect(code).toBe(1);
+    expect([...harness.events()].sort()).toEqual(['shutdown_completed', 'shutdown_started', 'startup_failed']);
+    expect(harness.events().at(-1)).toBe('shutdown_completed');
+    expect(harness.capture.records().at(-1)).toMatchObject({ exitCode: 1 });
+    expect(harness.fakeProcess.listenerTotal()).toBe(0);
   });
 });

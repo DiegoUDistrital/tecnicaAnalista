@@ -148,6 +148,8 @@ export function createFakeServer(
 export interface FakeDatabaseOptions {
   /** Si se indica, `query` rechaza con este error. */
   queryError?: Error;
+  /** Con `'pending'`, `query` no termina hasta que el test llama a `pendingQuery.resolve()` o `.reject()`. */
+  query?: 'pending';
   /** Comportamiento de `close`: termina, rechaza o no termina nunca. */
   close?: 'resolve' | 'reject' | 'hang';
   /** Registro compartido del orden de las llamadas. */
@@ -157,6 +159,8 @@ export interface FakeDatabaseOptions {
 export interface FakeDatabase {
   readonly database: Database;
   readonly queries: string[];
+  /** Control de la consulta en modo `'pending'` (si no, se resuelve sola). */
+  readonly pendingQuery: Deferred;
   closeCalls(): number;
 }
 
@@ -164,10 +168,14 @@ export function createFakeDatabase(options: FakeDatabaseOptions = {}): FakeDatab
   const calls = options.calls ?? [];
   const queries: string[] = [];
   let closeCalls = 0;
+  const pendingQuery = deferred();
   const database = {
     query(text: string): Promise<QueryResult> {
       calls.push('query');
       queries.push(text);
+      if (options.query === 'pending') {
+        return pendingQuery.promise.then(() => ({}) as QueryResult);
+      }
       return options.queryError !== undefined ? Promise.reject(options.queryError) : Promise.resolve({} as QueryResult);
     },
     close(): Promise<void> {
@@ -179,7 +187,7 @@ export function createFakeDatabase(options: FakeDatabaseOptions = {}): FakeDatab
       return options.close === 'reject' ? Promise.reject(new Error('close failed')) : Promise.resolve();
     },
   };
-  return { database, queries, closeCalls: () => closeCalls };
+  return { database, queries, pendingQuery, closeCalls: () => closeCalls };
 }
 
 export interface FakeProcess {
