@@ -13,6 +13,7 @@ export interface TaskController {
   list: InputHandler;
   create: InputHandler;
   update: InputHandler;
+  remove: InputHandler;
 }
 
 /**
@@ -77,6 +78,20 @@ export function createTaskController(service: TaskService): TaskController {
         throw new HttpError(400, buildDetails({ ...(update.ok ? {} : update.problems), query }));
       }
       res.status(200).json(await service.update(id.value, update.changes));
+    },
+
+    // `DELETE /api/tasks/:id`: sin cuerpo (lo comprueba la entrada, etapa 4). Etapa 5: el identificador, SOLO.
+    // Etapa 6: la consulta. Etapas 7 y 8: el servicio (404 si no existe, también al repetir el borrado).
+    async remove(req, res, input) {
+      const id = parseTaskId(rawIdOf(req));
+      if (!id.ok) {
+        throw new HttpError(400, buildDetails({ id: true }));
+      }
+      if (hasQueryParameters(input.rawQuery)) {
+        throw new HttpError(400, buildDetails({ query: true }));
+      }
+      await service.remove(id.value);
+      res.status(204).end();
     },
   };
 }

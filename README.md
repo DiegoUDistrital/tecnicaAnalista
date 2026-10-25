@@ -37,8 +37,8 @@ Las versiones se fijan al crear cada proyecto.
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
-Hay tres endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación) y `PUT /api/tasks/:id` (actualización)
-(ver «API de tareas»); `DELETE` aún no existe y la API todavía no tiene seguridad.
+Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
+`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»); la API todavía no tiene seguridad.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -231,15 +231,15 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
   campos distintos (por ejemplo, título desde una pestaña y estado desde otra) conservan ambos cambios. Los nombres de
   columna salen de una lista fija del código, nunca del cliente; los valores y el identificador viajan solo como
   parámetros. La fila devuelta lleva las mismas cinco columnas y el mismo formato de `createdAt` que la lectura.
-- `PUT /api/tasks/:id` ya usa la actualización; el borrado (`DELETE`) aún no tiene endpoint.
+- `PUT /api/tasks/:id` usa la actualización y `DELETE /api/tasks/:id` usa el borrado.
 
 ## API de tareas
 
 > **Aviso de seguridad.** La API NO tiene seguridad (ni API key, ni límite de peticiones, ni CORS, ni cabeceras de
 > seguridad) y escucha por defecto solo en 127.0.0.1: no debe exponerse a ninguna red hasta que llegue la seguridad en
 > un PR posterior. La lista no tiene límite de tamaño y cualquiera con acceso puede crear y modificar tareas sin
-> límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`) y la actualización (`PUT` en
-> `/api/tasks/:id`); `DELETE` en `/api/tasks/:id` todavía no existe y responde `405`.
+> límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la actualización (`PUT` en
+> `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`): cualquiera con acceso puede borrar tareas.
 
 ### `GET /api/tasks`
 
@@ -341,6 +341,28 @@ PUT /api/tasks/3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f
 - La ruta de identificador no deja que Express decodifique el segmento: lo lee crudo el código y lo valida una vez. Así
   `GET /api/tasks/%E0%A4%A` da `405` y `PUT /api/tasks/%E0%A4%A` da `400` con `id`, en lugar de un `500`.
 
+### `DELETE /api/tasks/:id`
+
+Borra una tarea. Responde `204` sin cuerpo (ni `Content-Type` ni `Content-Length`). No admite cuerpo ni parámetros de
+consulta, y el identificador sigue las reglas de «Reglas del identificador y del cuerpo de `PUT`».
+
+```
+DELETE /api/tasks/3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f
+```
+
+- Un identificador con formato válido que no existe da `404 NOT_FOUND` (incluido el UUID nulo). Borrar dos veces la
+  misma tarea da `204` y luego `404`: el borrado no es idempotente a propósito, para que el cliente sepa si había algo
+  que borrar.
+- Con cuerpo, el `400` lleva la entrada `body` («Esta ruta no admite cuerpo.»); con `Content-Encoding` distinto de
+  `identity` o con cuerpo sin `Content-Type` JSON, `415`; con más de 10 240 bytes, `413`. Con parámetros de consulta
+  (`?x=1`) la entrada es `query`. Un identificador inválido da SOLO la entrada `id` (si no hay cuerpo ni problema
+  de entrada antes), como en `PUT`.
+- **Concurrencia.** La existencia se decide por las filas afectadas de la propia sentencia `DELETE`, sin consulta
+  previa. Dos borrados simultáneos de la misma tarea dan exactamente un `204` y un `404`, y un `PUT` concurrente con un
+  `DELETE` da `200` o `404`, nunca `500`. Alternativa descartada: consultar primero y borrar después, que tendría una
+  carrera entre ambas operaciones.
+- Una base de datos caída da `500` genérico. El log no registra el identificador ni ningún dato de la petición.
+
 ### Errores 400: formato de `details`
 
 Un `400` lleva `details` con una entrada `{ field, message }` por problema, siempre en el orden `body`, `id`, `query`,
@@ -388,8 +410,8 @@ la base de datos no llega a consultarse).
 ### Rutas y errores de base de datos
 
 Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
-`Allow: GET, POST`. En `/api/tasks/<id>` solo existe `PUT`: cualquier otro método (también `DELETE`, que todavía no
-existe, y `GET`) da `405` con `Allow: PUT`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>/`,
+`Allow: GET, POST`. En `/api/tasks/<id>` solo existen `PUT` y `DELETE`: cualquier otro método (también `GET`) da `405` con
+`Allow: PUT, DELETE`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>/`,
 `/api/tasks/<id>/x` y cualquier ruta desconocida dan `404`. Si la base de datos falla (inalcanzable o
 con una restricción violada), la respuesta es un `500` genérico y el log registra solo la clase del error y su
 SQLSTATE, nunca datos de la petición (ni título, ni descripción, ni cuerpo, ni consulta).
@@ -433,7 +455,7 @@ Las entradas van siempre en el orden `body`, `id`, `query`, `title`, `descriptio
 
 ### Reglas del identificador y del cuerpo de `PUT`
 
-Son funciones puras; las usa `PUT /api/tasks/:id` y las usará `DELETE`, que todavía no existe.
+Son funciones puras; las usan `PUT /api/tasks/:id` (identificador y cuerpo) y `DELETE /api/tasks/:id` (solo el identificador).
 
 - Identificador: un UUID completo de 8-4-4-4-12 dígitos hexadecimales ASCII, en mayúsculas o minúsculas, y se
   devuelve normalizado a minúsculas. No valen llaves, prefijos como `urn:uuid:`, guiones ausentes, dígitos de anchura
@@ -659,8 +681,8 @@ healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
 Aviso de seguridad: el servicio escucha solo en loopback y la API NO tiene seguridad (ni API key, ni límite de
 peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe exponerse a ninguna
-red hasta entonces. `GET /api/tasks` devuelve la lista completa, que crece sin cota, y `DELETE` en `/api/tasks/:id`
-responde `405` porque todavía no existe.
+red hasta entonces. `GET /api/tasks` devuelve la lista completa, que crece sin cota, y cualquiera con acceso puede
+crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -763,7 +785,6 @@ una base de datos caída nunca tapa un error de validación. Solo la etapa de ca
 
 - Sin seguridad: ni API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad. No debe exponerse a ninguna
   red hasta que se añadan.
-- `DELETE` en `/api/tasks/:id` responde `405` hasta que se implemente.
 - `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST` no tiene límite de uso.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
   mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la

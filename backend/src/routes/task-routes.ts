@@ -13,8 +13,8 @@ const TASK_ID_PATH = /^\/api\/tasks\/[^/]+$/;
 
 /**
  * Rutas de tareas. `/api/tasks`: `GET` (lista) y `POST` (crear); cualquier otro método recibe 405 con
- * `Allow: GET, POST`. `/api/tasks/<id>`: `PUT` (actualizar); el resto recibe 405 con `Allow: PUT` (la tabla de
- * métodos genera `Allow` en el orden de sus claves). `/api/tasks/` no existe: 404.
+ * `Allow: GET, POST`. `/api/tasks/<id>`: `PUT` (actualizar) y `DELETE` (borrar); el resto recibe 405 con
+ * `Allow: PUT, DELETE` (la tabla de métodos genera `Allow` en el orden de sus claves). `/api/tasks/` no existe: 404.
  */
 export function registerTaskRoutes(app: Express, controller: TaskController): void {
   registerRoute(app, '/api/tasks', {
@@ -23,5 +23,6 @@ export function registerTaskRoutes(app: Express, controller: TaskController): vo
   });
   registerRoute(app, TASK_ID_PATH, {
     PUT: withInput({ bodyMode: 'required' }, controller.update),
+    DELETE: withInput({ bodyMode: 'none' }, controller.remove),
   });
 }
