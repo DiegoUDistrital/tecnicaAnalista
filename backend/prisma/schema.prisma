@@ -1,0 +1,14 @@
+datasource db {
+  provider = "postgresql"
+}
+
+model Task {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  description String   @default("")
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([completed], map: "tasks_completed_idx")
+  @@map("tasks")
+}

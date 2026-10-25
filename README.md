@@ -27,33 +27,226 @@ Las versiones se fijan al crear cada proyecto.
 
 ## Estructura del repositorio
 
-- `backend/`: API con Express y TypeScript, y esquema y migraciones con Prisma (próximamente).
+- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y, en los siguientes PR, el servicio HTTP con Express.
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
+- `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
-- `queries.sql`: consultas SQL de la prueba (próximamente).
+- `backend/queries.sql`: consultas SQL de la prueba.
+
+## Backend (estado actual)
+
+Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
+del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR
+(servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
+
+Comandos disponibles (dentro de `backend/`):
+
+- `npm run lint`: ESLint y comprobación de formato con Prettier.
+- `npm run format`: aplica Prettier a los archivos.
+- `npm run typecheck`: comprobación de tipos con `tsc` sin generar archivos.
+- `npm test`: tests con Vitest y cobertura (falla por debajo del 95 %).
+- `npm run build`: compila a `backend/dist`.
+- `npm run db:deploy`: aplica las migraciones y los permisos (ver «Migrar y aplicar permisos»).
+
+## Base de datos de desarrollo
+
+PostgreSQL 16 se levanta con Docker (`docker-compose.dev.yml`, solo para desarrollo y pruebas; el despliegue se
+documenta más adelante). Hace falta Docker Desktop en marcha.
+
+```powershell
+Copy-Item .env.example .env
+docker compose -f docker-compose.dev.yml up -d --wait
+```
+
+- La primera vez, con el volumen vacío, el script `docker/postgres/init/01-roles-and-databases.sh` crea los roles
+  `owner`, `writer` y `reader` (sin pertenencias entre ellos y sin privilegios especiales) y las bases de desarrollo
+  y de pruebas (UTF8, propietario `owner`). Los permisos de cada rol se aplican con `npm run db:deploy` (ver «Roles y permisos»).
+- **Reinicio de volumen.** El script de roles solo se ejecuta la primera vez, con el volumen vacío. Para empezar de
+  cero: `docker compose -f docker-compose.dev.yml down -v` (borra los datos).
+- **Contraseñas.** Solo se admiten los caracteres `[A-Za-z0-9._~-]`: otros (`@ : / ' %` y espacios) rompen las URL de
+  conexión o el SQL de creación de roles, y el script de inicio se detiene nombrando la variable (nunca su valor).
+  Para generar una aleatoria: `node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"`.
+  `change-me` es solo un valor de ejemplo. La contraseña de cada rol debe coincidir en su variable `*_PASSWORD` y en
+  sus URL de conexión.
+- **Solo en tu máquina.** PostgreSQL escucha únicamente en `127.0.0.1` (puerto `DB_LOCAL_PORT`, por defecto 5433):
+  no es accesible desde la red.
+- **Tests de base de datos.** Necesitan el contenedor arriba y el `.env` presente; si falta algo, fallan con un
+  mensaje claro (nunca se omiten en silencio). Una guarda aborta si la base de pruebas no es local o no termina en
+  `_test`, para no tocar nunca la base de desarrollo.
+
+### Lista de comprobación manual
+
+La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con tests automáticos.
+
+1. **`.env` ausente.** Crear un archivo vacío (`New-Item $env:TEMP\vacio.env -Force`) y ejecutar
+   `docker compose --env-file $env:TEMP\vacio.env -f docker-compose.dev.yml config --quiet`. Debe fallar nombrando
+   una variable obligatoria que falta. Si hay variables de PostgreSQL definidas en la sesión la comprobación queda
+   falseada: mirar solo los NOMBRES con
+   `Get-ChildItem Env: | Where-Object Name -match 'POSTGRES|OWNER|WRITER|READER|DB_' | Select-Object Name`.
+   No usar `config` sin `--quiet` con el `.env` real: imprimiría las contraseñas.
+2. **Volumen vacío.** `docker compose -f docker-compose.dev.yml down -v`, luego `up -d --wait`, luego
+   `docker compose -f docker-compose.dev.yml exec postgres psql -U postgres -c "select rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls from pg_roles where rolname in ('owner','writer','reader')"`
+   y `\l` (propietario y codificación de las dos bases). Usar el valor real de `POSTGRES_USER` si no es `postgres`.
+3. **Reinicio con volumen existente.** `docker compose -f docker-compose.dev.yml down` (SIN `-v`), `up -d --wait` y
+   `docker compose -f docker-compose.dev.yml logs postgres`: no debe volver a ejecutarse el script de inicio
+   (aparece el aviso de que el directorio ya contiene una base de datos).
+
+## Logs
+
+El backend escribe los logs como una línea JSON por registro (`level`, `event`, `time` y, si procede, campos de
+contexto). Solo se escriben campos de una lista permitida y de valor simple (`host`, `port`, `signal`, `exitCode` y
+`timeoutMs`): nunca contraseñas, URL de conexión, API key, cuerpos de petición ni datos de usuario. De un error se
+registra la clase, el SQLSTATE (o el código de sistema, como `EPIPE`) y una traza construida solo con marcos de pila,
+sin el texto del mensaje. El mensaje solo se registra en los errores propios del proyecto y en los de base de datos
+fuera de la clase 22 (datos inválidos), cuyo mensaje puede contener el valor enviado por el usuario. Lo que se lance y
+no sea un `Error` solo deja su tipo.
+
+Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
+valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
+
+## Conexión a la base de datos
+
+El backend se conecta con un Pool de `pg` y el rol `writer`. El Pool se configura con `max` (conexiones simultáneas),
+`idleTimeoutMillis` (cuánto vive una conexión inactiva) y `connectionTimeoutMillis` (cuánto se espera para obtener una
+conexión). Los valores por defecto son 10, 30000 y 5000 ms y se cambian en el `.env` (`DB_POOL_MAX`,
+`DB_POOL_IDLE_TIMEOUT_MS` y `DB_POOL_CONNECTION_TIMEOUT_MS`). Si una conexión inactiva falla (por ejemplo, el servidor
+la cierra), el error se registra en el log y NO tumba el proceso. Los fallos de conexión (servidor caído, plazo
+agotado, credenciales rechazadas, sesión terminada o Pool cerrado) se convierten en un error de mensaje fijo, «Base de
+datos no disponible.», que no revela host, URL ni texto del driver; los errores de SQL de una consulta (por ejemplo,
+una restricción violada) llegan sin cambios. El cierre del Pool espera a que terminen las consultas en curso.
+
+## Esquema y migraciones
+
+La tabla `tasks` se define en `backend/prisma/schema.prisma` y se crea con la migración
+`backend/prisma/migrations/<fecha>_create_tasks/migration.sql`. Esa migración NO se generó con `prisma migrate dev`: se
+escribió a mano sobre la salida de `prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script` y se
+completó con lo que Prisma no modela (las restricciones `CHECK` y los comentarios del catálogo). El motivo es el mínimo
+privilegio: `migrate dev` necesita una base «sombra» temporal, y para crearla el rol `owner` tendría que poder crear
+bases de datos, algo que no se le concede.
+
+Restricciones en la base (defensa en profundidad; la API ya valida): título de 1 a 100 caracteres y no formado solo por
+espacios (`tasks_title_length`, `tasks_title_not_blank`) y descripción de hasta 500 (`tasks_description_length`).
+
+Nota sobre emojis: la base cuenta caracteres como puntos de código Unicode. Un emoji simple cuenta como 1, pero uno
+compuesto (con modificadores o uniones) puede contar como varios.
+
+Detección de deriva (que la base migrada y `schema.prisma` no se desvíen), con la URL de `owner` en la variable de
+entorno `OWNER_DATABASE_URL`: `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`
+(código 0 = sin diferencias, 2 = hay deriva). Los tests lo ejecutan contra la base de pruebas ya migrada y comprueban
+con una columna añadida a mano que la deriva se detecta.
+
+La vista `task_counts` (conteo de tareas por estado) se crea con una segunda migración,
+`backend/prisma/migrations/<fecha>_create_task_counts_view/migration.sql`, también escrita a mano. No se modela en
+`schema.prisma` (en Prisma las vistas siguen siendo una función en preview) y, aun así, la detección de deriva no
+muestra diferencias. La vista se ejecuta con los privilegios de su propietario (`owner`), sin `security_invoker`: así el
+rol `reader` podrá leer los conteos sin acceso a la tabla `tasks`. Devuelve `completed` y `total` (entero de 32 bits) y
+solo tiene fila para los estados que tienen tareas.
+
+## Consultas SQL (`backend/queries.sql`)
+
+El archivo contiene las dos consultas pedidas por la prueba:
+
+1. Tareas filtradas por estado (`completed`), de la más reciente a la más antigua (desempate por `id`).
+2. Cantidad de tareas por estado.
+
+La consulta 2 no lleva parámetros: se pega tal cual en `psql`. La consulta 1 usa el parámetro `$1` (el mismo patrón
+parametrizado que utiliza la API, nunca se concatena el valor), por lo que `psql -f backend/queries.sql` no puede
+ejecutarla tal cual. Para probarla, abra `psql` dentro del contenedor y use `\bind` (disponible desde `psql` 16, que es
+la versión de la imagen):
+
+```
+docker compose -f docker-compose.dev.yml exec postgres psql -U owner -d todo_app
+todo_app=> SELECT id, title, description, completed, "createdAt" FROM tasks WHERE completed = $1 ORDER BY "createdAt" DESC, id ASC \bind true \g
+```
+
+Cambie `true` por `false` para ver las pendientes. Dentro del contenedor, `psql` entra por el socket local sin pedir
+contraseña. La base de desarrollo debe estar migrada antes de probarlas.
+
+## Roles y permisos
+
+Hay tres roles de PostgreSQL, cada uno con el mínimo privilegio para su trabajo:
+
+| Rol | Qué puede hacer | Qué NO puede hacer |
+|---|---|---|
+| `owner` | Es el dueño de la base y de los objetos: migra el esquema y aplica los permisos. | Crear bases ni roles. |
+| `writer` | Es el que usa el servicio: `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre `tasks`. | Leer la vista `task_counts` o `_prisma_migrations`; crear, alterar, eliminar o vaciar objetos. |
+| `reader` | Lo usará el frontend: solo `SELECT` sobre la vista `task_counts`. | Leer ni escribir `tasks`; leer `_prisma_migrations`; crear, alterar o eliminar objetos. |
+
+Otras decisiones:
+
+- **PUBLIC (cualquier rol) no tiene ningún privilegio** en la base (ni `CONNECT`, ni `TEMPORARY`, ni `CREATE`) ni en el
+  esquema `public`. Solo `writer` y `reader` reciben `CONNECT` y `USAGE`, y nada más. Alternativa descartada: dejar
+  `CONNECT` a PUBLIC (el valor por defecto de PostgreSQL), que permitiría conectarse a cualquier rol que se cree en el
+  futuro.
+- **`reader` lee los conteos sin ver las tareas** porque la vista `task_counts` se ejecuta con los privilegios de su
+  propietario (`owner`), no con los de quien la consulta. Alternativa descartada: dar `SELECT` sobre `tasks` a `reader`.
+- Las funciones nuevas que cree `owner` no son ejecutables por PUBLIC (se revoca el privilegio por defecto) y no hay
+  privilegios por defecto para `writer` ni `reader` sobre objetos futuros: un objeto nuevo es inaccesible hasta que se
+  conceda por nombre.
+- Los permisos viven en `backend/prisma/permissions.sql`, separado de las migraciones: ni uno ni otras contienen
+  contraseñas. El script revoca y concede **por nombre de objeto** (nunca «a todo el esquema»), es idempotente y va en
+  una sola transacción: si una sentencia falla, no queda ningún cambio a medias.
+
+Qué se verifica con tests contra PostgreSQL real: el estado final de la base y del esquema por rol (consultas al
+catálogo), que `owner` cree una tabla y una función nuevas y `writer` y `reader` no accedan a ellas, cada operación
+permitida y cada operación prohibida de `writer` y `reader` (las prohibidas fallan con `42501`), que el catálogo de
+todas las tablas y vistas (incluida `_prisma_migrations`) coincida exactamente con lo anterior, que ejecutar el script
+dos veces deje los privilegios idénticos, que un script que falla a mitad no deje cambios, y que un SQL versionado
+no contenga contraseñas.
+
+## Migrar y aplicar permisos
+
+Un único comando, dentro de `backend/`:
+
+```
+npm run db:deploy
+```
+
+Compila el backend, lee `OWNER_DATABASE_URL` del `.env` de la raíz, ejecuta las migraciones de Prisma y, **solo si
+terminan bien**, ejecuta `prisma/permissions.sql`. Termina con código distinto de cero si cualquiera de los dos pasos
+falla. Se puede repetir sin riesgo: sin migraciones pendientes no cambia nada.
+
+- El archivo `.env` de la raíz es obligatorio para `npm run db:deploy`: el script usa `node --env-file=../.env` y, si
+  el archivo no existe, Node termina con código 9 y no se aplica nada.
+- Se usa siempre este comando: para desplegar y también en los tests (el preparador de la base de pruebas llama al
+  mismo código).
+- Si una migración futura añade una tabla o una vista, hay que ampliar `prisma/permissions.sql` con su revocación y su
+  concesión por nombre; si no, ningún rol salvo `owner` podrá usarla.
+- Este comando es la única vía donde se usa `owner`. El servicio usa `writer`, y el frontend, `reader`.
 
 ## Instalación
 
-Pendiente: se documenta cuando existan los proyectos.
+Requisitos: Node.js con npm y Docker Desktop. Con la base de datos de desarrollo arriba (ver «Base de datos de
+desarrollo») y el `.env` creado:
+
+```powershell
+cd backend
+npm ci
+```
+
+El frontend se documentará cuando exista.
 
 ## Cómo ejecutar
 
-Pendiente: se documenta cuando existan los proyectos.
+Todavía no hay servicio HTTP que arrancar (Express se añade en un PR posterior). Hoy se puede preparar la base de
+datos con `npm run db:deploy` (dentro de `backend/`) y comprobar el proyecto con los comandos de «Pruebas». La
+ejecución de la aplicación completa se documentará cuando existan el servicio y el frontend.
 
 ## Pruebas
 
 - Cobertura mínima del 95 % sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
-- Comandos: pendiente, se documentan cuando existan los proyectos.
+- Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
+  Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+- Frontend: se documentará cuando exista.
 
 ## Base de datos
 
-Pendiente de implementar:
-
-- Migración documentada del esquema de la tabla `tasks`.
-- `queries.sql` con dos consultas escritas a mano: filtro por `completed` y conteo agrupado por estado.
-- Índice sobre `completed`. Justificación honesta: con pocas filas aporta poco beneficio; se justifica por el patrón
-  de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado de la tabla.
+Ya implementado: migración documentada de la tabla `tasks` (ver «Esquema y migraciones»), `backend/queries.sql` con
+dos consultas escritas a mano (filtro por `completed` y conteo agrupado por estado; ver «Consultas SQL») e índice
+sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio;
+se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
+de la tabla.
 
 ## Despliegue en Ubuntu
 
