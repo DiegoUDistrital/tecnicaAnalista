@@ -11,7 +11,6 @@ import { getTestDatabase, truncateTasks } from '../helpers/test-database';
 const FIVE_FIELDS = ['id', 'title', 'description', 'completed', 'createdAt'];
 const QUERY_DETAIL = { field: 'query', message: 'Parámetros de consulta no permitidos.' };
 const COMPLETED_DETAIL = { field: 'completed', message: 'Debe ser true o false.' };
-const UUID = '3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f';
 
 let api: ApiApp;
 let loopback: LoopbackServer;
@@ -250,16 +249,6 @@ describe('RF-C22: métodos y rutas de /api/tasks', () => {
 
       expect(reply.status).toBe(404);
       expect(reply.json).toEqual({ error: { code: 'NOT_FOUND', message: 'Recurso no encontrado.', details: [] } });
-    },
-  );
-
-  // PUT tiene sus propios tests y DELETE aún no está cableado (T4); la tabla de métodos da 405 a lo no cableado.
-  it.each(['GET', 'POST', 'PATCH'])(
-    'RF-C22: TRANSITORIO (la 004 lo sustituye en T5): %s /api/tasks/<uuid> da 405',
-    async (method) => {
-      const reply = await call(method, `/api/tasks/${UUID}`);
-
-      expect(reply.status).toBe(405);
     },
   );
 });
