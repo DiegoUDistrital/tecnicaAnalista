@@ -4,6 +4,7 @@ import { type AppConfig, loadConfig } from '../config/config';
 import { createPool, type Database } from '../db/pool';
 import { DatabaseUnavailableError } from '../errors/database-unavailable-error';
 import { createLogger } from '../logging/logger';
+import { attachClientErrorHandler } from './client-error';
 import { createConnectionTracker } from './connection-tracker';
 import { runWithin } from './deadline';
 import type { ServerDeps, ServerLike } from './server.types';
@@ -14,7 +15,7 @@ function defaultDeps(): ServerDeps {
     env: process.env,
     logger: createLogger((line) => process.stdout.write(line)),
     createDatabase: (config, logger) => createPool({ connectionString: config.databaseUrl, ...config.pool }, logger),
-    createServer: (logger) => http.createServer(createApp({ logger })),
+    createServer: (logger, database) => http.createServer(createApp({ logger, database })),
     process,
     timers: {
       setTimer: (callback, ms) => {
@@ -168,12 +169,13 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
     }
 
     /** Crea el servidor y escucha. Tras cada espera comprueba si se pidió el aborto. */
-    async function listenIfNotAborted(port: number, host: string): Promise<void> {
+    async function listenIfNotAborted(db: Database, port: number, host: string): Promise<void> {
       if (!(await pendingCheck) || abortRequested) {
         return;
       }
       try {
-        server = deps.createServer(deps.logger);
+        server = deps.createServer(deps.logger, db);
+        attachClientErrorHandler(server);
         tracker.attach(server);
         listenCalled = true;
         await listen(server, port, host);
@@ -252,6 +254,6 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
       return;
     }
     pendingCheck = checkDatabase(database);
-    void listenIfNotAborted(config.server.port, config.server.host);
+    void listenIfNotAborted(database, config.server.port, config.server.host);
   });
 }

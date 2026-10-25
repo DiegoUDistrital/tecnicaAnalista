@@ -37,6 +37,8 @@ Las versiones se fijan al crear cada proyecto.
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
+Hay dos endpoints, `GET /api/tasks` (lectura) y `POST /api/tasks` (creación) (ver «API de tareas»); `PUT` y `DELETE`
+aún no existen y la API todavía no tiene seguridad.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -106,7 +108,7 @@ valor que imite un marco de pila completo (ruta absoluta, línea y columna). No 
 
 ## Rutas del servicio
 
-`GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
+`GET /api/tasks` se describe en «API de tareas». `GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
 que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Content-Type`, `Content-Encoding`,
 `Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
 ni `X-Powered-By`, y nunca responde `304`.
@@ -205,6 +207,227 @@ todo_app=> SELECT id, title, description, completed, "createdAt" FROM tasks WHER
 
 Cambie `true` por `false` para ver las pendientes. Dentro del contenedor, `psql` entra por el socket local sin pedir
 contraseña. La base de desarrollo debe estar migrada antes de probarlas.
+
+## Cómo guarda y lee tareas el backend
+
+Esta es la capa de datos que usa la API (`backend/src/repositories/task-repository.ts`); la lista se expone con `GET /api/tasks`.
+
+- Todas las consultas son parametrizadas: los valores (título, descripción, filtro) viajan en el arreglo de parámetros
+  de `pg` y nunca se concatenan al texto SQL. Un título como `'); DROP TABLE tasks;--` se guarda tal cual.
+- La lista va de la tarea más reciente a la más antigua y desempata por `id` ascendente. El orden usa la marca de tiempo
+  completa de la base de datos (con microsegundos), no el texto que se muestra al cliente.
+- `createdAt` se entrega en ISO 8601 UTC con milisegundos (`2026-03-04T05:06:07.123Z`). Los microsegundos se truncan
+  (no se redondean) en la propia consulta, para que la hora mostrada nunca sea posterior a la almacenada, y no depende
+  de la zona horaria de la sesión.
+- Hay dos consultas de lista (con y sin filtro `completed`) en lugar de una con condición opcional, para que
+  PostgreSQL pueda usar el índice sobre `completed`.
+- La lista no tiene paginación: devuelve todas las tareas.
+
+## API de tareas
+
+> **Aviso de seguridad.** La API NO tiene seguridad (ni API key, ni límite de peticiones, ni CORS, ni cabeceras de
+> seguridad) y escucha por defecto solo en 127.0.0.1: no debe exponerse a ninguna red hasta que llegue la seguridad en
+> un PR posterior. La lista no tiene límite de tamaño y cualquiera con acceso puede crear tareas sin límite. Existen la
+> lectura y la creación (`GET` y `POST` en `/api/tasks`); `PUT` y `DELETE` en `/api/tasks/:id` todavía no existen y
+> responden `404`.
+
+### `GET /api/tasks`
+
+Devuelve `200` con un arreglo JSON de todas las tareas, de la más reciente a la más antigua (con desempate por `id`),
+o `[]` si no hay ninguna. No hay paginación. Cada tarea tiene exactamente cinco campos:
+
+```json
+{
+  "id": "3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f",
+  "title": "Comprar pan",
+  "description": "",
+  "completed": false,
+  "createdAt": "2026-03-04T05:06:07.123Z"
+}
+```
+
+`createdAt` es ISO 8601 UTC con milisegundos (truncados, no redondeados). La respuesta de una lectura correcta es siempre
+`200`: el ETag está desactivado y el servicio nunca responde `304`, aunque la petición traiga `If-None-Match`.
+
+Filtro opcional `?completed=true` (solo completadas) o `?completed=false` (solo pendientes):
+
+- Solo se admite el parámetro `completed`, una sola vez y con el valor exacto `true` o `false` (en minúsculas). Repetido,
+  vacío, sin valor, en mayúsculas, con otro valor o usado como arreglo (`completed[]=true`) da `400` con `field`
+  `completed` («Debe ser true o false.»).
+- Cualquier otro parámetro (`?filter=pending`, `?__proto__=x`, `?a[b]=1`...) da `400` con `field` `query` («Parámetros de
+  consulta no permitidos.»). El nombre del parámetro nunca se refleja en la respuesta. Si coinciden ambos problemas,
+  `details` lleva las dos entradas (`query` primero).
+- El nombre y el valor se decodifican una sola vez (porcentaje y `+`): `?completed=%74rue` y `?%63ompleted=true` son
+  válidos; `?completed=true%20`, `?completed=%2574rue` y un valor que no se puede decodificar son `400 completed`
+  (nunca `500`). `GET /api/tasks?` equivale a no enviar consulta.
+- La cadena de consulta se evalúa CRUDA, sin el intérprete de consulta de Express (desactivado): ese intérprete
+  descarta claves como `__proto__` y trunca a 1 000 parámetros, así que se podrían colar parámetros sin verlos. Se miran
+  todos los parámetros, también más allá del 1 000. Alternativa descartada: usar la consulta ya interpretada (falsos
+  negativos silenciosos).
+- `GET` no admite cuerpo (400 `body`) y se aplican las reglas de «Entrada de la API».
+
+### `POST /api/tasks`
+
+Crea una tarea. Cuerpo JSON `{ "title": "...", "description": "..." }`: `title` es obligatorio y `description` opcional
+(cadena vacía si se omite; `null` no vale). Las reglas de longitud, recorte y caracteres están en «Validación de título
+y descripción», y las del cuerpo y las cabeceras en «Entrada de la API». Responde `201` con la tarea creada, con
+exactamente los cinco campos y `completed` en `false` (`id` y `createdAt` los genera la base de datos):
+
+```json
+{
+  "id": "3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f",
+  "title": "Comprar pan",
+  "description": "",
+  "completed": false,
+  "createdAt": "2026-03-04T05:06:07.123Z"
+}
+```
+
+- Se permiten títulos duplicados.
+- Cualquier clave que no sea `title` o `description` (`id`, `createdAt`, `completed`, `__proto__`, `constructor`...) da
+  `400` con `field` `body` («El cuerpo contiene campos no permitidos.»), sin nombrar los campos.
+- `POST` no admite NINGÚN parámetro de consulta, tampoco `completed`: `POST /api/tasks?x=1` da `400` con `field`
+  `query`. `POST /api/tasks?` equivale a no enviar consulta.
+- Una violación de restricción de la base de datos o una base de datos caída dan `500` genérico (ver abajo).
+
+### Errores 400: formato de `details`
+
+Un `400` lleva `details` con una entrada `{ field, message }` por problema, siempre en el orden `body`, `query`,
+`title`, `description`, `completed`. Cada campo inválido aporta solo su primer problema (tipo, caracteres, longitud). Los
+mensajes son los de la tabla de «Validación de título y descripción», más «El cuerpo debe ser un objeto JSON válido.»,
+«Esta ruta no admite cuerpo.» y «El cuerpo no coincide con la longitud declarada.» para `body`. Nunca se refleja el valor
+enviado ni el nombre de campos o parámetros desconocidos. Ejemplo, `POST /api/tasks?x=1` con
+`{"foo":1,"title":"","description":5}`:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Datos inválidos.",
+    "details": [
+      { "field": "body", "message": "El cuerpo contiene campos no permitidos." },
+      { "field": "query", "message": "Parámetros de consulta no permitidos." },
+      { "field": "title", "message": "Debe tener entre 1 y 100 caracteres." },
+      { "field": "description", "message": "Debe ser una cadena de texto." }
+    ]
+  }
+}
+```
+
+Solo la etapa de campos y consulta acumula problemas; las anteriores (ruta y método, tamaño, codificación y tipo,
+cuerpo) devuelven un único error.
+
+### Orden de comprobación de una petición
+
+1. Ruta y método (`404` si la ruta no existe, `405` con `Allow` si el método no está permitido).
+2. Tamaño del cuerpo (`413`).
+3. Codificación y tipo de contenido (`415`).
+4. Cuerpo: lectura, UTF-8, JSON y objeto raíz (`400` `body`).
+5. Campos y consulta, acumulando todos los problemas (`400`).
+6. Base de datos (`500` genérico si falla).
+
+Un error de una etapa anterior gana siempre a los posteriores: un `PATCH` con 20 KB da `405` (no `413`), 20 KB con
+`text/plain` dan `413` (no `415`), `text/plain` con JSON roto da `415`, y un cuerpo con campos inválidos con la base
+de datos caída da `400` (no `500`, porque la base de datos no llega a consultarse).
+
+### Rutas y errores de base de datos
+
+Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
+`Allow: GET, POST`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>` (`PUT` y `DELETE` por identificador
+todavía no existen y responden `404`) y cualquier ruta desconocida dan `404`. Si la base de datos falla (inalcanzable o
+con una restricción violada), la respuesta es un `500` genérico y el log registra solo la clase del error y su
+SQLSTATE, nunca datos de la petición (ni título, ni descripción, ni cuerpo, ni consulta).
+
+Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio (`services`) → repositorio
+(`repositories`), con SQL parametrizado de `pg`. La aplicación recibe la base de datos al construirse
+(`createApp({ logger, database })`), así que no existe una aplicación sin base de datos.
+
+## Validación de título y descripción
+
+Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/validation/`).
+
+- `title` es obligatorio y tiene de 1 a 100 caracteres; `description` es opcional, de 0 a 500 (cadena vacía por
+  defecto, nunca nula). Se miden en caracteres Unicode (puntos de código: un emoji cuenta como uno) después de
+  recortar los espacios de los extremos, y se guarda el valor ya recortado.
+- Los espacios que se recortan son los de `String.prototype.trim()`: U+0009 a U+000D, U+0020, U+00A0, U+1680,
+  U+2000 a U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 y U+FEFF. U+0085, U+180E y U+200B no se recortan.
+- Se rechazan el carácter NUL (U+0000) y los sustitutos UTF-16 sueltos (por ejemplo `"\ud800"`), que PostgreSQL o
+  UTF-8 no admiten. El resto de caracteres de control o invisibles se aceptan. Limitación conocida: un título formado
+  solo por U+200B se acepta y se vería vacío.
+- Solo se permiten las claves `title` y `description`; cualquier otra clave propia del JSON (`id`, `createdAt`,
+  `completed`, `__proto__`, `constructor`...) es un campo no permitido.
+- Cada campo inválido produce una entrada `{ field, message }` con su primer problema (tipo, caracteres, longitud);
+  nunca se refleja el valor enviado ni el nombre de campos desconocidos:
+
+| Campo | Causa | Mensaje |
+|---|---|---|
+| `body` | claves no permitidas | El cuerpo contiene campos no permitidos. |
+| `query` | parámetros no admitidos | Parámetros de consulta no permitidos. |
+| `title` | falta o no es cadena | Debe ser una cadena de texto. |
+| `title` | NUL o sustituto suelto | Contiene caracteres no permitidos. |
+| `title` | longitud | Debe tener entre 1 y 100 caracteres. |
+| `description` | no es cadena | Debe ser una cadena de texto. |
+| `description` | NUL o sustituto suelto | Contiene caracteres no permitidos. |
+| `description` | longitud | Debe tener como máximo 500 caracteres. |
+| `completed` | valor no booleano | Debe ser true o false. |
+
+Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `completed`.
+
+## Entrada de la API: tamaño y tipo de contenido
+
+Estas son las reglas de entrada que se aplican a las rutas de `/api/*` (`backend/src/http/input/`); `/health` queda
+fuera de ellas.
+
+- El cuerpo de una petición no puede superar 10 240 bytes, sea cual sea su tipo. Se lee con un lector propio que corta
+  al pasar el límite y responde 413 (`PAYLOAD_TOO_LARGE`). Tras un 413 el servidor cierra la conexión, para no seguir
+  recibiendo un cuerpo que ya no se va a leer. Si el cliente declara un `Content-Length` mayor que el límite, el 413 se
+  responde sin leer nada.
+- El tamaño se comprueba antes que el tipo: un cuerpo de 20 KB con `text/plain` o con `Content-Encoding: gzip` da 413,
+  no 415.
+- `Content-Encoding` solo puede faltar o ser `identity` (da igual la capitalización). Cualquier otro valor, una lista, un
+  valor vacío o la cabecera repetida da 415. El servidor nunca descomprime nada, así que no hay riesgo de bomba de
+  descompresión.
+- Si hay cuerpo, `Content-Type` debe ser `application/json` o `application/json; charset=utf-8` (415 en cualquier otro
+  caso: `charset=utf8`, comillas, parámetros extra, `;` final, `+json`, vacío o cabecera repetida). Las cabeceras
+  repetidas se detectan sobre las cabeceras crudas, porque Node oculta los duplicados en su vista normal.
+- «Hay cuerpo» se decide solo por las cabeceras (`Content-Length` mayor que 0, o `Transfer-Encoding`), nunca por los
+  bytes recibidos: un cuerpo de solo espacios cuenta como presente, y `Content-Length: 0` no. Sin cuerpo, el
+  `Content-Type` se ignora.
+- Un 415 con `Content-Length` se responde sin esperar al cuerpo y no cierra la conexión: Node descarta lo no leído y la
+  misma conexión sigue sirviendo la petición siguiente.
+
+### Cuerpo JSON
+
+Una vez superados el tamaño y el tipo, el cuerpo se interpreta así (el primer fallo gana, y siempre es un 400 con
+`field` `body`):
+
+- `GET` y `DELETE` no admiten cuerpo: si traen algún byte (sea o no UTF-8 válido) el mensaje es «Esta ruta no admite
+  cuerpo.». Sin `Content-Type` JSON, el 415 va antes.
+- En `POST` y `PUT` el cuerpo no puede estar vacío (un cuerpo de solo espacios no cuenta como vacío: falla después como
+  JSON mal formado).
+- Debe ser UTF-8 bien formado y sin BOM. Un byte que no forma UTF-8 nunca se sustituye por U+FFFD: se guardarían datos
+  distintos de los enviados. (Un U+FFFD legítimo, que llega como `EF BF BD`, sí es válido y se conserva.)
+- Debe ser JSON bien formado y su raíz un objeto (no `[]`, `null`, una cadena, un número ni un booleano). Con claves
+  repetidas gana la última.
+- Si el cliente declara más bytes de los que envía (o corta un `chunked` a mitad) y cierra su lado de escritura, la
+  respuesta es 400 «El cuerpo no coincide con la longitud declarada.» y el servidor cierra la conexión. Si se va del
+  todo, no hay a quién responder: no se envía nada, no se registra como error del servidor y el servicio sigue.
+  Limitación: un cuerpo lento (declara más de lo que envía y deja el socket abierto) lo resuelve el plazo de Node, fuera
+  de este contrato.
+
+#### Por qué existe un manejador de `clientError`
+
+En el caso de «menos bytes de los declarados», Node se adelanta a la aplicación: su analizador HTTP detecta el final
+de la conexión con el cuerpo incompleto (código `HPE_INVALID_EOF_STATE`), emite el evento `clientError` ANTES de que
+nuestro lector de cuerpo vea nada y, por defecto, contesta él mismo `400 Bad Request` sin JSON. Eso rompería el contrato
+de errores. Por eso `backend/src/server/client-error.ts` registra un manejador de `clientError` (en `startServer`) que
+escribe el sobre JSON del contrato (400 `body`, `Content-Type: application/json; charset=utf-8`, `Connection: close`
+y `Content-Length` exacto) solo para ese código y cierra el socket. Para cualquier otro error de cliente reproduce lo
+que Node haría por defecto (400, 431 o 408 sin cuerpo, con `Connection: close`). Si el socket ya no es escribible, o ya
+se había enviado una respuesta por esa conexión (por ejemplo un 415 temprano), solo lo destruye, sin escribir ni
+lanzar. No registra nada en el log: es un fallo del cliente y la lista cerrada de eventos no incluye uno para esto.
+Alternativa descartada: aceptar el 400 de Node sin JSON (incumple el contrato). Limitación: en una conexión
+keep-alive que ya envió alguna respuesta, un cuerpo incompleto posterior cierra la conexión sin respuesta.
 
 ## Roles y permisos
 
@@ -354,15 +577,17 @@ npm start
 ```
 
 `npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
-código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; se
-detiene con Ctrl+C (cierre ordenado, código 0).
+código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; la
+API de tareas está en `GET` y `POST` de `/api/tasks` (ver «API de tareas»). Se detiene con Ctrl+C (cierre ordenado,
+código 0).
 
 `/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
-Aviso de seguridad: por ahora el servicio solo responde `/health`, escucha solo en loopback y NO tiene seguridad (ni
-API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe
-exponerse a ninguna red hasta entonces.
+Aviso de seguridad: el servicio escucha solo en loopback y la API NO tiene seguridad (ni API key, ni límite de
+peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe exponerse a ninguna
+red hasta entonces. `GET /api/tasks` devuelve la lista completa, que crece sin cota, y `PUT` y `DELETE` en
+`/api/tasks/:id` responden `404` porque todavía no existen.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -372,10 +597,15 @@ cuando exista el frontend.
 - Cobertura mínima del 95 % sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
-  Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+  Los tests de base de datos y de la API (`backend/tests/api`) usan PostgreSQL real, necesitan el contenedor arriba y el
+  `.env` (ver «Base de datos de desarrollo») y reinician el esquema: no se ejecutan a la vez que otro proceso.
   Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
   Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
   a mano en Linux.
+- La prueba de humo HTTP (`backend/tests/api/node-http-smoke.test.ts`) envía por socket crudo cabeceras o URL enormes,
+  un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
+  comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
+  caracterización: documenta lo que hace Node, no código propio.
 - Frontend: se documentará cuando exista.
 
 ## Base de datos
@@ -436,6 +666,37 @@ prevista. Queda como trabajo futuro.
 **j) Riesgos residuales.** Hay dos credenciales de base de datos en la aplicación (`writer` y `reader`; el daño
 posible con `reader` es muy limitado). Además hay dos caminos de lectura: los contadores vía Prisma y la lista vía
 Express, que pueden diferir un instante tras una escritura; se resuelve refrescando tras cada acción.
+
+**k) Entrada estricta en `/api`.** El tamaño (10 240 bytes) se comprueba antes que el tipo, y `Content-Encoding` solo
+puede ser `identity`: así un cuerpo enorme o comprimido se corta sin leerlo ni descomprimirlo (no hay bomba de
+descompresión). El cuerpo debe ser UTF-8 bien formado y nunca se sustituyen bytes inválidos por U+FFFD, para no guardar
+datos distintos de los enviados. Se usa un lector de cuerpo propio y no `express.json`, que acepta otros tipos y
+codificaciones y no permite fijar este orden. Alternativa descartada: `express.json` con sus opciones.
+
+**l) Consulta cruda.** `?completed=` se evalúa sobre la cadena sin interpretar (el intérprete de consulta de Express
+está desactivado), porque ese intérprete descarta claves como `__proto__` y trunca a 1 000 parámetros, lo que dejaría
+pasar parámetros sin verlos. Alternativa descartada: usar `req.query`.
+
+**m) Fecha truncada en SQL.** `createdAt` sale ya formateado de la consulta, con los microsegundos truncados a
+milisegundos y en UTC, y la lista se ordena por la marca completa. Así la hora mostrada nunca es posterior a la
+guardada y el orden no depende de la zona horaria ni del redondeo. Alternativa descartada: formatear en JavaScript
+con `Date` (redondea y pierde el orden fino).
+
+**n) Orden fijo de validación.** Ruta y método, tamaño, codificación y tipo, cuerpo, campos y consulta, base de datos
+(ver «Orden de comprobación de una petición»): el resultado de una petición con varios fallos es siempre el mismo y
+una base de datos caída nunca tapa un error de validación. Solo la etapa de campos acumula problemas.
+
+**Limitaciones conocidas de la API actual.**
+
+- Sin seguridad: ni API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad. No debe exponerse a ninguna
+  red hasta que se añadan.
+- `PUT` y `DELETE` en `/api/tasks/:id` responden `404` hasta que se implementen.
+- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST` no tiene límite de uso.
+- Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
+  mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la
+  conexión; el servicio sigue atendiendo.
+- Un cuerpo lento (declara más bytes de los que envía y deja el socket abierto) lo resuelve el plazo de Node.
+- Los caracteres invisibles se aceptan (un título solo con U+200B se guarda y se vería vacío).
 
 **Nota sobre el historial.** El commit "backend setup con Express y Prisma" abre el backend: Prisma se usa allí para
 el esquema y las migraciones, mientras que las consultas de la API se hacen con `pg` y `Pool`.

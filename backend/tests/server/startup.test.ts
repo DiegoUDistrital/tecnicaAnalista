@@ -1,10 +1,15 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Express } from 'express';
 import { createApp } from '../../src/app';
+import type { Database } from '../../src/db/pool';
+import { withInput } from '../../src/http/input/request-input';
+import { registerRoute } from '../../src/http/route-table';
 import type { Logger } from '../../src/logging/logger';
 import { startServer } from '../../src/server/start-server';
 import { createCaptureLogger } from '../helpers/capture-logger';
+import { rawRequest } from '../helpers/raw-http';
 import { createHarness, getFreePort, SENTINEL_PASSWORD, validEnv } from '../helpers/server-fakes';
 
 const PROCESS_EVENTS = ['SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
@@ -253,8 +258,8 @@ describe('RF-S11: evento startup', () => {
     const harness = createHarness({ env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
     const real = {
       ...harness.overrides,
-      createServer: (logger: Logger) => {
-        const server = http.createServer(createApp({ logger }));
+      createServer: (logger: Logger, database: Database) => {
+        const server = http.createServer(createApp({ logger, database }));
         cleanups.push(closeHttp(server));
         return server;
       },
@@ -298,5 +303,41 @@ describe('RF-S11: dependencias reales por defecto', () => {
     expect(response.status).toBe(200);
     expect(code).toBe(0);
     expect(lines.join('')).toContain('"event":"shutdown_completed"');
+  });
+});
+
+describe('RF-C24: manejador de clientError registrado por startServer', () => {
+  it('RF-C24: con el servidor por defecto, un body incompleto con cierre de escritura recibe el 400 JSON', async () => {
+    const port = await getFreePort();
+    const harness = createHarness({ env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
+    // Ruta que espera el cuerpo (como las de /api): así ninguna respuesta se adelanta al final de la conexión.
+    const registerRoutes = (app: Express): void => {
+      registerRoute(app, '/api/echo', {
+        POST: withInput({ bodyMode: 'required' }, (_req, res) => {
+          res.status(200).json({});
+        }),
+      });
+    };
+    const running = startServer({
+      ...harness.overrides,
+      createServer: (logger: Logger, database: Database) => {
+        const server = http.createServer(createApp({ logger, database, registerRoutes }));
+        cleanups.push(closeHttp(server));
+        return server;
+      },
+    });
+    await vi.waitFor(() => expect(harness.events()).toEqual(['startup']));
+
+    const request =
+      'POST /api/echo HTTP/1.1\r\nHost: l\r\nContent-Type: application/json\r\nContent-Length: 50\r\n\r\n0123456789';
+    const result = await rawRequest(port, [request], { afterWrite: 'end' });
+    harness.fakeProcess.signal('SIGTERM');
+    await running;
+
+    expect(result.responses[0]?.status).toBe(400);
+    expect(JSON.parse(result.responses[0]?.body ?? '')).toMatchObject({
+      error: { code: 'VALIDATION_ERROR', details: [{ field: 'body' }] },
+    });
+    expect(result.closedByServer).toBe(true);
   });
 });

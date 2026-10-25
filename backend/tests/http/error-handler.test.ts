@@ -3,12 +3,12 @@ import express, { type Express } from 'express';
 import { DatabaseError } from 'pg';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app';
 import { DatabaseUnavailableError } from '../../src/errors/database-unavailable-error';
 import { guard, ThrownValue } from '../../src/http/guard';
 import { HttpError } from '../../src/http/http-error';
 import { createCaptureLogger } from '../helpers/capture-logger';
 import { listenOnLoopback } from '../helpers/loopback';
+import { createTestApp } from '../helpers/test-app';
 
 const GENERIC_500 = { error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] } };
 const SQL = 'SELECT secret_column FROM tasks WHERE id = $1';
@@ -122,7 +122,7 @@ function routes(app: Express): void {
 
 function build(): { app: Express; log: ReturnType<typeof createCaptureLogger> } {
   const log = createCaptureLogger();
-  return { app: createApp({ logger: log.logger, registerRoutes: routes }), log };
+  return { app: createTestApp({ capture: log, registerRoutes: routes }).app, log };
 }
 
 afterEach(() => {

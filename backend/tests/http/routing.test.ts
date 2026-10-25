@@ -1,16 +1,15 @@
+import type { Express } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app';
 import { registerRoute } from '../../src/http/route-table';
-import { createCaptureLogger } from '../helpers/capture-logger';
+import { createTestApp } from '../helpers/test-app';
 
 const JSON_UTF8 = 'application/json; charset=utf-8';
 const NOT_FOUND = { error: { code: 'NOT_FOUND', message: 'Recurso no encontrado.', details: [] } };
 const NOT_ALLOWED = { error: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.', details: [] } };
 
-function build(): ReturnType<typeof createApp> {
-  return createApp({
-    logger: createCaptureLogger().logger,
+function build(): Express {
+  return createTestApp({
     registerRoutes: (target) => {
       registerRoute(target, '/boom', {
         GET: () => {
@@ -18,7 +17,7 @@ function build(): ReturnType<typeof createApp> {
         },
       });
     },
-  });
+  }).app;
 }
 
 describe('RF-S9: rutas estrictas', () => {

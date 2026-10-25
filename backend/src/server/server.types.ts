@@ -22,7 +22,7 @@ export interface ServerDeps {
   env: Readonly<Record<string, string | undefined>>;
   logger: Logger;
   createDatabase: (config: AppConfig, logger: Logger) => Database;
-  createServer: (logger: Logger) => ServerLike;
+  createServer: (logger: Logger, database: Database) => ServerLike;
   process: ProcessLike;
   timers: Timers;
 }
