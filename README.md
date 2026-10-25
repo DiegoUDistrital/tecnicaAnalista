@@ -31,13 +31,22 @@ Las versiones se fijan al crear cada proyecto.
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
-- `backend/queries.sql`: consultas SQL de la prueba (próximamente).
+- `backend/queries.sql`: consultas SQL de la prueba.
 
 ## Backend (estado actual)
 
-Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR (servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
+Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
+del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR
+(servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
 
-Comandos disponibles (dentro de `backend/`): `npm run lint`, `npm run format`, `npm run typecheck`, `npm test`, `npm run build`.
+Comandos disponibles (dentro de `backend/`):
+
+- `npm run lint`: ESLint y comprobación de formato con Prettier.
+- `npm run format`: aplica Prettier a los archivos.
+- `npm run typecheck`: comprobación de tipos con `tsc` sin generar archivos.
+- `npm test`: tests con Vitest y cobertura (falla por debajo del 95 %).
+- `npm run build`: compila a `backend/dist`.
+- `npm run db:deploy`: aplica las migraciones y los permisos (ver «Migrar y aplicar permisos»).
 
 ## Base de datos de desarrollo
 
@@ -197,6 +206,8 @@ Compila el backend, lee `OWNER_DATABASE_URL` del `.env` de la raíz, ejecuta las
 terminan bien**, ejecuta `prisma/permissions.sql`. Termina con código distinto de cero si cualquiera de los dos pasos
 falla. Se puede repetir sin riesgo: sin migraciones pendientes no cambia nada.
 
+- El archivo `.env` de la raíz es obligatorio para `npm run db:deploy`: el script usa `node --env-file=../.env` y, si
+  el archivo no existe, Node termina con código 9 y no se aplica nada.
 - Se usa siempre este comando: para desplegar y también en los tests (el preparador de la base de pruebas llama al
   mismo código).
 - Si una migración futura añade una tabla o una vista, hay que ampliar `prisma/permissions.sql` con su revocación y su
@@ -205,27 +216,37 @@ falla. Se puede repetir sin riesgo: sin migraciones pendientes no cambia nada.
 
 ## Instalación
 
-Pendiente: se documenta cuando existan los proyectos.
+Requisitos: Node.js con npm y Docker Desktop. Con la base de datos de desarrollo arriba (ver «Base de datos de
+desarrollo») y el `.env` creado:
+
+```powershell
+cd backend
+npm ci
+```
+
+El frontend se documentará cuando exista.
 
 ## Cómo ejecutar
 
-Pendiente: se documenta cuando existan los proyectos.
+Todavía no hay servicio HTTP que arrancar (Express se añade en un PR posterior). Hoy se puede preparar la base de
+datos con `npm run db:deploy` (dentro de `backend/`) y comprobar el proyecto con los comandos de «Pruebas». La
+ejecución de la aplicación completa se documentará cuando existan el servicio y el frontend.
 
 ## Pruebas
 
 - Cobertura mínima del 95 % sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
-- Comandos: pendiente, se documentan cuando existan los proyectos.
+- Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
+  Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+- Frontend: se documentará cuando exista.
 
 ## Base de datos
 
-Pendiente de implementar:
-
-- `queries.sql` con dos consultas escritas a mano: filtro por `completed` y conteo agrupado por estado.
-
-Ya implementado: migración documentada de la tabla `tasks` (ver «Esquema y migraciones») e índice sobre `completed`
-(`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio; se justifica por el
-patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado de la tabla.
+Ya implementado: migración documentada de la tabla `tasks` (ver «Esquema y migraciones»), `backend/queries.sql` con
+dos consultas escritas a mano (filtro por `completed` y conteo agrupado por estado; ver «Consultas SQL») e índice
+sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio;
+se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
+de la tabla.
 
 ## Despliegue en Ubuntu
 
