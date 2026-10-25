@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { startServer } from '../../src/server/start-server';
 import { createHarness, type Harness } from '../helpers/server-fakes';
 
@@ -62,5 +62,62 @@ describe('RF-S13: códigos de salida del arranque', () => {
 
     expectOutcome(harness, code, { events: ['startup_failed', 'shutdown_timeout'], code: 1 });
     expect(harness.capture.records()[1]).toMatchObject({ timeoutMs: 10000 });
+  });
+});
+
+/** Espera al evento `startup`: el servicio ya está en funcionamiento. */
+async function waitForStartup(harness: Harness): Promise<void> {
+  await vi.waitFor(() => expect(harness.events()).toContain('startup'));
+}
+
+describe('RF-S13: códigos de salida del cierre en funcionamiento', () => {
+  it('RF-S13 fila 6: señal en funcionamiento', async () => {
+    const harness = createHarness();
+    const running = startServer(harness.overrides);
+    await waitForStartup(harness);
+
+    harness.fakeProcess.signal('SIGTERM');
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['startup', 'shutdown_started', 'shutdown_completed'], code: 0 });
+    expect(harness.capture.records()[2]).toMatchObject({ exitCode: 0 });
+  });
+
+  it('RF-S13 fila 7a: plazo excedido con el servidor colgado', async () => {
+    const harness = createHarness({ serverClose: 'hang' });
+    const running = startServer(harness.overrides);
+    await waitForStartup(harness);
+
+    harness.fakeProcess.signal('SIGTERM');
+    harness.timers.fire();
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['startup', 'shutdown_started', 'shutdown_timeout'], code: 1 });
+    expect(harness.fakeServer.closeAllCalls()).toBe(1);
+  });
+
+  it('RF-S13 fila 7b: plazo excedido con el Pool colgado', async () => {
+    const harness = createHarness({ database: { close: 'hang' } });
+    const running = startServer(harness.overrides);
+    await waitForStartup(harness);
+
+    harness.fakeProcess.signal('SIGINT');
+    harness.timers.fire();
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['startup', 'shutdown_started', 'shutdown_timeout'], code: 1 });
+    expect(harness.fakeServer.closeAllCalls()).toBe(1);
+  });
+
+  it('RF-S13 fila 8: señal con un cierre en curso', async () => {
+    const harness = createHarness({ serverClose: 'hang' });
+    const running = startServer(harness.overrides);
+    await waitForStartup(harness);
+    harness.fakeProcess.signal('SIGTERM');
+
+    harness.fakeProcess.signal('SIGTERM');
+    const code = await running;
+
+    expectOutcome(harness, code, { events: ['startup', 'shutdown_started'], code: 1 });
   });
 });

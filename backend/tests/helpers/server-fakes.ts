@@ -107,12 +107,19 @@ export interface FakeServer {
   readonly emitter: EventEmitter;
   /** Argumentos de cada llamada a `listen`. */
   readonly listenCalls: { port: unknown; host: unknown }[];
+  /** Cuántas veces se llamó a `closeAllConnections`. */
+  closeAllCalls(): number;
 }
 
 /** Servidor falso: `listen` responde con `listening`, con `error` o no responde (el test emite a mano). */
-export function createFakeServer(behavior: ListenBehavior, calls: string[] = []): FakeServer {
+export function createFakeServer(
+  behavior: ListenBehavior,
+  calls: string[] = [],
+  close: 'resolve' | 'hang' = 'resolve',
+): FakeServer {
   const emitter = new EventEmitter();
   const listenCalls: { port: unknown; host: unknown }[] = [];
+  let closeAllCalls = 0;
   const server = Object.assign(emitter, {
     listen(port: unknown, host: unknown) {
       calls.push('listen');
@@ -124,14 +131,18 @@ export function createFakeServer(behavior: ListenBehavior, calls: string[] = [])
       }
       return server;
     },
-    close() {
+    close(callback?: () => void) {
+      calls.push('server_close');
+      if (close === 'resolve') {
+        queueMicrotask(() => callback?.());
+      }
       return server;
     },
     closeAllConnections() {
-      return undefined;
+      closeAllCalls += 1;
     },
   });
-  return { server: server as unknown as ServerLike, emitter, listenCalls };
+  return { server: server as unknown as ServerLike, emitter, listenCalls, closeAllCalls: () => closeAllCalls };
 }
 
 export interface FakeDatabaseOptions {
@@ -175,6 +186,8 @@ export interface FakeProcess {
   readonly process: ProcessLike;
   /** Total de manejadores registrados, de cualquier evento. */
   listenerTotal(): number;
+  /** Emite una señal en el proceso falso. */
+  signal(name: 'SIGTERM' | 'SIGINT'): void;
 }
 
 export function createFakeProcess(): FakeProcess {
@@ -182,6 +195,9 @@ export function createFakeProcess(): FakeProcess {
   return {
     process: emitter as unknown as ProcessLike,
     listenerTotal: () => emitter.eventNames().reduce((sum, name) => sum + emitter.listenerCount(name), 0),
+    signal: (name) => {
+      emitter.emit(name);
+    },
   };
 }
 
@@ -189,6 +205,8 @@ export interface HarnessOptions {
   env?: Record<string, string | undefined>;
   listen?: ListenBehavior;
   database?: FakeDatabaseOptions;
+  /** Comportamiento de `server.close`: avisa al terminar o no termina nunca. */
+  serverClose?: 'resolve' | 'hang';
 }
 
 export interface Harness {
@@ -198,7 +216,7 @@ export interface Harness {
   readonly fakeProcess: FakeProcess;
   readonly fakeDatabase: FakeDatabase;
   readonly fakeServer: FakeServer;
-  /** Orden de las llamadas `query`, `listen` y `close`. */
+  /** Orden de las llamadas `query`, `listen`, `server_close` y `close` (la del Pool). */
   readonly calls: string[];
   /** Cuántas veces se pidió crear el Pool y el servidor. */
   created(): { database: number; server: number };
@@ -213,7 +231,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const timers = createFakeTimers();
   const fakeProcess = createFakeProcess();
   const fakeDatabase = createFakeDatabase({ ...options.database, calls });
-  const fakeServer = createFakeServer(options.listen ?? 'listening', calls);
+  const fakeServer = createFakeServer(options.listen ?? 'listening', calls, options.serverClose);
   const created = { database: 0, server: 0 };
   return {
     overrides: {

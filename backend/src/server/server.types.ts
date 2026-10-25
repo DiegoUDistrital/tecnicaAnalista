@@ -4,7 +4,10 @@ import type { Database } from '../db/pool';
 import type { Logger } from '../logging/logger';
 
 /** Lo mínimo que se usa de un servidor HTTP; permite inyectar uno falso (un `EventEmitter`). */
-export type ServerLike = Pick<http.Server, 'listen' | 'once' | 'off' | 'on' | 'close' | 'closeAllConnections'>;
+export type ServerLike = Pick<
+  http.Server,
+  'listen' | 'once' | 'off' | 'on' | 'prependListener' | 'close' | 'closeAllConnections'
+>;
 
 /** Lo mínimo que se usa del proceso; permite inyectar un `EventEmitter` en los tests. */
 export type ProcessLike = Pick<NodeJS.Process, 'on' | 'off'>;

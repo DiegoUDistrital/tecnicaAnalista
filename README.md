@@ -289,6 +289,23 @@ una configuración inválida, su mensaje con los nombres de las variables, nunca
 Todavía no hay un comando que lance el servicio (llega en una tarea posterior): esta parte del arranque se comprueba
 con los tests.
 
+## Cierre ordenado
+
+Con el servicio en funcionamiento, `SIGTERM` o `SIGINT` inician un único cierre ordenado:
+
+1. El servidor deja de aceptar conexiones nuevas y cierra las conexiones ociosas (keep-alive).
+2. Las peticiones en curso terminan con normalidad; su respuesta lleva `Connection: close`, así que su conexión se
+   cierra al acabar (también `/health`).
+3. Cuando ya no quedan conexiones, se cierra el Pool de la base de datos.
+
+Todo ocurre dentro del plazo `SHUTDOWN_TIMEOUT_MS`. Si el cierre es completo, el servicio registra
+`shutdown_started` (con la señal) y `shutdown_completed` (con `exitCode`) y termina con código 0. Si el plazo se
+agota (una petición que no termina o un Pool que no cierra), registra `shutdown_timeout`, corta las conexiones que
+queden y termina con código 1. Una segunda señal mientras el cierre sigue en curso termina de inmediato con código 1.
+
+En Windows, `SIGTERM` mata el proceso sin ejecutar manejadores; `Ctrl+C` (`SIGINT`) sí los ejecuta. La señal real
+se comprueba a mano en Linux; los tests la simulan con un proceso falso.
+
 El frontend se documentará cuando exista.
 
 ## Cómo ejecutar

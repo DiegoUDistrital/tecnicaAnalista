@@ -103,8 +103,10 @@ describe('RF-S1: configuración inválida y excepciones al crear', () => {
 
     await startServer(failing.overrides);
     await startServer(invalid.overrides);
-    void startServer(working.overrides);
+    const running = startServer(working.overrides);
     await vi.waitFor(() => expect(working.events()).toContain('startup'));
+    working.fakeProcess.signal('SIGTERM');
+    await running;
 
     expect(exit).not.toHaveBeenCalled();
     expect(PROCESS_EVENTS.map((name) => process.listenerCount(name))).toEqual(before);
