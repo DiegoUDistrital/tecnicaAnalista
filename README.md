@@ -37,7 +37,8 @@ Las versiones se fijan al crear cada proyecto.
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
-Hay un endpoint de lectura, `GET /api/tasks` (ver «API de tareas»); la API todavía no tiene seguridad.
+Hay dos endpoints, `GET /api/tasks` (lectura) y `POST /api/tasks` (creación) (ver «API de tareas»); `PUT` y `DELETE`
+aún no existen y la API todavía no tiene seguridad.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -226,8 +227,9 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 
 > **Aviso de seguridad.** La API NO tiene seguridad (ni API key, ni límite de peticiones, ni CORS, ni cabeceras de
 > seguridad) y escucha por defecto solo en 127.0.0.1: no debe exponerse a ninguna red hasta que llegue la seguridad en
-> un PR posterior. La lista no tiene límite de tamaño. De momento solo existe la lectura: `POST` en `/api/tasks` y
-> `PUT`/`DELETE` en `/api/tasks/:id` todavía no existen.
+> un PR posterior. La lista no tiene límite de tamaño y cualquiera con acceso puede crear tareas sin límite. Existen la
+> lectura y la creación (`GET` y `POST` en `/api/tasks`); `PUT` y `DELETE` en `/api/tasks/:id` todavía no existen y
+> responden `404`.
 
 ### `GET /api/tasks`
 
@@ -264,10 +266,77 @@ Filtro opcional `?completed=true` (solo completadas) o `?completed=false` (solo 
   negativos silenciosos).
 - `GET` no admite cuerpo (400 `body`) y se aplican las reglas de «Entrada de la API».
 
+### `POST /api/tasks`
+
+Crea una tarea. Cuerpo JSON `{ "title": "...", "description": "..." }`: `title` es obligatorio y `description` opcional
+(cadena vacía si se omite; `null` no vale). Las reglas de longitud, recorte y caracteres están en «Validación de título
+y descripción», y las del cuerpo y las cabeceras en «Entrada de la API». Responde `201` con la tarea creada, con
+exactamente los cinco campos y `completed` en `false` (`id` y `createdAt` los genera la base de datos):
+
+```json
+{
+  "id": "3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f",
+  "title": "Comprar pan",
+  "description": "",
+  "completed": false,
+  "createdAt": "2026-03-04T05:06:07.123Z"
+}
+```
+
+- Se permiten títulos duplicados.
+- Cualquier clave que no sea `title` o `description` (`id`, `createdAt`, `completed`, `__proto__`, `constructor`...) da
+  `400` con `field` `body` («El cuerpo contiene campos no permitidos.»), sin nombrar los campos.
+- `POST` no admite NINGÚN parámetro de consulta, tampoco `completed`: `POST /api/tasks?x=1` da `400` con `field`
+  `query`. `POST /api/tasks?` equivale a no enviar consulta.
+- Una violación de restricción de la base de datos o una base de datos caída dan `500` genérico (ver abajo).
+
+### Errores 400: formato de `details`
+
+Un `400` lleva `details` con una entrada `{ field, message }` por problema, siempre en el orden `body`, `query`,
+`title`, `description`, `completed`. Cada campo inválido aporta solo su primer problema (tipo, caracteres, longitud). Los
+mensajes son los de la tabla de «Validación de título y descripción», más «El cuerpo debe ser un objeto JSON válido.»,
+«Esta ruta no admite cuerpo.» y «El cuerpo no coincide con la longitud declarada.» para `body`. Nunca se refleja el valor
+enviado ni el nombre de campos o parámetros desconocidos. Ejemplo, `POST /api/tasks?x=1` con
+`{"foo":1,"title":"","description":5}`:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Datos inválidos.",
+    "details": [
+      { "field": "body", "message": "El cuerpo contiene campos no permitidos." },
+      { "field": "query", "message": "Parámetros de consulta no permitidos." },
+      { "field": "title", "message": "Debe tener entre 1 y 100 caracteres." },
+      { "field": "description", "message": "Debe ser una cadena de texto." }
+    ]
+  }
+}
+```
+
+Solo la etapa de campos y consulta acumula problemas; las anteriores (ruta y método, tamaño, codificación y tipo,
+cuerpo) devuelven un único error.
+
+### Orden de comprobación de una petición
+
+1. Ruta y método (`404` si la ruta no existe, `405` con `Allow` si el método no está permitido).
+2. Tamaño del cuerpo (`413`).
+3. Codificación y tipo de contenido (`415`).
+4. Cuerpo: lectura, UTF-8, JSON y objeto raíz (`400` `body`).
+5. Campos y consulta, acumulando todos los problemas (`400`).
+6. Base de datos (`500` genérico si falla).
+
+Un error de una etapa anterior gana siempre a los posteriores: un `PATCH` con 20 KB da `405` (no `413`), 20 KB con
+`text/plain` dan `413` (no `415`), `text/plain` con JSON roto da `415`, y un cuerpo con campos inválidos con la base
+de datos caída da `400` (no `500`, porque la base de datos no llega a consultarse).
+
+### Rutas y errores de base de datos
+
 Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
-`Allow: GET`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>` (todavía no existen operaciones por
-identificador) y cualquier ruta desconocida dan `404`. Si la base de datos falla, la respuesta es un `500` genérico y el
-log registra solo la clase del error y su SQLSTATE, nunca datos de la petición.
+`Allow: GET, POST`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>` (`PUT` y `DELETE` por identificador
+todavía no existen y responden `404`) y cualquier ruta desconocida dan `404`. Si la base de datos falla (inalcanzable o
+con una restricción violada), la respuesta es un `500` genérico y el log registra solo la clase del error y su
+SQLSTATE, nunca datos de la petición (ni título, ni descripción, ni cuerpo, ni consulta).
 
 Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio (`services`) → repositorio
 (`repositories`), con SQL parametrizado de `pg`. La aplicación recibe la base de datos al construirse
@@ -275,7 +344,7 @@ Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio 
 
 ## Validación de título y descripción
 
-Estas son las reglas que aplicará la API al crear tareas (`backend/src/validation/`); la creación (`POST`) aún no existe.
+Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/validation/`).
 
 - `title` es obligatorio y tiene de 1 a 100 caracteres; `description` es opcional, de 0 a 500 (cadena vacía por
   defecto, nunca nula). Se miden en caracteres Unicode (puntos de código: un emoji cuenta como uno) después de

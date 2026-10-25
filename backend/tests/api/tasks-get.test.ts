@@ -224,23 +224,23 @@ describe('RF-C10: consulta inválida', () => {
 
 describe('RF-C22: métodos y rutas de /api/tasks', () => {
   it.each(['OPTIONS', 'PUT', 'DELETE', 'PATCH', 'PROPFIND'])(
-    'RF-C22: %s en /api/tasks da 405 con Allow: GET (transitorio: en T6 pasa a GET, POST)',
+    'RF-C22: %s en /api/tasks da 405 con Allow: GET, POST',
     async (method) => {
       const reply = await call(method, '/api/tasks');
 
       expect(reply.status).toBe(405);
-      expect(reply.headers['allow']).toBe('GET');
+      expect(reply.headers['allow']).toBe('GET, POST');
       expect(reply.json).toEqual({
         error: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.', details: [] },
       });
     },
   );
 
-  it('RF-C22: HEAD en /api/tasks da 405 con Allow: GET (de HEAD solo se garantizan estado y cabecera)', async () => {
+  it('RF-C22: HEAD en /api/tasks da 405 con Allow: GET, POST', async () => {
     const res = await request(api.app).head('/api/tasks');
 
     expect(res.status).toBe(405);
-    expect(res.headers['allow']).toBe('GET');
+    expect(res.headers['allow']).toBe('GET, POST');
   });
 
   it.each(['/api/tasks/', '/api/tasks//', '/api/%74asks', '/api/nada', '/api', '/api/'])(

@@ -1,5 +1,5 @@
 import { describe, expect, it, type Mock, vi } from 'vitest';
-import type { TaskRow } from '../../src/repositories/task-repository';
+import type { NewTask, TaskRow } from '../../src/repositories/task-repository';
 import { createTaskService } from '../../src/services/task-service';
 
 const ROW: TaskRow = {
@@ -10,8 +10,16 @@ const ROW: TaskRow = {
   createdAt: '2026-01-02T03:04:05.678Z',
 };
 
-function fakeRepository(rows: TaskRow[]): { list: Mock<(completed?: boolean) => Promise<TaskRow[]>> } {
-  return { list: vi.fn<(completed?: boolean) => Promise<TaskRow[]>>().mockResolvedValue(rows) };
+interface FakeRepository {
+  list: Mock<(completed?: boolean) => Promise<TaskRow[]>>;
+  insert: Mock<(input: NewTask) => Promise<TaskRow>>;
+}
+
+function fakeRepository(rows: TaskRow[], inserted: TaskRow = ROW): FakeRepository {
+  return {
+    list: vi.fn<(completed?: boolean) => Promise<TaskRow[]>>().mockResolvedValue(rows),
+    insert: vi.fn<(input: NewTask) => Promise<TaskRow>>().mockResolvedValue(inserted),
+  };
 }
 
 describe('RF-C12: TaskService.list', () => {
@@ -38,5 +46,26 @@ describe('RF-C13: TaskService.list con filtro', () => {
     await createTaskService(repository).list(completed);
 
     expect(repository.list).toHaveBeenCalledExactlyOnceWith(completed);
+  });
+});
+
+describe('RF-C11: TaskService.create', () => {
+  it('RF-C11: create pasa título y descripción al repositorio y devuelve EXACTAMENTE cinco campos', async () => {
+    const dirty = { ...ROW, secret: 'no debe salir' } as TaskRow;
+    const repository = fakeRepository([], dirty);
+
+    const task = await createTaskService(repository).create({ title: 'Comprar pan', description: 'Integral' });
+
+    expect(repository.insert).toHaveBeenCalledExactlyOnceWith({ title: 'Comprar pan', description: 'Integral' });
+    expect(task).toEqual(ROW);
+    expect(Object.keys(task)).toEqual(['id', 'title', 'description', 'completed', 'createdAt']);
+  });
+
+  it('RF-C11: create propaga el error del repositorio sin cambiarlo', async () => {
+    const repository = fakeRepository([]);
+    const failure = new Error('fallo del repositorio');
+    repository.insert.mockRejectedValue(failure);
+
+    await expect(createTaskService(repository).create({ title: 'a', description: '' })).rejects.toBe(failure);
   });
 });

@@ -1,5 +1,7 @@
+import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startApiApp, type ApiApp } from '../helpers/api-app';
+import { createCaptureLogger } from '../helpers/capture-logger';
+import { createClosedPortDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest, type RawResponse } from '../helpers/raw-http';
 
@@ -62,5 +64,43 @@ describe('RF-C1: orden de las etapas sobre la ruta real', () => {
     expect(withoutType.status).toBe(415);
     expect(withJson.status).toBe(400);
     expect(detailsOf(withJson)).toEqual([{ field: 'body', message: 'Esta ruta no admite cuerpo.' }]);
+  });
+
+  it('RF-C1 par 3-4: POST con text/plain y JSON mal formado da 415', async () => {
+    const response = await call('POST', '/api/tasks', ['Content-Type: text/plain'], '{"title":');
+
+    expect(response.status).toBe(415);
+  });
+
+  it('RF-C1 par 4-6: POST /api/tasks?x=1 con JSON mal formado da 400 con SOLO body', async () => {
+    const response = await call('POST', '/api/tasks?x=1', ['Content-Type: application/json'], '{"title":');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([{ field: 'body', message: 'El cuerpo debe ser un objeto JSON válido.' }]);
+  });
+
+  it('RF-C1 par 6-8: POST con campos inválidos y la BD apagada da 400, no 500', async () => {
+    const capture = createCaptureLogger();
+    const down = await startApiApp({ capture, database: await createClosedPortDatabase(capture.logger) });
+    try {
+      const res = await request(down.app).post('/api/tasks').send({ title: '' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+      expect(capture.records()).toEqual([]);
+    } finally {
+      await down.close();
+    }
+  });
+
+  it('RF-C1: la etapa 6 es la única que acumula: dan body, query y title, en ese orden', async () => {
+    const response = await call('POST', '/api/tasks?x=1', ['Content-Type: application/json'], '{"foo":1,"title":5}');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([
+      { field: 'body', message: 'El cuerpo contiene campos no permitidos.' },
+      { field: 'query', message: 'Parámetros de consulta no permitidos.' },
+      { field: 'title', message: 'Debe ser una cadena de texto.' },
+    ]);
   });
 });
