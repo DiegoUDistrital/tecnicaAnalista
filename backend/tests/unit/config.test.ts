@@ -83,6 +83,18 @@ describe('RF-D1: DATABASE_URL', () => {
     expect(messageOf({ DATABASE_URL: url })).toBe(expected);
   });
 
+  it.each([
+    ['RF-D1: espacio inicial', ` ${VALID_URL}`],
+    ['RF-D1: espacio final', `${VALID_URL} `],
+    ['RF-D1: tabulador', `${VALID_URL}\t`],
+    ['RF-D1: salto de línea interior', 'postgresql://writer:change-me@127.0.0.1:5433/todo\n_app'],
+  ])('%s es «formato inválido» y el valor no aparece en el mensaje', (_label, url) => {
+    const message = messageOf({ DATABASE_URL: url });
+
+    expect(message).toBe(FORMAT);
+    expect(message).not.toContain('change-me');
+  });
+
   it('RF-D1: acepta %77riter (usuario codificado con porcentaje) y el protocolo postgres', () => {
     const encoded = loadConfig({ DATABASE_URL: 'postgresql://%77riter:change-me@127.0.0.1:5433/todo_app' });
     const short = loadConfig({ DATABASE_URL: 'postgres://writer:change-me@localhost/todo_app' });

@@ -86,5 +86,10 @@ describe('RF-D7: restricciones de la tabla tasks', () => {
     expect(row?.description).toBe('');
     expect(row?.completed).toBe(false);
     expect(row?.createdAt).toBeInstanceOf(Date);
+
+    const window = await owner.query<{ recent: boolean }>(
+      `SELECT abs(extract(epoch FROM (now() - "createdAt"))) < 60 AS recent FROM tasks`,
+    );
+    expect(window.rows[0]?.recent).toBe(true);
   });
 });

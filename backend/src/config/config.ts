@@ -39,9 +39,16 @@ function parseInteger(raw: string, min: number, max: number): number | undefined
   return Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
 }
 
+/**
+ * Cualquier espacio (incluidos los de los extremos) o carácter de control. Se comprueba antes de `new URL`
+ * porque este recorta espacios de los extremos y elimina tabuladores y saltos de línea, de modo que una
+ * variable mal formada se aceptaría en silencio.
+ */
+const WHITESPACE_OR_CONTROL = /[\s\p{Cc}]/u;
+
 /** Devuelve el mensaje fijo del primer fallo de la URL, o `undefined` si es válida. */
 function checkWriterUrl(raw: string): string | undefined {
-  if (raw.includes('?') || raw.includes('#')) {
+  if (WHITESPACE_OR_CONTROL.test(raw) || raw.includes('?') || raw.includes('#')) {
     return URL_FORMAT_MESSAGE;
   }
   let url: URL;

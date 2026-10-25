@@ -68,6 +68,12 @@ describe('RF-D17: backend/queries.sql', () => {
     expect(statements).toHaveLength(2);
   });
 
+  it('RF-D17: los marcadores de consulta existen y la consulta 1 explica que psql -f no sirve', () => {
+    expect(queriesText).toContain('-- Consulta 1:');
+    expect(queriesText).toContain('-- Consulta 2:');
+    expect(queriesText).toMatch(/psql -f/);
+  });
+
   beforeAll(async () => {
     await owner.query('TRUNCATE TABLE tasks');
     const tied = '2026-01-02T10:00:00.000Z';
