@@ -27,7 +27,7 @@ Las versiones se fijan al crear cada proyecto.
 
 ## Estructura del repositorio
 
-- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y, en los siguientes PR, el servicio HTTP con Express.
+- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar; sin seguridad todavía).
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
@@ -210,7 +210,8 @@ contraseña. La base de desarrollo debe estar migrada antes de probarlas.
 
 ## Cómo guarda y lee tareas el backend
 
-Esta es la capa de datos que usa la API (`backend/src/repositories/task-repository.ts`); la lista se expone con `GET /api/tasks`.
+Esta es la capa de datos que usa la API (`backend/src/repositories/task-repository.ts`): `GET /api/tasks` lista,
+`POST /api/tasks` inserta, `PUT /api/tasks/:id` actualiza y `DELETE /api/tasks/:id` borra.
 
 - Todas las consultas son parametrizadas: los valores (título, descripción, filtro) viajan en el arreglo de parámetros
   de `pg` y nunca se concatenan al texto SQL. Un título como `'); DROP TABLE tasks;--` se guarda tal cual.
@@ -231,7 +232,6 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
   campos distintos (por ejemplo, título desde una pestaña y estado desde otra) conservan ambos cambios. Los nombres de
   columna salen de una lista fija del código, nunca del cliente; los valores y el identificador viajan solo como
   parámetros. La fila devuelta lleva las mismas cinco columnas y el mismo formato de `createdAt` que la lectura.
-- `PUT /api/tasks/:id` usa la actualización y `DELETE /api/tasks/:id` usa el borrado.
 
 ## API de tareas
 
@@ -423,7 +423,8 @@ Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio 
 
 ## Validación de título y descripción
 
-Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/validation/`).
+Estas son las reglas de `title` y `description` que aplican `POST /api/tasks` (al crear) y `PUT /api/tasks/:id` (al
+actualizar) (`backend/src/validation/`). Las del identificador y las del cuerpo de `PUT` están en la subsección siguiente.
 
 - `title` es obligatorio y tiene de 1 a 100 caracteres; `description` es opcional, de 0 a 500 (cadena vacía por
   defecto, nunca nula). Se miden en caracteres Unicode (puntos de código: un emoji cuenta como uno) después de
@@ -433,8 +434,9 @@ Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/
 - Se rechazan el carácter NUL (U+0000) y los sustitutos UTF-16 sueltos (por ejemplo `"\ud800"`), que PostgreSQL o
   UTF-8 no admiten. El resto de caracteres de control o invisibles se aceptan. Limitación conocida: un título formado
   solo por U+200B se acepta y se vería vacío.
-- Solo se permiten las claves `title` y `description`; cualquier otra clave propia del JSON (`id`, `createdAt`,
-  `completed`, `__proto__`, `constructor`...) es un campo no permitido.
+- En `POST` solo se permiten las claves `title` y `description`; cualquier otra clave propia del JSON (`id`,
+  `createdAt`, `completed`, `__proto__`, `constructor`...) es un campo no permitido. En `PUT` también se permite
+  `completed`.
 - Cada campo inválido produce una entrada `{ field, message }` con su primer problema (tipo, caracteres, longitud);
   nunca se refleja el valor enviado ni el nombre de campos desconocidos:
 
@@ -674,7 +676,7 @@ npm start
 
 `npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
 código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; la
-API de tareas está en `GET` y `POST` de `/api/tasks` (ver «API de tareas»). Se detiene con Ctrl+C (cierre ordenado,
+API de tareas está en `GET` y `POST` de `/api/tasks` y `PUT` y `DELETE` de `/api/tasks/:id` (ver «API de tareas»). Se detiene con Ctrl+C (cierre ordenado,
 código 0).
 
 `/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
@@ -698,6 +700,12 @@ cuando exista el frontend.
   Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
   Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
   a mano en Linux.
+- Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
+  haber un éxito y nueve «no existe»), y `backend/tests/api/tasks-delete.test.ts` y `tasks-put.test.ts` lanzan dos
+  `DELETE` a la vez, dos `PUT` de campos distintos y 50 iteraciones de `PUT` y `DELETE` simultáneos con un Pool de 2
+  conexiones (nunca debe haber un `500`). Las pruebas de concurrencia y las de socket crudo dependen del reparto de
+  turnos del sistema, así que conviene repetirlas varias veces seguidas
+  (`npx vitest run tests/api/tasks-delete.test.ts tests/api/tasks-put.test.ts`, tres veces) para ver que son estables.
 - La prueba de humo HTTP (`backend/tests/api/node-http-smoke.test.ts`) envía por socket crudo cabeceras o URL enormes,
   un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
   comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
@@ -778,15 +786,33 @@ milisegundos y en UTC, y la lista se ordena por la marca completa. Así la hora 
 guardada y el orden no depende de la zona horaria ni del redondeo. Alternativa descartada: formatear en JavaScript
 con `Date` (redondea y pierde el orden fino).
 
-**n) Orden fijo de validación.** Ruta y método, tamaño, codificación y tipo, cuerpo, campos y consulta, base de datos
-(ver «Orden de comprobación de una petición»): el resultado de una petición con varios fallos es siempre el mismo y
-una base de datos caída nunca tapa un error de validación. Solo la etapa de campos acumula problemas.
+**n) Orden fijo de validación.** Ocho etapas: ruta y método, tamaño, codificación y tipo, cuerpo, identificador,
+consulta y campos, existencia de la tarea, base de datos (ver «Orden de comprobación de una petición»): el resultado
+de una petición con varios fallos es siempre el mismo, un `400` gana a un `404` y una base de datos caída nunca tapa un
+error de validación. Solo la etapa de consulta y campos acumula problemas.
+
+**o) `PUT` parcial.** `PUT /api/tasks/:id` escribe solo los campos enviados. Es una desviación consciente del `PUT`
+puro: el cliente puede completar una tarea enviando únicamente `{"completed":true}`, y una pestaña con datos viejos no
+pisa los cambios hechos desde otra. Alternativa descartada: reemplazo completo, que obligaría a reenviar todos los
+campos y sobrescribiría cambios ajenos.
+**p) Existencia por filas afectadas.** `UPDATE` y `DELETE` son una sola sentencia y la tarea «no existe» si afectaron
+cero filas. Así no hay carrera entre comprobar y escribir: dos borrados simultáneos dan un `204` y un `404`, y un `PUT`
+concurrente con un `DELETE` da `200` o `404`, nunca `500`. Alternativa descartada: un `SELECT` previo, que dejaría una
+ventana en la que otra petición borra la fila y la escritura falla o miente.
+
+**q) Identificador estricto, anclado y decodificado una vez; ruta sin decodificación automática de Express.** El
+identificador debe ser un UUID completo (anclado de principio a fin, sin salto de línea final) y se decodifica una sola
+vez. La ruta `/api/tasks/<id>` se registra con una expresión regular sin grupos de captura y el código lee el segmento
+crudo de `req.path`, porque con un parámetro `:id` Express decodifica el segmento al enrutar y, si tiene un `%` roto,
+falla con un `500` antes de decidir el método. Con esto un identificador mal formado da `400` en `PUT` y `DELETE`, y
+`405` con otro método. Alternativa descartada: la ruta `/api/tasks/:id` con `req.params.id`, que da `500` ante `%E0%A4%A`.
 
 **Limitaciones conocidas de la API actual.**
 
 - Sin seguridad: ni API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad. No debe exponerse a ninguna
   red hasta que se añadan.
-- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST` no tiene límite de uso.
+- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST`, `PUT` y `DELETE` no tienen límite de uso.
+- No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
   mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la
   conexión; el servicio sigue atendiendo.
