@@ -577,15 +577,17 @@ npm start
 ```
 
 `npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
-código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; se
-detiene con Ctrl+C (cierre ordenado, código 0).
+código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; la
+API de tareas está en `GET` y `POST` de `/api/tasks` (ver «API de tareas»). Se detiene con Ctrl+C (cierre ordenado,
+código 0).
 
 `/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
-Aviso de seguridad: por ahora el servicio solo responde `/health`, escucha solo en loopback y NO tiene seguridad (ni
-API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe
-exponerse a ninguna red hasta entonces.
+Aviso de seguridad: el servicio escucha solo en loopback y la API NO tiene seguridad (ni API key, ni límite de
+peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe exponerse a ninguna
+red hasta entonces. `GET /api/tasks` devuelve la lista completa, que crece sin cota, y `PUT` y `DELETE` en
+`/api/tasks/:id` responden `404` porque todavía no existen.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -600,6 +602,10 @@ cuando exista el frontend.
   Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
   Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
   a mano en Linux.
+- La prueba de humo HTTP (`backend/tests/api/node-http-smoke.test.ts`) envía por socket crudo cabeceras o URL enormes,
+  un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
+  comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
+  caracterización: documenta lo que hace Node, no código propio.
 - Frontend: se documentará cuando exista.
 
 ## Base de datos
@@ -660,6 +666,37 @@ prevista. Queda como trabajo futuro.
 **j) Riesgos residuales.** Hay dos credenciales de base de datos en la aplicación (`writer` y `reader`; el daño
 posible con `reader` es muy limitado). Además hay dos caminos de lectura: los contadores vía Prisma y la lista vía
 Express, que pueden diferir un instante tras una escritura; se resuelve refrescando tras cada acción.
+
+**k) Entrada estricta en `/api`.** El tamaño (10 240 bytes) se comprueba antes que el tipo, y `Content-Encoding` solo
+puede ser `identity`: así un cuerpo enorme o comprimido se corta sin leerlo ni descomprimirlo (no hay bomba de
+descompresión). El cuerpo debe ser UTF-8 bien formado y nunca se sustituyen bytes inválidos por U+FFFD, para no guardar
+datos distintos de los enviados. Se usa un lector de cuerpo propio y no `express.json`, que acepta otros tipos y
+codificaciones y no permite fijar este orden. Alternativa descartada: `express.json` con sus opciones.
+
+**l) Consulta cruda.** `?completed=` se evalúa sobre la cadena sin interpretar (el intérprete de consulta de Express
+está desactivado), porque ese intérprete descarta claves como `__proto__` y trunca a 1 000 parámetros, lo que dejaría
+pasar parámetros sin verlos. Alternativa descartada: usar `req.query`.
+
+**m) Fecha truncada en SQL.** `createdAt` sale ya formateado de la consulta, con los microsegundos truncados a
+milisegundos y en UTC, y la lista se ordena por la marca completa. Así la hora mostrada nunca es posterior a la
+guardada y el orden no depende de la zona horaria ni del redondeo. Alternativa descartada: formatear en JavaScript
+con `Date` (redondea y pierde el orden fino).
+
+**n) Orden fijo de validación.** Ruta y método, tamaño, codificación y tipo, cuerpo, campos y consulta, base de datos
+(ver «Orden de comprobación de una petición»): el resultado de una petición con varios fallos es siempre el mismo y
+una base de datos caída nunca tapa un error de validación. Solo la etapa de campos acumula problemas.
+
+**Limitaciones conocidas de la API actual.**
+
+- Sin seguridad: ni API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad. No debe exponerse a ninguna
+  red hasta que se añadan.
+- `PUT` y `DELETE` en `/api/tasks/:id` responden `404` hasta que se implementen.
+- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST` no tiene límite de uso.
+- Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
+  mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la
+  conexión; el servicio sigue atendiendo.
+- Un cuerpo lento (declara más bytes de los que envía y deja el socket abierto) lo resuelve el plazo de Node.
+- Los caracteres invisibles se aceptan (un título solo con U+200B se guarda y se vería vacío).
 
 **Nota sobre el historial.** El commit "backend setup con Express y Prisma" abre el backend: Prisma se usa allí para
 el esquema y las migraciones, mientras que las consultas de la API se hacen con `pg` y `Pool`.
