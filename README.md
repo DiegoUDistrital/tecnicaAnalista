@@ -206,6 +206,21 @@ todo_app=> SELECT id, title, description, completed, "createdAt" FROM tasks WHER
 Cambie `true` por `false` para ver las pendientes. Dentro del contenedor, `psql` entra por el socket local sin pedir
 contraseña. La base de desarrollo debe estar migrada antes de probarlas.
 
+## Cómo guarda y lee tareas el backend
+
+Todavía no hay endpoints HTTP de tareas; esta pieza es la capa de datos que usarán (`backend/src/repositories/task-repository.ts`).
+
+- Todas las consultas son parametrizadas: los valores (título, descripción, filtro) viajan en el arreglo de parámetros
+  de `pg` y nunca se concatenan al texto SQL. Un título como `'); DROP TABLE tasks;--` se guarda tal cual.
+- La lista va de la tarea más reciente a la más antigua y desempata por `id` ascendente. El orden usa la marca de tiempo
+  completa de la base de datos (con microsegundos), no el texto que se muestra al cliente.
+- `createdAt` se entrega en ISO 8601 UTC con milisegundos (`2026-03-04T05:06:07.123Z`). Los microsegundos se truncan
+  (no se redondean) en la propia consulta, para que la hora mostrada nunca sea posterior a la almacenada, y no depende
+  de la zona horaria de la sesión.
+- Hay dos consultas de lista (con y sin filtro `completed`) en lugar de una con condición opcional, para que
+  PostgreSQL pueda usar el índice sobre `completed`.
+- La lista no tiene paginación: devuelve todas las tareas.
+
 ## Roles y permisos
 
 Hay tres roles de PostgreSQL, cada uno con el mínimo privilegio para su trabajo:
