@@ -221,6 +221,38 @@ Todavía no hay endpoints HTTP de tareas; esta pieza es la capa de datos que usa
   PostgreSQL pueda usar el índice sobre `completed`.
 - La lista no tiene paginación: devuelve todas las tareas.
 
+## Validación de título y descripción
+
+Todavía no hay endpoints: estas son las reglas que aplicará la API al crear tareas
+(`backend/src/validation/`).
+
+- `title` es obligatorio y tiene de 1 a 100 caracteres; `description` es opcional, de 0 a 500 (cadena vacía por
+  defecto, nunca nula). Se miden en caracteres Unicode (puntos de código: un emoji cuenta como uno) después de
+  recortar los espacios de los extremos, y se guarda el valor ya recortado.
+- Los espacios que se recortan son los de `String.prototype.trim()`: U+0009 a U+000D, U+0020, U+00A0, U+1680,
+  U+2000 a U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 y U+FEFF. U+0085, U+180E y U+200B no se recortan.
+- Se rechazan el carácter NUL (U+0000) y los sustitutos UTF-16 sueltos (por ejemplo `"\ud800"`), que PostgreSQL o
+  UTF-8 no admiten. El resto de caracteres de control o invisibles se aceptan. Limitación conocida: un título formado
+  solo por U+200B se acepta y se vería vacío.
+- Solo se permiten las claves `title` y `description`; cualquier otra clave propia del JSON (`id`, `createdAt`,
+  `completed`, `__proto__`, `constructor`...) es un campo no permitido.
+- Cada campo inválido produce una entrada `{ field, message }` con su primer problema (tipo, caracteres, longitud);
+  nunca se refleja el valor enviado ni el nombre de campos desconocidos:
+
+| Campo | Causa | Mensaje |
+|---|---|---|
+| `body` | claves no permitidas | El cuerpo contiene campos no permitidos. |
+| `query` | parámetros no admitidos | Parámetros de consulta no permitidos. |
+| `title` | falta o no es cadena | Debe ser una cadena de texto. |
+| `title` | NUL o sustituto suelto | Contiene caracteres no permitidos. |
+| `title` | longitud | Debe tener entre 1 y 100 caracteres. |
+| `description` | no es cadena | Debe ser una cadena de texto. |
+| `description` | NUL o sustituto suelto | Contiene caracteres no permitidos. |
+| `description` | longitud | Debe tener como máximo 500 caracteres. |
+| `completed` | valor no booleano | Debe ser true o false. |
+
+Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `completed`.
+
 ## Roles y permisos
 
 Hay tres roles de PostgreSQL, cada uno con el mínimo privilegio para su trabajo:
