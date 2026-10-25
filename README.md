@@ -255,7 +255,7 @@ Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `c
 
 ## Entrada de la API: tamaño y tipo de contenido
 
-Todavía no hay endpoints de tareas. Estas son las reglas de entrada que se aplican a las rutas de `/api/*`
+Todavía no hay endpoints de tareas (la entrada completa, hasta el cuerpo JSON, está lista). Estas son las reglas de entrada que se aplican a las rutas de `/api/*`
 (`backend/src/http/input/`); `/health` queda fuera de ellas.
 
 - El cuerpo de una petición no puede superar 10 240 bytes, sea cual sea su tipo. Se lee con un lector propio que corta
@@ -275,6 +275,39 @@ Todavía no hay endpoints de tareas. Estas son las reglas de entrada que se apli
   `Content-Type` se ignora.
 - Un 415 con `Content-Length` se responde sin esperar al cuerpo y no cierra la conexión: Node descarta lo no leído y la
   misma conexión sigue sirviendo la petición siguiente.
+
+### Cuerpo JSON
+
+Una vez superados el tamaño y el tipo, el cuerpo se interpreta así (el primer fallo gana, y siempre es un 400 con
+`field` `body`):
+
+- `GET` y `DELETE` no admiten cuerpo: si traen algún byte (sea o no UTF-8 válido) el mensaje es «Esta ruta no admite
+  cuerpo.». Sin `Content-Type` JSON, el 415 va antes.
+- En `POST` y `PUT` el cuerpo no puede estar vacío (un cuerpo de solo espacios no cuenta como vacío: falla después como
+  JSON mal formado).
+- Debe ser UTF-8 bien formado y sin BOM. Un byte que no forma UTF-8 nunca se sustituye por U+FFFD: se guardarían datos
+  distintos de los enviados. (Un U+FFFD legítimo, que llega como `EF BF BD`, sí es válido y se conserva.)
+- Debe ser JSON bien formado y su raíz un objeto (no `[]`, `null`, una cadena, un número ni un booleano). Con claves
+  repetidas gana la última.
+- Si el cliente declara más bytes de los que envía (o corta un `chunked` a mitad) y cierra su lado de escritura, la
+  respuesta es 400 «El cuerpo no coincide con la longitud declarada.» y el servidor cierra la conexión. Si se va del
+  todo, no hay a quién responder: no se envía nada, no se registra como error del servidor y el servicio sigue.
+  Limitación: un cuerpo lento (declara más de lo que envía y deja el socket abierto) lo resuelve el plazo de Node, fuera
+  de este contrato.
+
+#### Por qué existe un manejador de `clientError`
+
+En el caso de «menos bytes de los declarados», Node se adelanta a la aplicación: su analizador HTTP detecta el final
+de la conexión con el cuerpo incompleto (código `HPE_INVALID_EOF_STATE`), emite el evento `clientError` ANTES de que
+nuestro lector de cuerpo vea nada y, por defecto, contesta él mismo `400 Bad Request` sin JSON. Eso rompería el contrato
+de errores. Por eso `backend/src/server/client-error.ts` registra un manejador de `clientError` (en `startServer`) que
+escribe el sobre JSON del contrato (400 `body`, `Content-Type: application/json; charset=utf-8`, `Connection: close`
+y `Content-Length` exacto) solo para ese código y cierra el socket. Para cualquier otro error de cliente reproduce lo
+que Node haría por defecto (400, 431 o 408 sin cuerpo, con `Connection: close`). Si el socket ya no es escribible, o ya
+se había enviado una respuesta por esa conexión (por ejemplo un 415 temprano), solo lo destruye, sin escribir ni
+lanzar. No registra nada en el log: es un fallo del cliente y la lista cerrada de eventos no incluye uno para esto.
+Alternativa descartada: aceptar el 400 de Node sin JSON (incumple el contrato). Limitación: en una conexión
+keep-alive que ya envió alguna respuesta, un cuerpo incompleto posterior cierra la conexión sin respuesta.
 
 ## Roles y permisos
 

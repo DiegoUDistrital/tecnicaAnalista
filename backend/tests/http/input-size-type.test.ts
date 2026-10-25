@@ -11,12 +11,12 @@ const LIMIT = 10240;
 const JSON_TYPE = 'Content-Type: application/json';
 
 function registerTestRoutes(app: Express): void {
-  const echo = withInput((_req, res, input) => {
-    res
-      .status(200)
-      .json({ rawQuery: input.rawQuery, bodyLength: input.body.length, bodyText: input.body.toString('utf8') });
-  });
-  registerRoute(app, '/api/test-input', { GET: echo, POST: echo });
+  // T4: el cuerpo ya llega parseado (objeto, o `undefined` si la ruta no admite cuerpo).
+  const echo = (bodyMode: 'none' | 'required') =>
+    withInput({ bodyMode }, (_req, res, input) => {
+      res.status(200).json({ rawQuery: input.rawQuery, body: input.body ?? null });
+    });
+  registerRoute(app, '/api/test-input', { GET: echo('none'), POST: echo('required') });
   // Sin withInput: muestra lo que Node deja en `req.headers` y en `req.rawHeaders`.
   registerRoute(app, '/api/test-headers', {
     GET: (req, res) => {
@@ -89,7 +89,8 @@ describe('RF-C3: límite de 10 240 bytes', () => {
 
     const result = await exchange(postWithBody([JSON_TYPE], body));
 
-    expect(json(result)).toMatchObject({ status: 200, body: { bodyLength: LIMIT } });
+    expect(json(result).status).toBe(200);
+    expect(json(result).body['body']).toEqual({});
   });
 
   it('RF-C3: 10 241 bytes dan 413 PAYLOAD_TOO_LARGE y el servidor cierra la conexión', async () => {
@@ -193,7 +194,8 @@ describe('RF-C4: Content-Encoding', () => {
   it('RF-C4: Content-Encoding Identity (con mayúscula) se acepta', async () => {
     const result = await exchange(postWithBody([JSON_TYPE, 'Content-Encoding: Identity'], '{}'));
 
-    expect(json(result)).toMatchObject({ status: 200, body: { bodyText: '{}' } });
+    expect(json(result).status).toBe(200);
+    expect(json(result).body['body']).toEqual({});
   });
 });
 
@@ -210,15 +212,16 @@ describe('RF-C4: Content-Type', () => {
   });
 
   it('RF-C4: sin body (sin Content-Length) el Content-Type se ignora', async () => {
-    const result = await exchange([head('POST', ['Content-Type: text/plain'])]);
+    // GET: un POST sin cuerpo ya no llega a la ruta (cuerpo vacío = 400, T4); la regla de las etapas 2-3 es la misma.
+    const result = await exchange([head('GET', ['Content-Type: text/plain'])]);
 
-    expect(json(result)).toMatchObject({ status: 200, body: { bodyLength: 0 } });
+    expect(json(result)).toMatchObject({ status: 200, body: { body: null } });
   });
 
   it('RF-C4: Content-Length: 0 con text/plain NO es presente (la ruta recibe el body vacío)', async () => {
-    const result = await exchange([head('POST', ['Content-Type: text/plain', 'Content-Length: 0'])]);
+    const result = await exchange([head('GET', ['Content-Type: text/plain', 'Content-Length: 0'])]);
 
-    expect(json(result)).toMatchObject({ status: 200, body: { bodyLength: 0 } });
+    expect(json(result)).toMatchObject({ status: 200, body: { body: null } });
   });
 
   it('RF-C4: chunked de cero bytes con text/plain da 415 (presente por cabeceras)', async () => {
@@ -233,7 +236,7 @@ describe('RF-C4: Content-Type', () => {
   it('RF-C4: chunked de cero bytes con Content-Type JSON llega vacío a la ruta', async () => {
     const result = await exchange([head('GET', [JSON_TYPE, 'Transfer-Encoding: chunked']), '0\r\n\r\n']);
 
-    expect(json(result)).toMatchObject({ status: 200, body: { bodyLength: 0 } });
+    expect(json(result)).toMatchObject({ status: 200, body: { body: null } });
   });
 
   it('RF-C4: un body de solo espacios cuenta como presente (con text/plain da 415)', async () => {
@@ -241,7 +244,8 @@ describe('RF-C4: Content-Type', () => {
     const jsonType = await exchange(postWithBody([JSON_TYPE], '   '));
 
     expect(json(plain).status).toBe(415);
-    expect(json(jsonType)).toMatchObject({ status: 200, body: { bodyLength: 3 } });
+    // Con tipo JSON supera las etapas 2-3 y falla después como JSON mal formado (T4).
+    expect(json(jsonType).status).toBe(400);
   });
 
   it('RF-C4: con Content-Length el 415 se emite sin esperar al body (el cliente deja el body sin enviar)', async () => {

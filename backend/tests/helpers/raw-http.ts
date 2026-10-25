@@ -19,6 +19,11 @@ export interface RawOptions {
   until?: (text: string) => boolean;
   /** Plazo de seguridad: solo evita que un test cuelgue si el servidor no cierra cuando debería. */
   safetyMs?: number;
+  /**
+   * Qué hace el cliente tras escribir todas las partes: `end` cierra solo su lado de escritura (medio cierre) y sigue
+   * leyendo; `destroy` destruye el socket (aborto total). Por defecto no hace nada y deja el socket abierto.
+   */
+  afterWrite?: 'end' | 'destroy';
 }
 
 /** Interpreta las respuestas con `Content-Length` (las únicas que emite la API) que haya en el texto recibido. */
@@ -40,7 +45,8 @@ export function parseResponses(text: string): RawResponse[] {
     responses.push({
       status: Number(statusLine.split(' ')[1]),
       headers,
-      body: rest.slice(bodyStart, bodyStart + length),
+      // `text` está en latin1 (un carácter por byte, por eso `length` en bytes sirve); el cuerpo se lee como UTF-8.
+      body: Buffer.from(rest.slice(bodyStart, bodyStart + length), 'latin1').toString('utf8'),
     });
     rest = rest.slice(bodyStart + length);
   }
@@ -95,6 +101,12 @@ export function rawRequest(
     socket.on('connect', () => {
       for (const part of parts) {
         socket.write(part);
+      }
+      if (options.afterWrite === 'end') {
+        socket.end();
+      } else if (options.afterWrite === 'destroy') {
+        // Deja que los bytes escritos salgan antes de destruir; si no, el servidor podría no ver nada.
+        socket.write('', () => socket.destroy());
       }
     });
   });

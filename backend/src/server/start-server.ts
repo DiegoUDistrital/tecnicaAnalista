@@ -4,6 +4,7 @@ import { type AppConfig, loadConfig } from '../config/config';
 import { createPool, type Database } from '../db/pool';
 import { DatabaseUnavailableError } from '../errors/database-unavailable-error';
 import { createLogger } from '../logging/logger';
+import { attachClientErrorHandler } from './client-error';
 import { createConnectionTracker } from './connection-tracker';
 import { runWithin } from './deadline';
 import type { ServerDeps, ServerLike } from './server.types';
@@ -174,6 +175,7 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
       }
       try {
         server = deps.createServer(deps.logger);
+        attachClientErrorHandler(server);
         tracker.attach(server);
         listenCalled = true;
         await listen(server, port, host);

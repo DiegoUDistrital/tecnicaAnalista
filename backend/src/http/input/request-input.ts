@@ -2,11 +2,14 @@ import type { Request, Response } from 'express';
 import { HttpError } from '../http-error';
 import { closeConnectionAfterResponse, MAX_BODY_BYTES, readBody } from './body-reader';
 import { collectHeader, isIdentityEncoding, isJsonContentType } from './content-headers';
+import { type BodyMode, type JsonObject, parseJsonBody } from './json-body';
+import { RequestAbortedError } from './request-aborted-error';
 
-/** Lo que los controladores reciben de la entrada: la consulta CRUDA (sin interpretar) y los bytes del cuerpo. */
+/** Lo que los controladores reciben de la entrada: la consulta CRUDA (sin interpretar) y el cuerpo ya parseado. */
 export interface RequestInput {
   readonly rawQuery: string;
-  readonly body: Buffer;
+  /** Objeto JSON del cuerpo, o `undefined` si la ruta no admite cuerpo (`bodyMode` `none`). */
+  readonly body: JsonObject | undefined;
 }
 
 export type InputHandler = (req: Request, res: Response, input: RequestInput) => void | Promise<void>;
@@ -16,7 +19,6 @@ function rawQueryOf(req: Request): string {
   return mark === -1 ? '' : req.originalUrl.slice(mark + 1);
 }
 
-/** Valor numérico de `Content-Length` (Node ya rechaza los inválidos o duplicados antes de llegar aquí). */
 function declaredLength(req: Request): number | undefined {
   const header = req.headers['content-length'];
   return header === undefined ? undefined : Number(header);
@@ -35,12 +37,13 @@ function checkType(req: Request): void {
 }
 
 /**
- * Etapas 2 y 3 de la entrada. Hay cuerpo «presente» solo según las cabeceras (`Content-Length` mayor que 0 o
+ * Etapas 2, 3 y 4 de la entrada. Hay cuerpo «presente» solo según las cabeceras (`Content-Length` mayor que 0 o
  * `Transfer-Encoding`), nunca según los bytes. Con `Content-Length` conocido el tamaño y el 415 se deciden sin leer;
  * con fragmentos se lee hasta el final o hasta superar el límite y DESPUÉS se aplican las reglas de 415. Así el 413
- * siempre gana al 415. `Content-Encoding` se comprueba siempre; `Content-Type` solo si hay cuerpo.
+ * siempre gana al 415. `Content-Encoding` se comprueba siempre; `Content-Type` solo si hay cuerpo. Con los bytes ya
+ * leídos, la etapa 4 los convierte en un objeto JSON (o rechaza según `bodyMode`).
  */
-async function readRequestInput(req: Request, res: Response): Promise<RequestInput> {
+async function readRequestInput(req: Request, res: Response, bodyMode: BodyMode): Promise<RequestInput> {
   const rawQuery = rawQueryOf(req);
   const declared = declaredLength(req);
   if (declared !== undefined && declared > MAX_BODY_BYTES) {
@@ -48,28 +51,41 @@ async function readRequestInput(req: Request, res: Response): Promise<RequestInp
     throw new HttpError(413);
   }
   const present = (declared !== undefined && declared > 0) || req.headers['transfer-encoding'] !== undefined;
+  let bytes: Buffer = Buffer.alloc(0);
   if (!present) {
     checkEncoding(req);
-    return { rawQuery, body: Buffer.alloc(0) };
-  }
-  if (declared !== undefined) {
+  } else if (declared !== undefined) {
     checkEncoding(req);
     checkType(req);
-    return { rawQuery, body: await readBody(req, res) };
+    bytes = await readBody(req, res);
+  } else {
+    bytes = await readBody(req, res);
+    checkEncoding(req);
+    checkType(req);
   }
-  const body = await readBody(req, res);
-  checkEncoding(req);
-  checkType(req);
-  return { rawQuery, body };
+  return { rawQuery, body: parseJsonBody(bytes, bodyMode) };
 }
 
 /**
- * Envuelve el manejador de una ruta con la entrada ya comprobada (etapas 2 y 3 de la tubería): le entrega un
- * {@link RequestInput}. Cualquier fallo se lanza como `HttpError` y lo recoge `guard` de la tabla de métodos.
+ * Envuelve el manejador de una ruta con la entrada ya comprobada (etapas 2, 3 y 4 de la tubería): le entrega un
+ * {@link RequestInput}. Cualquier fallo se lanza como `HttpError` y lo recoge `guard` de la tabla de métodos. Si el
+ * cliente se va antes de terminar el cuerpo ({@link RequestAbortedError}) no hay a quién responder: la petición
+ * termina sin respuesta y sin registro de error.
  */
-export function withInput(handler: InputHandler): (req: Request, res: Response) => Promise<void> {
+export function withInput(
+  options: { readonly bodyMode: BodyMode },
+  handler: InputHandler,
+): (req: Request, res: Response) => Promise<void> {
   return async (req, res) => {
-    const input = await readRequestInput(req, res);
+    let input: RequestInput;
+    try {
+      input = await readRequestInput(req, res, options.bodyMode);
+    } catch (error) {
+      if (error instanceof RequestAbortedError) {
+        return;
+      }
+      throw error;
+    }
     await handler(req, res, input);
   };
 }
