@@ -3,6 +3,7 @@ import { buildDetails, type DetailProblems } from '../../src/validation/details'
 
 const INVALID_BODY = 'El cuerpo debe ser un objeto JSON válido.';
 const COMPLETED = 'Debe ser true o false.';
+const NO_FIELDS = 'Debe enviar al menos title, description o completed.';
 
 describe('RF-C23: mensajes literales de la tabla', () => {
   const rows: [string, DetailProblems, { field: string; message: string }][] = [
@@ -33,7 +34,9 @@ describe('RF-C23: mensajes literales de la tabla', () => {
       { description: 'length' },
       { field: 'description', message: 'Debe tener como máximo 500 caracteres.' },
     ],
-    ['completed', { completed: true }, { field: 'completed', message: COMPLETED }],
+    ['body PUT vacío', { body: 'noFields' }, { field: 'body', message: NO_FIELDS }],
+    ['id', { id: true }, { field: 'id', message: 'El identificador no es un UUID válido.' }],
+    ['completed (fila de PUT)', { completed: true }, { field: 'completed', message: COMPLETED }],
   ];
 
   it.each(rows)('RF-C23: %s produce su mensaje literal', (_name, problems, expected) => {
@@ -42,15 +45,16 @@ describe('RF-C23: mensajes literales de la tabla', () => {
 });
 
 describe('RF-C23: orden y acumulación', () => {
-  it('RF-C23: el orden es body, query, title, description, completed', () => {
+  it('RF-C23: el orden es body, id, query, title, description, completed', () => {
     const details = buildDetails({
       completed: true,
       description: 'length',
       title: 'type',
       query: true,
+      id: true,
       body: 'unknownFields',
     });
-    expect(details.map((detail) => detail.field)).toEqual(['body', 'query', 'title', 'description', 'completed']);
+    expect(details.map((detail) => detail.field)).toEqual(['body', 'id', 'query', 'title', 'description', 'completed']);
   });
 
   it('RF-C23: una entrada por campo, con el primer problema', () => {

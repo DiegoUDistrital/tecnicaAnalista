@@ -4,7 +4,7 @@ import type { TaskService } from '../services/task-service';
 import { buildDetails } from '../validation/details';
 import { evaluateQuery, hasQueryParameters } from '../validation/raw-query';
 import { validateDescription, validateTitle } from '../validation/text-fields';
-import { hasUnknownKeys } from '../validation/unknown-keys';
+import { POST_KEYS, hasUnknownKeys } from '../validation/unknown-keys';
 
 export interface TaskController {
   list: InputHandler;
@@ -30,7 +30,7 @@ export function createTaskController(service: TaskService): TaskController {
     async create(_req, res, input) {
       // La ruta usa `bodyMode: 'required'`: la entrada siempre entrega un objeto JSON.
       const body = input.body as Record<string, unknown>;
-      const unknownKeys = hasUnknownKeys(body);
+      const unknownKeys = hasUnknownKeys(body, POST_KEYS);
       const query = hasQueryParameters(input.rawQuery);
       const title = validateTitle(body['title']);
       // Ausente vale cadena vacía; presente (incluso `null`) se valida.

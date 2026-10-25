@@ -3,7 +3,8 @@ import type { TextProblem } from './text-fields';
 
 /** Problemas reunidos por la tubería; cada clave ausente significa «sin problema». */
 export interface DetailProblems {
-  readonly body?: 'invalid' | 'unknownFields' | 'noBodyAllowed' | 'lengthMismatch';
+  readonly body?: 'invalid' | 'unknownFields' | 'noBodyAllowed' | 'lengthMismatch' | 'noFields';
+  readonly id?: boolean;
   readonly query?: boolean;
   readonly title?: TextProblem;
   readonly description?: TextProblem;
@@ -15,8 +16,10 @@ const BODY_MESSAGES = {
   unknownFields: 'El cuerpo contiene campos no permitidos.',
   noBodyAllowed: 'Esta ruta no admite cuerpo.',
   lengthMismatch: 'El cuerpo no coincide con la longitud declarada.',
+  noFields: 'Debe enviar al menos title, description o completed.',
 } as const;
 
+const ID_MESSAGE = 'El identificador no es un UUID válido.';
 const QUERY_MESSAGE = 'Parámetros de consulta no permitidos.';
 const COMPLETED_MESSAGE = 'Debe ser true o false.';
 
@@ -33,13 +36,16 @@ const DESCRIPTION_MESSAGES = {
 } as const;
 
 /**
- * Ensambla `details` de un 400 con los mensajes literales del contrato, en el orden `body, query, title,
+ * Ensambla `details` de un 400 con los mensajes literales del contrato, en el orden `body, id, query, title,
  * description, completed`: una entrada por campo con su primer problema. Nunca refleja valores ni nombres enviados.
  */
 export function buildDetails(problems: DetailProblems): ErrorDetail[] {
   const details: ErrorDetail[] = [];
   if (problems.body !== undefined) {
     details.push({ field: 'body', message: BODY_MESSAGES[problems.body] });
+  }
+  if (problems.id === true) {
+    details.push({ field: 'id', message: ID_MESSAGE });
   }
   if (problems.query === true) {
     details.push({ field: 'query', message: QUERY_MESSAGE });

@@ -372,6 +372,8 @@ Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/
 | Campo | Causa | Mensaje |
 |---|---|---|
 | `body` | claves no permitidas | El cuerpo contiene campos no permitidos. |
+| `body` | `PUT` sin ningún campo | Debe enviar al menos title, description o completed. |
+| `id` | no es un UUID válido | El identificador no es un UUID válido. |
 | `query` | parámetros no admitidos | Parámetros de consulta no permitidos. |
 | `title` | falta o no es cadena | Debe ser una cadena de texto. |
 | `title` | NUL o sustituto suelto | Contiene caracteres no permitidos. |
@@ -382,6 +384,22 @@ Estas son las reglas que aplica `POST /api/tasks` al crear tareas (`backend/src/
 | `completed` | valor no booleano | Debe ser true o false. |
 
 Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `completed`.
+
+### Reglas del identificador y del cuerpo de `PUT`
+
+Están implementadas como funciones puras, listas para los endpoints `PUT` y `DELETE` por identificador, que todavía no
+existen (hoy `/api/tasks/<id>` responde `404`).
+
+- Identificador: un UUID completo de 8-4-4-4-12 dígitos hexadecimales ASCII, en mayúsculas o minúsculas, y se
+  devuelve normalizado a minúsculas. No valen llaves, prefijos como `urn:uuid:`, guiones ausentes, dígitos de anchura
+  completa ni un salto de línea final. El segmento de la URL se decodifica una sola vez (`%2D` equivale a `-`, pero
+  `%252D` no); un porcentaje mal formado es un identificador inválido, no un error. El UUID nulo
+  (`00000000-0000-0000-0000-000000000000`) tiene formato válido. Un identificador inválido da `id`.
+- Cuerpo de `PUT`: objeto con al menos uno de `title`, `description` y `completed`; cada campo ausente no se toca.
+  `title` y `description` siguen las reglas de arriba (`description` puede ser la cadena vacía) y `completed` debe ser
+  `true` o `false` reales (ni `"true"`, ni `1`, ni `null`). `{}` da una entrada `body` («Debe enviar al menos title,
+  description o completed.»); cualquier clave propia ajena (`id`, `createdAt`, `__proto__`...) da una única entrada
+  `body` de campos no permitidos, sin añadir la de «ningún campo».
 
 ## Entrada de la API: tamaño y tipo de contenido
 
