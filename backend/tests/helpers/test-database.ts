@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { Client } from 'pg';
+import { migrateAndGrant, readPermissionsSql, runPrismaMigrateDeploy } from '../../src/db/migrate';
+import { createLogger } from '../../src/logging/logger';
 import { assertSafeTestDatabase } from './database-guard';
 
 export interface TestDatabase {
@@ -80,18 +82,24 @@ export function runPrisma(args: string[]): PrismaResult {
 }
 
 /**
- * PROVISIONAL hasta T8: aplica las migraciones con `prisma migrate deploy`.
- * T8 lo sustituye por el comando único (migrar y aplicar permisos) y este código desaparece.
+ * Prepara la base de pruebas con el mismo código que el comando de despliegue (`npm run db:deploy`):
+ * migra y, solo si la migración va bien, aplica los permisos. La salida del CLI de Prisma se captura.
  */
-export function applySchema(): Promise<void> {
-  const result = runPrisma(['migrate', 'deploy']);
-  if (result.status !== 0) {
+export async function applySchema(): Promise<void> {
+  getTestDatabase(); // aplica la guarda antes de lanzar nada
+  const ownerUrl = requireEnv('TEST_OWNER_DATABASE_URL');
+  const output: string[] = [];
+  const code = await migrateAndGrant({
+    ownerUrl,
+    runMigrations: (url) => runPrismaMigrateDeploy(url, (text) => output.push(text)),
+    permissionsSql: readPermissionsSql(),
+    logger: createLogger((line) => output.push(line)),
+  });
+  if (code !== 0) {
     // La salida puede nombrar el host; se oculta la URL por si apareciera completa.
-    const ownerUrl = requireEnv('TEST_OWNER_DATABASE_URL');
-    const detail = `${result.stdout}\n${result.stderr}`.split(ownerUrl).join('<url>');
-    return Promise.reject(new Error(`prisma migrate deploy falló (código ${String(result.status)}):\n${detail}`));
+    const detail = output.join('\n').split(ownerUrl).join('<url>');
+    throw new Error(`La preparación de la base de pruebas falló (código ${String(code)}):\n${detail}`);
   }
-  return Promise.resolve();
 }
 
 /** Vacía la tabla tasks entre pruebas; no hace nada mientras la tabla no exista. */

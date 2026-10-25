@@ -51,7 +51,7 @@ docker compose -f docker-compose.dev.yml up -d --wait
 
 - La primera vez, con el volumen vacío, el script `docker/postgres/init/01-roles-and-databases.sh` crea los roles
   `owner`, `writer` y `reader` (sin pertenencias entre ellos y sin privilegios especiales) y las bases de desarrollo
-  y de pruebas (UTF8, propietario `owner`). Los permisos concretos de cada rol se aplican en un paso posterior.
+  y de pruebas (UTF8, propietario `owner`). Los permisos de cada rol se aplican con `npm run db:deploy` (ver «Roles y permisos»).
 - **Reinicio de volumen.** El script de roles solo se ejecuta la primera vez, con el volumen vacío. Para empezar de
   cero: `docker compose -f docker-compose.dev.yml down -v` (borra los datos).
 - **Contraseñas.** Solo se admiten los caracteres `[A-Za-z0-9._~-]`: otros (`@ : / ' %` y espacios) rompen las URL de
@@ -152,6 +152,56 @@ todo_app=> SELECT id, title, description, completed, "createdAt" FROM tasks WHER
 
 Cambie `true` por `false` para ver las pendientes. Dentro del contenedor, `psql` entra por el socket local sin pedir
 contraseña. La base de desarrollo debe estar migrada antes de probarlas.
+
+## Roles y permisos
+
+Hay tres roles de PostgreSQL, cada uno con el mínimo privilegio para su trabajo:
+
+| Rol | Qué puede hacer | Qué NO puede hacer |
+|---|---|---|
+| `owner` | Es el dueño de la base y de los objetos: migra el esquema y aplica los permisos. | Crear bases ni roles. |
+| `writer` | Es el que usa el servicio: `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre `tasks`. | Leer la vista `task_counts` o `_prisma_migrations`; crear, alterar, eliminar o vaciar objetos. |
+| `reader` | Lo usará el frontend: solo `SELECT` sobre la vista `task_counts`. | Leer ni escribir `tasks`; leer `_prisma_migrations`; crear, alterar o eliminar objetos. |
+
+Otras decisiones:
+
+- **PUBLIC (cualquier rol) no tiene ningún privilegio** en la base (ni `CONNECT`, ni `TEMPORARY`, ni `CREATE`) ni en el
+  esquema `public`. Solo `writer` y `reader` reciben `CONNECT` y `USAGE`, y nada más. Alternativa descartada: dejar
+  `CONNECT` a PUBLIC (el valor por defecto de PostgreSQL), que permitiría conectarse a cualquier rol que se cree en el
+  futuro.
+- **`reader` lee los conteos sin ver las tareas** porque la vista `task_counts` se ejecuta con los privilegios de su
+  propietario (`owner`), no con los de quien la consulta. Alternativa descartada: dar `SELECT` sobre `tasks` a `reader`.
+- Las funciones nuevas que cree `owner` no son ejecutables por PUBLIC (se revoca el privilegio por defecto) y no hay
+  privilegios por defecto para `writer` ni `reader` sobre objetos futuros: un objeto nuevo es inaccesible hasta que se
+  conceda por nombre.
+- Los permisos viven en `backend/prisma/permissions.sql`, separado de las migraciones: ni uno ni otras contienen
+  contraseñas. El script revoca y concede **por nombre de objeto** (nunca «a todo el esquema»), es idempotente y va en
+  una sola transacción: si una sentencia falla, no queda ningún cambio a medias.
+
+Qué se verifica con tests contra PostgreSQL real: el estado final de la base y del esquema por rol (consultas al
+catálogo), que `owner` cree una tabla y una función nuevas y `writer` y `reader` no accedan a ellas, cada operación
+permitida y cada operación prohibida de `writer` y `reader` (las prohibidas fallan con `42501`), que el catálogo de
+todas las tablas y vistas (incluida `_prisma_migrations`) coincida exactamente con lo anterior, que ejecutar el script
+dos veces deje los privilegios idénticos, que un script que falla a mitad no deje cambios, y que un SQL versionado
+no contenga contraseñas.
+
+## Migrar y aplicar permisos
+
+Un único comando, dentro de `backend/`:
+
+```
+npm run db:deploy
+```
+
+Compila el backend, lee `OWNER_DATABASE_URL` del `.env` de la raíz, ejecuta las migraciones de Prisma y, **solo si
+terminan bien**, ejecuta `prisma/permissions.sql`. Termina con código distinto de cero si cualquiera de los dos pasos
+falla. Se puede repetir sin riesgo: sin migraciones pendientes no cambia nada.
+
+- Se usa siempre este comando: para desplegar y también en los tests (el preparador de la base de pruebas llama al
+  mismo código).
+- Si una migración futura añade una tabla o una vista, hay que ampliar `prisma/permissions.sql` con su revocación y su
+  concesión por nombre; si no, ningún rol salvo `owner` podrá usarla.
+- Este comando es la única vía donde se usa `owner`. El servicio usa `writer`, y el frontend, `reader`.
 
 ## Instalación
 
