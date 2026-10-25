@@ -103,6 +103,19 @@ no sea un `Error` solo deja su tipo.
 Límite conocido: si un componente modificara el mensaje de un error DESPUÉS de crearlo, la traza podría conservar un
 valor que imite un marco de pila completo (ruta absoluta, línea y columna). No ocurre con `pg`.
 
+## Rutas del servicio
+
+`GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
+que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Content-Type`, `Content-Encoding`,
+`Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
+ni `X-Powered-By`, y nunca responde `304`.
+
+Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y dan `404 NOT_FOUND`, igual que cualquier ruta
+desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también es 404, no
+400). Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
+ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta. Los 404 y
+405 usan el mismo sobre JSON del contrato de errores y no se registran en el log.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
