@@ -26,7 +26,9 @@ export function methodTable(handlers: MethodHandlers): RequestHandler {
 /**
  * Registra una ruta con `app.route(path).all(...)`: `all` coincide con TODOS los métodos (incluidos HEAD, OPTIONS y
  * los que Express no conoce), así que Express no responde nada por su cuenta y la tabla decide siempre.
+ * `path` puede ser una expresión regular: sin grupos de captura Express no decodifica nada al enrutar (una ruta con
+ * `:id` lo decodifica y, si el porcentaje está mal formado, falla antes de decidir el método).
  */
-export function registerRoute(app: Express, path: string, handlers: MethodHandlers): void {
+export function registerRoute(app: Express, path: string | RegExp, handlers: MethodHandlers): void {
   app.route(path).all(methodTable(handlers));
 }

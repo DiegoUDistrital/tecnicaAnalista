@@ -104,3 +104,36 @@ describe('RF-C1: orden de las etapas sobre la ruta real', () => {
     ]);
   });
 });
+
+describe('RF-C1: orden de las etapas con identificador en PUT', () => {
+  const json = ['Content-Type: application/json'];
+  const VALID_ID = '3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f';
+
+  it('RF-C1 par 4-5: PUT con id inválido y JSON mal formado da 400 body (no id)', async () => {
+    const response = await call('PUT', '/api/tasks/no-es-uuid', json, '{"completed":');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([{ field: 'body', message: 'El cuerpo debe ser un objeto JSON válido.' }]);
+  });
+
+  it('RF-C1 par 5-6: PUT con id inválido y ?x=1 da SOLO id', async () => {
+    const response = await call('PUT', '/api/tasks/no-es-uuid?x=1', json, '{"completed":true}');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([{ field: 'id', message: 'El identificador no es un UUID válido.' }]);
+  });
+
+  it('RF-C1 par 5-6: PUT con id inválido y campos inválidos da SOLO id', async () => {
+    const response = await call('PUT', '/api/tasks/no-es-uuid', json, '{"foo":1,"title":"","completed":"x"}');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([{ field: 'id', message: 'El identificador no es un UUID válido.' }]);
+  });
+
+  it('RF-C1 par 6-7: PUT con id válido inexistente y body inválido da 400, no 404', async () => {
+    const response = await call('PUT', `/api/tasks/${VALID_ID}`, json, '{"completed":"x"}');
+
+    expect(response.status).toBe(400);
+    expect(detailsOf(response)).toEqual([{ field: 'completed', message: 'Debe ser true o false.' }]);
+  });
+});
