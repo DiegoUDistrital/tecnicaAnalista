@@ -37,6 +37,7 @@ Las versiones se fijan al crear cada proyecto.
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
+Hay un endpoint de lectura, `GET /api/tasks` (ver «API de tareas»); la API todavía no tiene seguridad.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -106,7 +107,7 @@ valor que imite un marco de pila completo (ruta absoluta, línea y columna). No 
 
 ## Rutas del servicio
 
-`GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
+`GET /api/tasks` se describe en «API de tareas». `GET /health` responde `200 {"status":"ok"}`. Solo indica que el proceso responde: NO consulta la base de datos, así
 que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Content-Type`, `Content-Encoding`,
 `Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
 ni `X-Powered-By`, y nunca responde `304`.
@@ -208,7 +209,7 @@ contraseña. La base de desarrollo debe estar migrada antes de probarlas.
 
 ## Cómo guarda y lee tareas el backend
 
-Todavía no hay endpoints HTTP de tareas; esta pieza es la capa de datos que usarán (`backend/src/repositories/task-repository.ts`).
+Esta es la capa de datos que usa la API (`backend/src/repositories/task-repository.ts`); la lista se expone con `GET /api/tasks`.
 
 - Todas las consultas son parametrizadas: los valores (título, descripción, filtro) viajan en el arreglo de parámetros
   de `pg` y nunca se concatenan al texto SQL. Un título como `'); DROP TABLE tasks;--` se guarda tal cual.
@@ -221,10 +222,60 @@ Todavía no hay endpoints HTTP de tareas; esta pieza es la capa de datos que usa
   PostgreSQL pueda usar el índice sobre `completed`.
 - La lista no tiene paginación: devuelve todas las tareas.
 
+## API de tareas
+
+> **Aviso de seguridad.** La API NO tiene seguridad (ni API key, ni límite de peticiones, ni CORS, ni cabeceras de
+> seguridad) y escucha por defecto solo en 127.0.0.1: no debe exponerse a ninguna red hasta que llegue la seguridad en
+> un PR posterior. La lista no tiene límite de tamaño. De momento solo existe la lectura: `POST` en `/api/tasks` y
+> `PUT`/`DELETE` en `/api/tasks/:id` todavía no existen.
+
+### `GET /api/tasks`
+
+Devuelve `200` con un arreglo JSON de todas las tareas, de la más reciente a la más antigua (con desempate por `id`),
+o `[]` si no hay ninguna. No hay paginación. Cada tarea tiene exactamente cinco campos:
+
+```json
+{
+  "id": "3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f",
+  "title": "Comprar pan",
+  "description": "",
+  "completed": false,
+  "createdAt": "2026-03-04T05:06:07.123Z"
+}
+```
+
+`createdAt` es ISO 8601 UTC con milisegundos (truncados, no redondeados). La respuesta de una lectura correcta es siempre
+`200`: el ETag está desactivado y el servicio nunca responde `304`, aunque la petición traiga `If-None-Match`.
+
+Filtro opcional `?completed=true` (solo completadas) o `?completed=false` (solo pendientes):
+
+- Solo se admite el parámetro `completed`, una sola vez y con el valor exacto `true` o `false` (en minúsculas). Repetido,
+  vacío, sin valor, en mayúsculas, con otro valor o usado como arreglo (`completed[]=true`) da `400` con `field`
+  `completed` («Debe ser true o false.»).
+- Cualquier otro parámetro (`?filter=pending`, `?__proto__=x`, `?a[b]=1`...) da `400` con `field` `query` («Parámetros de
+  consulta no permitidos.»). El nombre del parámetro nunca se refleja en la respuesta. Si coinciden ambos problemas,
+  `details` lleva las dos entradas (`query` primero).
+- El nombre y el valor se decodifican una sola vez (porcentaje y `+`): `?completed=%74rue` y `?%63ompleted=true` son
+  válidos; `?completed=true%20`, `?completed=%2574rue` y un valor que no se puede decodificar son `400 completed`
+  (nunca `500`). `GET /api/tasks?` equivale a no enviar consulta.
+- La cadena de consulta se evalúa CRUDA, sin el intérprete de consulta de Express (desactivado): ese intérprete
+  descarta claves como `__proto__` y trunca a 1 000 parámetros, así que se podrían colar parámetros sin verlos. Se miran
+  todos los parámetros, también más allá del 1 000. Alternativa descartada: usar la consulta ya interpretada (falsos
+  negativos silenciosos).
+- `GET` no admite cuerpo (400 `body`) y se aplican las reglas de «Entrada de la API».
+
+Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
+`Allow: GET`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>` (todavía no existen operaciones por
+identificador) y cualquier ruta desconocida dan `404`. Si la base de datos falla, la respuesta es un `500` genérico y el
+log registra solo la clase del error y su SQLSTATE, nunca datos de la petición.
+
+Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio (`services`) → repositorio
+(`repositories`), con SQL parametrizado de `pg`. La aplicación recibe la base de datos al construirse
+(`createApp({ logger, database })`), así que no existe una aplicación sin base de datos.
+
 ## Validación de título y descripción
 
-Todavía no hay endpoints: estas son las reglas que aplicará la API al crear tareas
-(`backend/src/validation/`).
+Estas son las reglas que aplicará la API al crear tareas (`backend/src/validation/`); la creación (`POST`) aún no existe.
 
 - `title` es obligatorio y tiene de 1 a 100 caracteres; `description` es opcional, de 0 a 500 (cadena vacía por
   defecto, nunca nula). Se miden en caracteres Unicode (puntos de código: un emoji cuenta como uno) después de
@@ -255,8 +306,8 @@ Las entradas van siempre en el orden `body`, `query`, `title`, `description`, `c
 
 ## Entrada de la API: tamaño y tipo de contenido
 
-Todavía no hay endpoints de tareas (la entrada completa, hasta el cuerpo JSON, está lista). Estas son las reglas de entrada que se aplican a las rutas de `/api/*`
-(`backend/src/http/input/`); `/health` queda fuera de ellas.
+Estas son las reglas de entrada que se aplican a las rutas de `/api/*` (`backend/src/http/input/`); `/health` queda
+fuera de ellas.
 
 - El cuerpo de una petición no puede superar 10 240 bytes, sea cual sea su tipo. Se lee con un lector propio que corta
   al pasar el límite y responde 413 (`PAYLOAD_TOO_LARGE`). Tras un 413 el servidor cierra la conexión, para no seguir
@@ -475,7 +526,8 @@ cuando exista el frontend.
 - Cobertura mínima del 95 % sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
-  Los tests de base de datos necesitan el contenedor arriba y el `.env` (ver «Base de datos de desarrollo»).
+  Los tests de base de datos y de la API (`backend/tests/api`) usan PostgreSQL real, necesitan el contenedor arriba y el
+  `.env` (ver «Base de datos de desarrollo») y reinician el esquema: no se ejecutan a la vez que otro proceso.
   Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
   Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
   a mano en Linux.

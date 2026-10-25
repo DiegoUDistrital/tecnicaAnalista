@@ -1,10 +1,10 @@
 import type { Express } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app';
 import { guard } from '../../src/http/guard';
 import { HttpError } from '../../src/http/http-error';
 import { createCaptureLogger } from '../helpers/capture-logger';
+import { createTestApp } from '../helpers/test-app';
 
 const JSON_UTF8 = 'application/json; charset=utf-8';
 
@@ -29,7 +29,7 @@ function routesThrowing(app: Express): void {
 
 function build(): { app: Express; log: ReturnType<typeof createCaptureLogger> } {
   const log = createCaptureLogger();
-  return { app: createApp({ logger: log.logger, registerRoutes: routesThrowing }), log };
+  return { app: createTestApp({ capture: log, registerRoutes: routesThrowing }).app, log };
 }
 
 const EXPECTED = [

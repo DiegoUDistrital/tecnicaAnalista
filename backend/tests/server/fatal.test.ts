@@ -1,11 +1,11 @@
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app';
 import { guard } from '../../src/http/guard';
 import { startServer } from '../../src/server/start-server';
 import { createCaptureLogger } from '../helpers/capture-logger';
 import { listenOnLoopback } from '../helpers/loopback';
 import { createHarness, type Harness } from '../helpers/server-fakes';
+import { createTestApp } from '../helpers/test-app';
 
 const SECRET = 'secret-value-4d2e8b';
 type FatalEvent = 'uncaughtException' | 'unhandledRejection';
@@ -240,8 +240,8 @@ describe('RF-S6: manejadores del proceso', () => {
 describe('RF-S6: las promesas rechazadas dentro de una petición no llegan a unhandledRejection', () => {
   it('RF-S6: los rechazos de los manejadores de petición dan 500 y no llegan a unhandledRejection', async () => {
     const capture = createCaptureLogger();
-    const app = createApp({
-      logger: capture.logger,
+    const { app } = createTestApp({
+      capture,
       registerRoutes: (target) => {
         target.get(
           '/guarded',

@@ -2,6 +2,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app';
+import type { Database } from '../../src/db/pool';
 import { health } from '../../src/http/health';
 import { registerRoute } from '../../src/http/route-table';
 import type { Logger } from '../../src/logging/logger';
@@ -118,9 +119,10 @@ async function startReal(options: HarnessOptions = {}): Promise<Running> {
   const harness = createHarness({ ...options, env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
   const entered = deferred();
   const gate = deferred();
-  const createServer = (logger: Logger): http.Server => {
+  const createServer = (logger: Logger, database: Database): http.Server => {
     const app = createApp({
       logger,
+      database,
       registerRoutes: (target) => {
         registerRoute(target, '/hold', {
           GET: async (req, res) => {

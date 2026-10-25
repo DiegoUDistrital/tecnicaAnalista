@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Express } from 'express';
 import { createApp } from '../../src/app';
+import type { Database } from '../../src/db/pool';
 import { withInput } from '../../src/http/input/request-input';
 import { registerRoute } from '../../src/http/route-table';
 import type { Logger } from '../../src/logging/logger';
@@ -257,8 +258,8 @@ describe('RF-S11: evento startup', () => {
     const harness = createHarness({ env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
     const real = {
       ...harness.overrides,
-      createServer: (logger: Logger) => {
-        const server = http.createServer(createApp({ logger }));
+      createServer: (logger: Logger, database: Database) => {
+        const server = http.createServer(createApp({ logger, database }));
         cleanups.push(closeHttp(server));
         return server;
       },
@@ -319,8 +320,8 @@ describe('RF-C24: manejador de clientError registrado por startServer', () => {
     };
     const running = startServer({
       ...harness.overrides,
-      createServer: (logger: Logger) => {
-        const server = http.createServer(createApp({ logger, registerRoutes }));
+      createServer: (logger: Logger, database: Database) => {
+        const server = http.createServer(createApp({ logger, database, registerRoutes }));
         cleanups.push(closeHttp(server));
         return server;
       },

@@ -1,15 +1,16 @@
+import type { Express } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app';
 import { guard } from '../../src/http/guard';
 import { registerRoute } from '../../src/http/route-table';
 import { createCaptureLogger } from '../helpers/capture-logger';
+import { createTestApp } from '../helpers/test-app';
 
 const JSON_UTF8 = 'application/json; charset=utf-8';
 
-function build(): { app: ReturnType<typeof createApp>; lines: string[] } {
+function build(): { app: Express; lines: string[] } {
   const capture = createCaptureLogger();
-  return { app: createApp({ logger: capture.logger }), lines: capture.lines };
+  return { app: createTestApp({ capture }).app, lines: capture.lines };
 }
 
 describe('RF-S12: GET /health', () => {
@@ -77,8 +78,8 @@ describe('RF-S12: GET /health', () => {
 
   it('RF-S10: tras provocar errores 500, /nada sigue dando 404 y /health 200', async () => {
     const capture = createCaptureLogger();
-    const app = createApp({
-      logger: capture.logger,
+    const { app } = createTestApp({
+      capture,
       registerRoutes: (target) => {
         registerRoute(target, '/boom', {
           GET: () => {
