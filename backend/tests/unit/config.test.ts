@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config/config';
+import { AppError } from '../../src/errors/app-error';
 import { ConfigError } from '../../src/errors/config-error';
 
 const VALID_URL = 'postgresql://writer:change-me@127.0.0.1:5433/todo_app';
@@ -151,6 +152,81 @@ describe('RF-D1: mensajes sin valores y orden', () => {
     ).toEqual({
       databaseUrl: VALID_URL,
       pool: { max: 20, idleTimeoutMillis: 1000, connectionTimeoutMillis: 60000 },
+      server: { port: 3000, host: '127.0.0.1', shutdownTimeoutMs: 10000 },
     });
+  });
+});
+
+describe('RF-S1: variables del servicio', () => {
+  const PORT_MESSAGE = 'PORT: entero inválido o fuera de rango';
+  const SHUTDOWN_MESSAGE = 'SHUTDOWN_TIMEOUT_MS: entero inválido o fuera de rango';
+  const HOST_MESSAGE = 'HOST: dirección IP inválida';
+
+  it.each(['0', '65536', '3000abc', '', ' 3000', '03000', '-1', '1e3', '3000.5'])('RF-S1: PORT rechaza %j', (value) => {
+    expect(messageOf({ DATABASE_URL: VALID_URL, PORT: value })).toBe(PORT_MESSAGE);
+  });
+
+  it.each(['1', '3000', '65535'])('RF-S1: PORT acepta %j', (value) => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL, PORT: value }).server.port).toBe(Number(value));
+  });
+
+  it('RF-S1: PORT ausente vale 3000', () => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL }).server.port).toBe(3000);
+  });
+
+  it.each(['999', '120001', '', 'abc'])('RF-S1: SHUTDOWN_TIMEOUT_MS rechaza %j', (value) => {
+    expect(messageOf({ DATABASE_URL: VALID_URL, SHUTDOWN_TIMEOUT_MS: value })).toBe(SHUTDOWN_MESSAGE);
+  });
+
+  it.each(['1000', '120000'])('RF-S1: SHUTDOWN_TIMEOUT_MS acepta %j', (value) => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL, SHUTDOWN_TIMEOUT_MS: value }).server.shutdownTimeoutMs).toBe(
+      Number(value),
+    );
+  });
+
+  it('RF-S1: SHUTDOWN_TIMEOUT_MS ausente vale 10000', () => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL }).server.shutdownTimeoutMs).toBe(10000);
+  });
+
+  it.each(['127.0.0.1', '::1', '0.0.0.0', '::'])('RF-S1: HOST acepta %j', (value) => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL, HOST: value }).server.host).toBe(value);
+  });
+
+  it.each(['[::1]', 'fe80::1%eth0', '256.0.0.1', '127.0.0.1 ', ' 127.0.0.1', '127.0.0.1\n', 'localhost', ''])(
+    'RF-S1: HOST rechaza %j',
+    (value) => {
+      expect(messageOf({ DATABASE_URL: VALID_URL, HOST: value })).toBe(HOST_MESSAGE);
+    },
+  );
+
+  it('RF-S1: HOST ausente vale 127.0.0.1', () => {
+    expect(loadConfig({ DATABASE_URL: VALID_URL }).server.host).toBe('127.0.0.1');
+  });
+
+  it('RF-S1: nombra a la vez variables inválidas de la 001 y de la 002, en el orden del esquema y sin valores', () => {
+    const message = messageOf({
+      DATABASE_URL: VALID_URL,
+      DB_POOL_MAX: '0',
+      PORT: 'port-sentinel-5',
+      HOST: 'host-sentinel-3',
+      SHUTDOWN_TIMEOUT_MS: '0',
+    });
+
+    expect(message).toBe(
+      ['DB_POOL_MAX: entero inválido o fuera de rango', PORT_MESSAGE, HOST_MESSAGE, SHUTDOWN_MESSAGE].join('; '),
+    );
+    expect(message).not.toContain('port-sentinel-5');
+    expect(message).not.toContain('host-sentinel-3');
+  });
+
+  it('RF-S1: el error de configuración es el de la 001', () => {
+    try {
+      loadConfig({ DATABASE_URL: VALID_URL, PORT: '0' });
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect(error).toBeInstanceOf(AppError);
+      return;
+    }
+    throw new Error('loadConfig no lanzó ningún error');
   });
 });

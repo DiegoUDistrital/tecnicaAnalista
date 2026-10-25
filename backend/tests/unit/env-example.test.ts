@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG_VARIABLE_NAMES, loadConfig } from '../../src/config/config';
 
 // Vitest se ejecuta desde backend/: el .env.example está en la raíz del repositorio.
-const values = parseEnv(readFileSync(resolve(process.cwd(), '..', '.env.example'), 'utf8'));
+const raw = readFileSync(resolve(process.cwd(), '..', '.env.example'), 'utf8');
+const values = parseEnv(raw);
 
 const TABLE_VARIABLES = [
   'DATABASE_URL',
@@ -60,5 +61,14 @@ describe('RF-D2: .env.example', () => {
     expect(values['DB_NAME']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/_test$/);
+  });
+
+  it('RF-S1: .env.example incluye PORT, HOST y SHUTDOWN_TIMEOUT_MS por defecto y avisa de 0.0.0.0', () => {
+    expect(values['PORT']).toBe('3000');
+    expect(values['HOST']).toBe('127.0.0.1');
+    expect(values['SHUTDOWN_TIMEOUT_MS']).toBe('10000');
+    const comment = /((?:^#.*\r?\n)+)HOST=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain('0.0.0.0');
+    expect(comment).toContain('red interna de un contenedor');
   });
 });

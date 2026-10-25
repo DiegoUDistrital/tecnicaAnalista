@@ -36,8 +36,7 @@ Las versiones se fijan al crear cada proyecto.
 ## Backend (estado actual)
 
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
-del 95 %) y Prisma configurado para las migraciones. Express todavía NO está instalado: se añade en el siguiente PR
-(servicio HTTP). Se hace así para no incorporar dependencias sin uso. Hasta entonces no existe ningún servicio HTTP.
+del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; todavía no hay un comando que arranque el servicio.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -114,6 +113,18 @@ la cierra), el error se registra en el log y NO tumba el proceso. Los fallos de 
 agotado, credenciales rechazadas, sesión terminada o Pool cerrado) se convierten en un error de mensaje fijo, «Base de
 datos no disponible.», que no revela host, URL ni texto del driver; los errores de SQL de una consulta (por ejemplo,
 una restricción violada) llegan sin cambios. El cierre del Pool espera a que terminen las consultas en curso.
+
+## Variables del servicio
+
+| Variable | Valores | Por defecto | Descripción |
+| --- | --- | --- | --- |
+| `PORT` | entero 1-65535 | `3000` | Puerto en el que escuchará el servicio. |
+| `HOST` | dirección IP literal | `127.0.0.1` | Dirección en la que escuchará el servicio. |
+| `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
+
+`0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No
+se admiten nombres de host, corchetes ni zonas como `%eth0`. El servicio valida estas variables junto con las de la
+base de datos y, si alguna es inválida, no arranca y las nombra todas a la vez, sin mostrar sus valores.
 
 ## Esquema y migraciones
 
