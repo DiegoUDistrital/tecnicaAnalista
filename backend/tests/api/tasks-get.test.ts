@@ -253,12 +253,13 @@ describe('RF-C22: métodos y rutas de /api/tasks', () => {
     },
   );
 
-  it.each(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])(
-    'RF-C22: TRANSITORIO (la 004 lo sustituye): %s /api/tasks/<uuid> da 404',
+  // PUT tiene sus propios tests y DELETE aún no está cableado (T4); la tabla de métodos da 405 a lo no cableado.
+  it.each(['GET', 'POST', 'PATCH'])(
+    'RF-C22: TRANSITORIO (la 004 lo sustituye en T5): %s /api/tasks/<uuid> da 405',
     async (method) => {
       const reply = await call(method, `/api/tasks/${UUID}`);
 
-      expect(reply.status).toBe(404);
+      expect(reply.status).toBe(405);
     },
   );
 });
