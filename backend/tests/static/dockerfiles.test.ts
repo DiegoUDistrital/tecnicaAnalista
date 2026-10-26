@@ -200,3 +200,136 @@ describe('backend/.dockerignore', () => {
     }
   });
 });
+
+describe('frontend/Dockerfile', () => {
+  const text = readOrEmpty('frontend/Dockerfile');
+  const instructions = parseDockerfile(text);
+  const stages = stagesOf(instructions);
+  const build = stages.get('build') ?? [];
+  const runner = stages.get('runner') ?? [];
+  const runnerCopies = runner.filter((instruction) => instruction.name === 'COPY');
+  const FRONTEND_VARIABLES = /BACKEND_URL|API_KEY|READER_DATABASE_URL|ALLOWED_HOSTS|\bPORT\b|\bHOSTNAME\b/;
+
+  it('RF-P1: frontend/Dockerfile existe', () => {
+    expect(text).not.toBe('');
+  });
+
+  it('RF-P1: frontend/Dockerfile tiene las etapas deps, build y runner; runner copia solo standalone y static', () => {
+    expect([...stages.keys()]).toEqual(['deps', 'build', 'runner']);
+    expect(runnerCopies.map((copy) => copySources(copy))).toEqual([['/app/.next/standalone'], ['/app/.next/static']]);
+    expect(runnerCopies.map(copyFrom)).toEqual(['build', 'build']);
+    for (const run of runner.filter((instruction) => instruction.name === 'RUN')) {
+      expect(run.args, `RUN ${run.args}`).not.toMatch(/\bnpm\b|\bnext (build|start)\b|\btsc\b|\bprisma\b/);
+    }
+  });
+
+  it('RF-P2: el último USER de runner es 10001:10001 (numérico y distinto de 0)', () => {
+    const users = runner.filter((instruction) => instruction.name === 'USER');
+    expect(users.at(-1)?.args).toBe('10001:10001');
+    expect(users.at(-1)?.args).toMatch(/^[1-9]\d*:[1-9]\d*$/);
+  });
+
+  it('RF-P3: ambos Dockerfile usan la misma etiqueta completa de Node', () => {
+    const tagsOf = (content: string): string[] =>
+      parseDockerfile(content)
+        .filter((instruction) => instruction.name === 'FROM')
+        .map((from) => /^(node:\d+\.\d+\.\d+-bookworm-slim) AS [a-z][a-z-]*$/.exec(from.args)?.[1] ?? from.args);
+    const frontendTags = tagsOf(text);
+    expect(frontendTags).toHaveLength(3);
+    expect(new Set([...frontendTags, ...tagsOf(readOrEmpty('backend/Dockerfile'))]).size).toBe(1);
+    expect(frontendTags[0]).toMatch(/^node:\d+\.\d+\.\d+-bookworm-slim$/);
+  });
+
+  it('RF-P4: no hay ARG ni ENV con nombre de credencial, ni COPY de .env ni de origen "." o "*"', () => {
+    for (const declaration of instructions.filter((instruction) => ['ARG', 'ENV'].includes(instruction.name))) {
+      for (const name of declaredNames(declaration))
+        expect(name, `${declaration.name} ${name}`).not.toMatch(CREDENTIAL_NAME);
+    }
+    const copies = instructions.filter((instruction) => instruction.name === 'COPY');
+    expect(copies.length).toBeGreaterThan(0);
+    for (const copy of copies) {
+      for (const source of copySources(copy)) {
+        expect(source, `COPY ${copy.args}`).not.toMatch(/(^|\/)\.env/);
+        expect(['.', './', '*', './*']).not.toContain(source);
+      }
+    }
+  });
+
+  it('RF-P5: build ejecuta npm run verify:build y luego npm run build, sin ARG ni ENV de ejecución', () => {
+    const runs = build.filter((instruction) => instruction.name === 'RUN').map((instruction) => instruction.args);
+    expect(runs).toEqual(['npm run verify:build', 'npm run build']);
+    for (const declaration of instructions.filter((instruction) => ['ARG', 'ENV'].includes(instruction.name))) {
+      for (const name of declaredNames(declaration))
+        expect(name, `${declaration.name} ${name}`).not.toMatch(FRONTEND_VARIABLES);
+    }
+  });
+
+  it('RF-P6: la imagen no fija PORT ni HOSTNAME y su CMD es ["node","server.js"]', () => {
+    expect(
+      runner.some(
+        (instruction) => ['ENV', 'ARG'].includes(instruction.name) && FRONTEND_VARIABLES.test(instruction.args),
+      ),
+    ).toBe(false);
+    expect(runner.filter((instruction) => instruction.name === 'CMD').map(shellForm)).toEqual([
+      '["node", "server.js"]',
+    ]);
+  });
+
+  it('RF-P6: no se copia public (no existe en el frontend)', () => {
+    const publicExists = existsSync(resolve(repoRoot(), 'frontend/public'));
+    const copiesPublic = instructions.some(
+      (instruction) =>
+        instruction.name === 'COPY' && copySources(instruction).some((source) => /(^|\/)public$/.test(source)),
+    );
+    expect(copiesPublic, 'existe frontend/public: añada el COPY a runner y ajuste este test').toBe(publicExists);
+  });
+
+  it('RF-P6: next.config.ts declara output: standalone', () => {
+    expect(readRepoText('frontend/next.config.ts')).toMatch(/output:\s*'standalone'/);
+  });
+
+  it('RF-P19: el CMD de runner es en forma lista con node como primer elemento, sin ENTRYPOINT', () => {
+    const command = runner.filter((instruction) => instruction.name === 'CMD').at(-1);
+    expect(command?.args).toMatch(/^\["node",/);
+    expect(runner.some((instruction) => instruction.name === 'ENTRYPOINT')).toBe(false);
+  });
+});
+
+describe('frontend/.dockerignore', () => {
+  const text = readOrEmpty('frontend/.dockerignore');
+  const entries = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  const normalized = entries.map((entry) => entry.replace(/^\//, '').replace(/\/$/, ''));
+
+  it('RF-P4: frontend/.dockerignore existe', () => {
+    expect(entries.length).toBeGreaterThan(0);
+  });
+
+  it('RF-P4: excluye .env, .env.*, node_modules, .git, .next, src/generated, coverage y tests', () => {
+    for (const required of ['.env', '.env.*', 'node_modules', '.git', '.next', 'src/generated', 'coverage', 'tests']) {
+      expect(normalized, required).toContain(required);
+    }
+    expect(entries.indexOf('!.env.example')).toBeGreaterThan(entries.indexOf('.env.*'));
+  });
+
+  it('RF-P4: NO excluye lo que la construcción necesita', () => {
+    for (const needed of [
+      'package.json',
+      'package-lock.json',
+      'tsconfig.json',
+      'next.config.ts',
+      'postcss.config.mjs',
+      'prisma',
+      'prisma.config.ts',
+      'scripts',
+      'src',
+    ]) {
+      expect(normalized, needed).not.toContain(needed);
+      expect(
+        normalized.filter((entry) => !entry.startsWith('!') && (entry === '*' || entry === `${needed}/**`)),
+      ).toEqual([]);
+    }
+  });
+});

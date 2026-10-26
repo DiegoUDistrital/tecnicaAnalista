@@ -1816,7 +1816,7 @@ de la tabla.
 
 Esta sección explica cómo se empaqueta y se ejecuta la aplicación completa con Docker: PostgreSQL, una tarea de un
 solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: por ahora existen las
-imágenes del backend; el archivo `docker-compose.yml` que las une se documenta cuando se añada.
+imágenes del backend y del frontend; el archivo `docker-compose.yml` que las une se documenta cuando se añada.
 
 Aviso para quien ejecute comandos: en esta carpeta conviven dos archivos de Compose, el de desarrollo
 (`docker-compose.dev.yml`, solo PostgreSQL) y el de despliegue (`docker-compose.yml`). Por eso TODOS los comandos de
@@ -1881,6 +1881,55 @@ docker build --target migrate -t todo-backend-migrate backend
 Las pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) comprueban sin Docker las etapas y su orden, el
 usuario numérico, la etiqueta de Node, la ausencia de credenciales y de `COPY . .`, el contenido de
 `backend/.dockerignore` y la forma de los comandos de arranque.
+
+### Imagen del frontend
+
+El archivo `frontend/Dockerfile` tiene tres etapas, con la misma etiqueta de Node que el backend
+(`node:26.1.0-bookworm-slim`):
+
+| Etapa    | Para qué sirve                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| `deps`   | Instala las dependencias (`npm ci`) y genera el cliente de Prisma (lo hace el `postinstall`).            |
+| `build`  | Compila la aplicación de Next.js en dos pasos (ver abajo).                                               |
+| `runner` | Imagen del servicio: solo el servidor independiente de Next y los archivos estáticos. Corre como 10001. |
+
+Decisiones y su porqué:
+
+- **Salida independiente (`output: 'standalone'`).** Next copia a `.next/standalone` solo los módulos que la
+  aplicación usa de verdad, junto con un `server.js` que se arranca con `node server.js`. La imagen final pesa mucho
+  menos y no lleva el código fuente ni las herramientas de desarrollo. Alternativa descartada: `next start` con todos
+  los `node_modules` dentro de la imagen (más peso y más superficie). Aviso: con esta opción, `next start` imprime un
+  aviso indicando que ya no es la forma recomendada de arrancar; en desarrollo (`npm run dev`) y en la prueba de
+  integración se sigue usando `next dev`/`next start` y funcionan igual.
+- **Compilación en dos pasos.** `npm run verify:build` compila con las variables de configuración vacías (demuestra
+  que la compilación no necesita secretos) y con valores falsos (y busca esos valores en los archivos que van al
+  navegador, para detectar fugas). Después `npm run build` compila de nuevo en limpio y ese resultado es el que se
+  copia. Costo: la construcción tarda más. Alternativa descartada: copiar el resultado del paso con valores falsos
+  (el artefacto saldría de una compilación hecha con un entorno falso).
+- **Sin variables de ejecución en la imagen.** La construcción no recibe `ARG` ni `ENV` de `BACKEND_URL`, `API_KEY`,
+  `READER_DATABASE_URL` ni `ALLOWED_HOSTS`: los secretos no deben quedar escritos en las capas de la imagen. Tampoco
+  se fijan `PORT` ni `HOSTNAME`: no pertenecen a la configuración del frontend y los entrega Compose al ejecutar.
+- **Cliente de Prisma siempre generado en la imagen.** `frontend/.dockerignore` excluye `src/generated`, `.next`,
+  `node_modules`, las pruebas, `.env` (y `.env.*` salvo `.env.example`), de modo que el cliente de Prisma sale de
+  `prisma generate` dentro de la construcción y no del equipo de quien construye. Cada `COPY` nombra lo que copia
+  (no hay `COPY . .`).
+- **Caché escribible.** Next escribe en `.next/cache` mientras funciona. La imagen crea ese directorio con dueño
+  `10001:10001`; así, si más adelante el sistema de archivos del contenedor se declara de solo lectura, basta con
+  montar ahí un directorio temporal.
+- **Sin `public/`.** El frontend no tiene la carpeta `public`, así que no se copia. Si algún día se crea, hay que
+  añadir su `COPY` a la etapa `runner` (la prueba estática falla para recordarlo).
+- **Usuario y arranque.** `USER 10001:10001` numérico, como en el backend, y `CMD ["node", "server.js"]` en forma de
+  lista: `node` es el proceso principal y recibe directamente las señales de parada.
+
+Construcción manual (solo para probar; Compose lo hará por ti):
+
+```powershell
+docker build -t todo-frontend frontend
+```
+
+Las mismas pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) cubren el frontend: etapas, usuario,
+etiqueta de Node común con el backend, ausencia de variables de ejecución en la construcción, `.dockerignore`,
+`output: 'standalone'` y el comando de arranque.
 
 ## Despliegue en Ubuntu
 
