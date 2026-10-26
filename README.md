@@ -1203,7 +1203,7 @@ La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista 
 acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
 recargaría la página entera).
 
-En esta versión la pantalla muestra la lista y permite crear, completar, desmarcar y borrar tareas. Editar se añade en un paso siguiente.
+En esta versión la pantalla muestra la lista y permite crear, completar, desmarcar, editar y borrar tareas.
 
 **Estados de la lista:**
 
@@ -1299,6 +1299,34 @@ clic, error junto a la tarjeta, aviso de 404 y foco).
   dos pestañas, la segunda ve el aviso «La tarea ya no existe.» (no un error en una tarjeta que va a desaparecer) y su
   lista se refresca. Si la tarea estaba en edición, la edición se descarta al llegar la lista nueva.
 - **Si falla** (red, 500, 400 o 429): el mensaje sale junto a la tarjeta, la tarea se queda y los botones se reactivan.
+
+### Editar
+
+Cada tarjeta tiene un botón «Editar «título»». Reutiliza el mismo mecanismo de completar y borrar (guardia contra el
+doble clic, error junto a la tarjeta, aviso de 404) y los mismos campos que el formulario de crear
+(`client/edit-form.tsx` y `client/text-field.tsx`).
+
+- **En la propia tarjeta:** el título y la descripción se sustituyen por un formulario con los valores actuales y el
+  foco va al título. **Por qué:** no se pierde el contexto de la lista ni hace falta otra ruta. Alternativa descartada:
+  una página aparte `/tasks/<id>` (más rutas, más navegación y una lista que recargar al volver).
+- **Solo viajan los campos que cambian:** `PUT /api/tasks/<id>` con el título, la descripción o ambos, según cuáles
+  difieran del original **una vez recortados**. Un cambio solo de espacios, o ningún cambio, no envía nada y sale de la
+  edición. Antes de enviar se validan con las mismas reglas que al crear (mensaje junto al campo y foco al primer campo
+  inválido); un 400 del servidor se muestra junto a su campo o, si no es de título ni de descripción, como mensaje
+  general del formulario.
+- **Una edición a la vez:** pulsar «Editar» en otra tarea con cambios sin guardar pregunta con `window.confirm`
+  («Hay cambios sin guardar en «título». ¿Descartarlos?»); si se rechaza, se queda donde estaba; sin cambios, cambia
+  sin preguntar. Alternativa descartada: varias ediciones a la vez (el foco y los refrescos se complican) o descartar
+  sin avisar (se pierde lo escrito).
+- **Cancelar y Escape:** descartan lo escrito y devuelven el foco al botón «Editar» de esa tarea. Lo mismo al guardar
+  con éxito.
+- **El borrador sobrevive:** el texto escrito se guarda por tarea en el estado común (`lib/task-ui-state.ts`), no en la
+  tarjeta, así que no se pierde al refrescar la lista (por ejemplo al completar otra tarea) ni al cambiar de filtro
+  mientras la tarea siga en la lista. Si la tarea ya no está tras un refresco, o si se borra, la edición se descarta.
+  Completar la tarea mientras se edita no descarta lo escrito.
+- **Si falla** (red, 500 o 429): el mensaje sale junto a la tarjeta, lo escrito se conserva y los botones se
+  reactivan, sin refrescar. Si la tarea ya no existe (404) se avisa «La tarea ya no existe.», se descarta la edición y
+  se refresca.
 
 ### Rutas del servidor del frontend
 

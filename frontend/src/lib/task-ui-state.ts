@@ -20,6 +20,9 @@ export type UiAction =
   | { type: 'busyAdd'; id: string }
   | { type: 'busyRemove'; id: string }
   | { type: 'editOpen'; id: string; title: string; description: string }
+  | { type: 'editChange'; id: string; field: 'title' | 'description'; value: string }
+  | { type: 'editErrors'; id: string; errors: Editing['errors'] }
+  | { type: 'editClose'; id: string }
   | { type: 'taskGone'; id: string }
   | { type: 'listArrived'; ids: readonly string[] };
 
@@ -49,6 +52,16 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, busy: state.busy.filter((id) => id !== action.id) };
     case 'editOpen':
       return { ...state, editing: { id: action.id, title: action.title, description: action.description, errors: {} } };
+    case 'editChange':
+      return state.editing?.id === action.id
+        ? { ...state, editing: { ...state.editing, [action.field]: action.value } }
+        : state;
+    case 'editErrors':
+      return state.editing?.id === action.id
+        ? { ...state, editing: { ...state.editing, errors: action.errors } }
+        : state;
+    case 'editClose':
+      return state.editing?.id === action.id ? { ...state, editing: undefined } : state;
     case 'taskGone':
       return {
         ...state,

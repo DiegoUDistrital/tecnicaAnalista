@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import type { Task } from '../lib/task';
 import { formatCreatedAt } from '../lib/task-date';
+import type { Editing } from '../lib/task-ui-state';
+import { EditForm, type EditActions } from './edit-form';
 
 interface TaskCardProps {
   task: Task;
@@ -12,6 +14,9 @@ interface TaskCardProps {
   error?: string;
   onToggle?: (task: Task) => void;
   onDelete?: (task: Task) => void;
+  /** Borrador de edición, solo si ESTA tarea es la que se edita (las demás tarjetas no se repintan al escribir). */
+  editing?: Editing;
+  editActions?: EditActions;
   /** El padre guarda el botón de completar de cada tarea para llevarle el foco. */
   registerToggle?: (id: string, element: HTMLButtonElement | null) => void;
 }
@@ -28,12 +33,20 @@ export const TaskCard = memo(function TaskCard({
   error,
   onToggle,
   onDelete,
+  editing,
+  editActions,
   registerToggle,
 }: TaskCardProps) {
   return (
     <article data-task-id={task.id} className="wrap-anywhere min-w-0 rounded border p-3">
-      <h3 className="font-semibold">{task.title}</h3>
-      {task.description === '' ? null : <p className="whitespace-pre-wrap text-sm">{task.description}</p>}
+      {editing !== undefined && editActions !== undefined ? (
+        <EditForm task={task} draft={editing} busy={busy} actions={editActions} />
+      ) : (
+        <>
+          <h3 className="font-semibold">{task.title}</h3>
+          {task.description === '' ? null : <p className="whitespace-pre-wrap text-sm">{task.description}</p>}
+        </>
+      )}
       <p className="text-xs text-gray-600">
         <time dateTime={task.createdAt}>{formatCreatedAt(task.createdAt, timeZone)}</time>
       </p>
@@ -48,6 +61,14 @@ export const TaskCard = memo(function TaskCard({
         className="mt-2 min-h-11 min-w-11 rounded border px-3 py-1 text-left aria-disabled:opacity-60"
       >
         {`Marcar «${task.title}» como completada`}
+      </button>
+      <button
+        type="button"
+        ref={(element) => editActions?.registerButton(task.id, element)}
+        onClick={() => editActions?.open(task)}
+        className="mt-2 ml-2 min-h-11 min-w-11 rounded border px-3 py-1"
+      >
+        {`Editar «${task.title}»`}
       </button>
       <button
         type="button"

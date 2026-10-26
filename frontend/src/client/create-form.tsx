@@ -3,7 +3,8 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { POST_UNCONFIRMED_MESSAGE } from '../lib/api-error';
 import { validateDescription, validateTitle } from '../lib/task-text';
-import { createTask, type WriteResult } from './tasks-api';
+import { fromInvalid, type FormErrors } from './form-errors';
+import { createTask } from './tasks-api';
 import { TextField } from './text-field';
 
 interface CreateFormProps {
@@ -13,25 +14,7 @@ interface CreateFormProps {
   onCreated: () => void;
 }
 
-interface FormErrors {
-  title?: string;
-  description?: string;
-  general?: string;
-}
-
 type Field = HTMLInputElement | HTMLTextAreaElement | null;
-
-/** Errores de un 400: `title` y `description` junto a su campo; cualquier otro `field` va al mensaje general. */
-function fromInvalid(result: Extract<WriteResult, { kind: 'invalid' }>): FormErrors {
-  const { details, message } = result;
-  const known = ['title', 'description'];
-  const hasOther = details.length === 0 || details.some((detail) => !known.includes(detail.field));
-  return {
-    title: details.find((detail) => detail.field === 'title')?.message,
-    description: details.find((detail) => detail.field === 'description')?.message,
-    general: hasOther ? message : undefined,
-  };
-}
 
 export function CreateForm({ onStart, onCreated }: CreateFormProps) {
   const [title, setTitle] = useState('');
