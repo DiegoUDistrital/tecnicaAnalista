@@ -1,0 +1,7 @@
+.next
+coverage
+src/generated
+package-lock.json
+next-env.d.ts
+node_modules
+AGENTS.md

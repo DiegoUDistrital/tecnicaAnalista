@@ -19,18 +19,18 @@ Las versiones se fijan al crear cada proyecto.
 - helmet 8.3.0 (cabeceras de seguridad)
 - express-rate-limit 8.7.1 (límite de peticiones por IP)
 - PostgreSQL
-- Next.js 15+ (App Router)
+- Next.js 16.4.3 (App Router) con React 19.3.1 (frontend)
 - Prisma
-- TypeScript
-- Tailwind CSS
-- Vitest
-- ESLint y Prettier
+- TypeScript 6.0.3
+- Tailwind CSS 4.3.3 (con `@tailwindcss/postcss` y PostCSS 8.5.31)
+- Vitest 5.0.5
+- ESLint 10.13.0, typescript-eslint 8.72.0 y Prettier 3.9.10
 - Docker
 
 ## Estructura del repositorio
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
-- `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
+- `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Hoy tiene la base del proyecto y una página provisional (ver «Frontend (estado actual)»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
 - `backend/queries.sql`: consultas SQL de la prueba.
@@ -971,7 +971,84 @@ termina con código 1. Las promesas rechazadas dentro de una petición NO llegan
 cierre en curso, una excepción o un rechazo solo se registra: el cierre continúa, no cuenta como segunda señal y fuerza
 el código final a 1. Lo que se registra de lo lanzado sigue las reglas de «Logs»: si no es un `Error`, solo su tipo.
 
-El frontend se documentará cuando exista.
+El frontend se documenta en «Frontend (estado actual)».
+
+## Frontend (estado actual)
+
+El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Por ahora solo
+tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad y las herramientas de
+calidad. Todavía no hay configuración propia, acceso a datos, rutas del servidor ni lista de tareas.
+
+### Comandos
+
+Se ejecutan dentro de `frontend/` (primero `npm install`):
+
+| Comando             | Qué hace                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `npm run dev`       | Servidor de desarrollo en `127.0.0.1:3001`.                                 |
+| `npm run build`     | Compila para producción.                                                    |
+| `npm run start`     | Sirve lo compilado en `127.0.0.1:3001` (hay que ejecutar `build` antes).    |
+| `npm run lint`      | ESLint y comprobación de formato con Prettier.                              |
+| `npm run format`    | Da formato con Prettier.                                                    |
+| `npm run typecheck` | Comprueba los tipos con TypeScript.                                         |
+| `npm test`          | Vitest con cobertura; falla si las líneas o sentencias bajan del 95 %.      |
+
+### Puerto y host fijos
+
+`dev` y `start` llevan `-p 3001 -H 127.0.0.1` escritos en el script. Por qué: el puerto 3000 es el del backend, y así no
+chocan; y el host `127.0.0.1` evita que el servidor quede abierto a la red local por accidente. Como van en el script,
+no dependen de la variable `PORT` del entorno (con `PORT=4000` el servidor sigue en 3001). Para cambiarlos hay que
+editar `package.json`.
+
+### Estructura de `frontend/src`
+
+- `app/`: rutas y páginas finas, sin lógica (`layout.tsx`, `page.tsx`, `globals.css`).
+- `components/`: componentes de servidor puros que reciben datos por props.
+- `lib/`: funciones puras sin secretos que puede importar cualquiera, incluida `next.config.ts`.
+- `server/`: todo lo que toca secretos, base de datos o Express; nunca llega al navegador.
+- `client/`: reservada para el código que corre en el navegador (aún no existe).
+
+Solo `app/` y `lib/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
+hay un alias menos que mantener entre `tsconfig` y Vitest.
+
+### Cabeceras de seguridad
+
+`next.config.ts` desactiva `X-Powered-By` y añade a todas las rutas `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer` y `X-Frame-Options: DENY`. La lista sale de la función `securityHeaders()`
+(`src/lib/security-headers.ts`), que se prueba aparte. **Limitación:** no hay `Content-Security-Policy`. Una CSP útil
+con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el servidor) y queda como trabajo futuro.
+
+### Por qué el proyecto se creó a mano
+
+No se usó `create-next-app`: instala versiones con `^`, añade archivos de demostración y fuentes que se descargan en
+la compilación (la compilación fallaría sin red) y su asistente es interactivo. A mano, todas las versiones son
+exactas (`--save-exact`) y el repositorio solo tiene lo que se usa.
+
+### Versiones y compatibilidad (ESLint 10 sin `eslint-config-next`)
+
+Todas las versiones son exactas: Next.js 16.4.3 (`latest` estable al crear el proyecto), React y React DOM 19.3.1,
+Tailwind CSS 4.3.3, TypeScript 6.0.3, ESLint 10.13.0, typescript-eslint 8.72.0, Prettier 3.9.10 y Vitest 5.0.5, las
+mismas herramientas que el backend. Next.js exige Node 20.9 o superior; el `engines` del frontend es el del backend.
+
+- **Decisión:** se mantiene ESLint 10 y NO se instala `eslint-config-next`. Ese paquete trae los plugins `react`,
+  `import` y `jsx-a11y`, que no declaran compatibilidad con ESLint 10. En su lugar se instalan los plugins que se usan
+  y se cablean a mano en `eslint.config.mjs`: `@next/eslint-plugin-next` 16.4.3 (reglas recomendadas y
+  `core-web-vitals`), `eslint-plugin-react-hooks` 7.1.1 (declara ESLint 10) y `eslint-plugin-react` 7.37.5 (solo
+  `react/no-danger`). Cada plugin se comprobó con una regla mutada que debe fallar (ver «Pruebas»).
+- **Por qué:** así el frontend usa las mismas versiones de ESLint, TypeScript y typescript-eslint que el backend, y
+  solo se activan reglas que se entienden y se justifican.
+- **Alternativa descartada:** bajar a ESLint 9 para usar `eslint-config-next`. Habría dado una configuración «de
+  fábrica», pero con dos versiones de ESLint en el repositorio y reglas que nadie ha elegido.
+- **Excepción documentada:** `eslint-plugin-react` 7.37.5 declara como peer ESLint hasta la 9. Funciona con ESLint 10
+  (se comprobó con una regla mutada), así que `package.json` lleva un `overrides` de npm que le indica que use el
+  `eslint` del proyecto (`"eslint-plugin-react": { "eslint": "$eslint" }`). No se usa `--legacy-peer-deps`. Si sale una
+  versión del plugin que declare ESLint 10, se quita el `overrides`.
+- `@next/next/*` queda con las severidades de su configuración recomendada (algunas son avisos, no errores).
+
+### Generados que no se suben
+
+`next-env.d.ts` (lo escribe Next y apunta a `.next`) está en `.gitignore`: `npm run typecheck` funciona en un clon limpio
+sin él. `npm run dev` puede crear un `AGENTS.md` si detecta un asistente de código; también se ignora.
 
 ## Cómo ejecutar
 
@@ -1034,7 +1111,10 @@ cuando exista el frontend.
   un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
   comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
   caracterización: documenta lo que hace Node, no código propio.
-- Frontend: se documentará cuando exista.
+- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`
+  y de la página provisional, con Vitest en entorno Node. Las reglas de ESLint propias (`react/no-danger`, las de
+  `@next/next`, las de hooks y la prohibición de importar el servidor desde `src/client/`) se comprobaron una vez con
+  archivos de ejemplo que deben fallar y que se borraron después.
 
 ## Base de datos
 
