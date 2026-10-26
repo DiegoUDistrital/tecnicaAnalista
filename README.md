@@ -1203,7 +1203,7 @@ La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista 
 acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
 recargaría la página entera).
 
-En esta versión la pantalla muestra la lista y permite crear tareas. Completar, editar y borrar se añaden en pasos siguientes.
+En esta versión la pantalla muestra la lista y permite crear, completar y desmarcar tareas. Editar y borrar se añaden en pasos siguientes.
 
 **Estados de la lista:**
 
@@ -1255,6 +1255,34 @@ El formulario está encima de la lista (`client/create-form.tsx` y `client/text-
 - **Sin actualización optimista:** la tarea nueva aparece cuando llega la lista, no antes. **Por qué:** así la pantalla
   nunca muestra algo que el servidor no confirmó. Alternativa descartada: insertarla al enviar y deshacerlo si falla
   (más código y estados intermedios que explicar).
+
+### Completar y desmarcar
+
+Cada tarjeta tiene un botón de completar (`client/task-card.tsx`; la lógica común está en `client/use-task-actions.ts`).
+
+- **Un botón con `aria-pressed`:** su nombre accesible es fijo, «Marcar «título» como completada», y no cambia con el
+  estado; `aria-pressed` dice si la tarea está completada. **Por qué:** un lector de pantalla anuncia siempre lo mismo y
+  el estado aparte. Alternativa descartada: una casilla (nombre y estado se anuncian de dos formas según el lector).
+- **Qué se envía:** `PUT /api/tasks/<id>` con solo `{"completed": true|false}`. Sin actualización optimista: el estado
+  cambia cuando llega la lista nueva (se vuelve a pedir la lista y a renderizar los contadores, como al crear). Bajo
+  Pendientes, completar hace desaparecer la tarea tras el refresco; bajo Completadas, desmarcar también. La región de
+  estado anuncia «Lista actualizada.» y el aviso se quita al empezar la siguiente acción (sin temporizadores).
+- **Sin doble clic:** un guardia síncrono por tarea hace que dos clics seguidos envíen una sola petición. Mientras dura
+  la petición el botón queda con `aria-disabled` (no `disabled`, que podría hacerle perder el foco). Tareas distintas
+  pueden tener peticiones a la vez.
+- **Errores por tarea:** si falla (red, 500, 400 o 429), el mensaje sale junto a esa tarjeta con `role="alert"`, la
+  tarea queda como estaba, el botón se reactiva y no se refresca nada. En un 429 el mensaje trae la espera, pero no hay
+  reintento automático: la persona decide cuándo volver a pulsar. El mensaje desaparece al empezar otra acción sobre
+  esa tarea.
+- **Si la tarea ya no existe (404):** no es un error de la tarjeta, que va a desaparecer. Se avisa en la región de estado
+  («La tarea ya no existe.») y se refrescan la lista y los contadores. Solo se interpreta así un 404 de Express con el
+  código `NOT_FOUND`; un 404 de otro origen (por ejemplo, un proxy) es un error normal.
+- **Dónde queda el foco:** si la tarea sigue en la lista, en su mismo botón; si desaparece, en el botón de la tarea que
+  ocupa su lugar (la siguiente o, si era la última, la anterior) y, si la lista queda vacía, en el encabezado «Tareas».
+  Si la persona ya había pasado a otro campo, no se le quita el foco.
+- **Estado por tarea:** los errores, las tareas ocupadas y los avisos viven en un reductor puro (`lib/task-ui-state.ts`)
+  en lugar de varios `useState`: un 404 cambia varias cosas a la vez y así no se descuadran. Al llegar una lista nueva
+  se olvidan los errores de las tareas que ya no están.
 
 ### Rutas del servidor del frontend
 

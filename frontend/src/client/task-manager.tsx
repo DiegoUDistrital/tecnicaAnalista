@@ -1,10 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useTransition } from 'react';
 import type { TaskFilter } from '../lib/task-filter';
+import { initialUiState, uiReducer } from '../lib/task-ui-state';
 import { CreateForm } from './create-form';
 import { TaskCard } from './task-card';
+import { useTaskActions } from './use-task-actions';
 import { useTaskList } from './use-task-list';
 
 const CREATED_NOTICE = 'Tarea creada.';
@@ -25,7 +27,7 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
   const router = useRouter();
   // `routerPending` dura hasta que Next entrega los contadores nuevos: es el refresco en curso de los contadores.
   const [routerPending, startTransition] = useTransition();
-  const [notice, setNotice] = useState<string>();
+  const [ui, dispatch] = useReducer(uiReducer, initialUiState);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -34,30 +36,49 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
     };
   }, []);
 
-  const clearNotice = useCallback(() => setNotice(undefined), []);
   // Las escrituras no se cancelan al desmontar (un POST cancelado puede haber creado la tarea): se ignora el resultado.
-  const created = useCallback(() => {
+  const afterWrite = useCallback(() => {
     if (!mounted.current) {
       return;
     }
-    setNotice(CREATED_NOTICE);
     reload('background');
     startTransition(() => router.refresh());
   }, [reload, router]);
+  const { toggle, registerToggle, headingRef } = useTaskActions({ tasks, status, dispatch, afterWrite });
 
-  // `total` viene de los contadores (null si no están disponibles). Con carga o refresco en curso no se avisa.
-  const truncated = status === 'ready' && pending === 0 && !routerPending && total !== null && total > tasks.length;
+  const clearNotice = useCallback(() => dispatch({ type: 'noticeCleared' }), []);
+  const created = useCallback(() => {
+    dispatch({ type: 'noticeSet', notice: CREATED_NOTICE });
+    afterWrite();
+  }, [afterWrite]);
+
+  // Al llegar una lista, se olvidan los errores y la edición de las tareas que ya no están. Mientras carga (la lista
+  // va vacía) no se hace: al cambiar de filtro se conservan los de las tareas que siguen.
+  useEffect(() => {
+    if (status === 'ready') {
+      dispatch({ type: 'listArrived', ids: tasks.map((task) => task.id) });
+    }
+  }, [tasks, status]);
+
+  // `total` viene de los contadores (null si no están disponibles). Con carga, refresco o escritura no se avisa.
+  const truncated =
+    status === 'ready' &&
+    pending === 0 &&
+    !routerPending &&
+    ui.busy.length === 0 &&
+    total !== null &&
+    total > tasks.length;
 
   return (
     <div>
       <CreateForm onStart={clearNotice} onCreated={created} />
       <section>
-        <h2 tabIndex={-1} className="mb-2 text-xl font-semibold">
+        <h2 ref={headingRef} tabIndex={-1} className="mb-2 text-xl font-semibold">
           Tareas
         </h2>
         <div role="status" aria-live="polite" className="text-sm">
           {status === 'loading' ? <p>{LOADING_TEXT}</p> : null}
-          {notice === undefined ? null : <p>{notice}</p>}
+          {ui.notice === undefined ? null : <p>{ui.notice}</p>}
           {truncated ? <p>{`Mostrando las ${tasks.length} tareas más recientes de ${total}.`}</p> : null}
         </div>
         {status === 'error' ? (
@@ -81,7 +102,13 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
           <ul className="mt-3 flex flex-col gap-3">
             {tasks.map((task) => (
               <li key={task.id}>
-                <TaskCard task={task} />
+                <TaskCard
+                  task={task}
+                  busy={ui.busy.includes(task.id)}
+                  error={ui.taskErrors[task.id]}
+                  onToggle={toggle}
+                  registerToggle={registerToggle}
+                />
               </li>
             ))}
           </ul>
