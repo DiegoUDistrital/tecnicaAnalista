@@ -979,7 +979,7 @@ El frontend se documenta en «Frontend (estado actual)».
 El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Por ahora solo
 tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad, las herramientas de
 calidad, la configuración propia (ver «Configuración del frontend») y la lectura de los contadores (ver «Contadores y
-Prisma en el frontend»). Todavía no hay rutas del servidor ni lista de tareas, y la página aún no muestra los contadores.
+Prisma en el frontend»). Las rutas del servidor hacia Express ya existen (ver «Rutas del servidor del frontend»); la lista interactiva de tareas aún no.
 
 ### Comandos
 
@@ -1012,6 +1012,7 @@ editar `package.json`.
   configuración, `server/logging/` es el registro de errores y `server/counters/` lee los contadores con Prisma). Cada
   archivo empieza con `import 'server-only'`, que
   hace fallar la compilación si algo del navegador lo importa.
+- `server/proxy/`: las rutas hacia Express (comprobaciones del borde, cliente de Express y traducción de respuestas); `app/api/tasks/` solo las expone.
 - `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
 - `generated/`: cliente de Prisma generado (no se sube a git; lo crea `npm install`).
 - `client/`: reservada para el código que corre en el navegador (aún no existe).
@@ -1083,7 +1084,7 @@ raíz cargado desde las dos aplicaciones. `frontend/.env` está en `.gitignore`;
   procesos a la vez.
 - **Contraseñas.** Next expande `$` dentro de los valores del `.env`: use solo `[A-Za-z0-9._~-]` en las contraseñas.
 - **`ALLOWED_HOSTS`.** Pensada para cuando se conozca el nombre público (protege frente a que un nombre ajeno apunte a
-  este servidor): una petición cuyo `Host` no esté en la lista recibirá 403 (llega con las rutas del servidor). Ejemplo:
+  este servidor): una petición cuyo `Host` no esté en la lista recibirá 403 (lo aplican las rutas del servidor). Ejemplo:
   `ALLOWED_HOSTS=localhost:3001,127.0.0.1:3001`.
 
 **Cuándo se valida.** La configuración es PEREZOSA: no se valida al importar el módulo. Se valida en dos momentos y el
@@ -1119,7 +1120,7 @@ usuarios comparten un único cupo, porque el backend ve siempre la IP del servid
 
 El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.1 (`prisma`, `@prisma/client` y
 `@prisma/adapter-pg`, versiones exactas). Lo hace en el servidor, con el rol `reader` y **solo sobre la vista
-`task_counts`**. Todavía no hay página que los muestre.
+`task_counts`**. La página principal los muestra (ver «Página principal»).
 
 - **Mínimo privilegio.** `reader` tiene SELECT únicamente sobre la vista y ningún permiso sobre `tasks`; aun con la
   credencial filtrada, lo único que se vería son tres números. Se comprobó contra la base de desarrollo: con
@@ -1166,6 +1167,184 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
 - **Por petición, no en la compilación**: `page` exporta `dynamic = 'force-dynamic'`, así `next build` no se conecta a la BD (en la salida de la compilación `/` aparece como `ƒ (Dynamic)`).
 - **Página fina**: `page.tsx` solo une `readFilter`, `readCounters` y `HomeView`; la lógica y el HTML están en funciones y componentes puros que se prueban sin invocar un componente de servidor asíncrono.
 - **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas llegará con la interfaz del cliente.
+
+### Rutas del servidor del frontend
+
+#### Arquitectura Server/Client
+
+El navegador solo habla con su propio origen (`http://127.0.0.1:3001`); nunca con Express ni con la base de datos. El
+servidor de Next hace de intermediario:
+
+```
+navegador -> rutas /api/tasks de Next (servidor) -> Express -> PostgreSQL (rol writer)
+página (Server Component) -> Prisma con el rol reader -> vista task_counts
+```
+
+- **Server Component** para los contadores: se leen en el servidor, con credenciales que el navegador no ve.
+- **Rutas de API** (`app/api/tasks`) para la lista y las escrituras: añaden la API key, que solo existe en el servidor.
+- **Client Component** (la lista interactiva): llegará con la interfaz del cliente; hablará con estas rutas.
+- **Por qué rutas de API y no llamar a Express desde el navegador:** la key tendría que estar en el navegador.
+  Alternativa descartada: `NEXT_PUBLIC_API_KEY` (cualquiera la vería en las herramientas del navegador).
+- **Por qué no Server Actions:** las rutas son un contrato HTTP explícito, fácil de probar con `curl` y con tests.
+
+#### Las cuatro operaciones y el 405
+
+| Método   | Ruta               | Reenvía a Express            | Éxito          |
+| -------- | ------------------ | ---------------------------- | -------------- |
+| `GET`    | `/api/tasks`       | `GET /api/tasks`             | `200` (arreglo) |
+| `POST`   | `/api/tasks`       | `POST /api/tasks`            | `201` (tarea)  |
+| `PUT`    | `/api/tasks/<id>`  | `PUT /api/tasks/<id>`        | `200` (tarea)  |
+| `DELETE` | `/api/tasks/<id>`  | `DELETE /api/tasks/<id>`     | `204` sin cuerpo |
+
+`GET /api/tasks` admite `?filter=completed` o `?filter=pending` (se reenvía como `?completed=true` o `false`). Cada
+ruta exporta **todos** los métodos (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS`) y los que no atiende
+responden `405 METHOD_NOT_ALLOWED` con `Allow: GET, POST` (colección) o `Allow: PUT, DELETE` (con id), sin tocar
+Express; la respuesta a `HEAD` no lleva cuerpo. **Por qué se exportan todos:** si no, Next inventaría por su cuenta
+las respuestas a `OPTIONS` y `HEAD`. Todas las respuestas llevan `Cache-Control: no-store` y las rutas son dinámicas
+(`dynamic = 'force-dynamic'`): nada se guarda en cachés.
+
+#### Orden de comprobaciones
+
+Antes de reenviar, cada petición pasa estos pasos en este orden; el primero que falla responde y los demás no se
+ejecutan. Los seis primeros no leen el cuerpo.
+
+1. Método no soportado: `405`.
+2. Defensa de origen y de `Host`: `403` (ver abajo).
+3. `id` que no es un UUID completo (`..`, `%2e%2e`, `a%2Fb`, un sufijo): `400`. Se mira el segmento tal cual viene en
+   la dirección y debe coincidir con el parámetro que entrega Next; el `id` se pasa a minúsculas.
+4. Consulta: en `GET` solo se admite un `filter` válido; en `POST`, `PUT` y `DELETE`, ninguna: `400`.
+5. `Content-Length` (`POST`, `PUT`): no numérico `400`; mayor de 10 240 bytes `413`.
+6. `Content-Type: application/json` (con o sin `charset=utf-8`) y sin `Content-Encoding` (salvo `identity`): `415`.
+7. Lectura del cuerpo **en flujo**, con tope de 10 240 bytes realmente recibidos (`413`, aunque `Content-Length`
+   mintiera) y plazo de 5 segundos (`408`); si la conexión se corta, `400`.
+8. El cuerpo debe ser UTF-8 válido sin BOM, JSON, un objeto y sin la clave `__proto__`: `400`.
+
+El borde **no valida campos** (título, descripción): esa autoridad es Express, y así hay una sola fuente de verdad. Pero
+**nunca reenvía el texto crudo**: reenvía el JSON ya analizado y vuelto a serializar (sin espacios ni claves repetidas).
+Alternativas descartadas: reenviar el texto tal cual (más superficie) y validar también los campos aquí (dos fuentes
+de verdad que se desincronizan). `GET` y `DELETE` no leen ni envían cuerpo aunque lo traigan. Exigir JSON impide además
+que un formulario de otra web envíe un `POST` simple a estas rutas.
+
+#### Errores hacia el navegador
+
+Siempre con la forma `{"error":{"code","message","details"}}`; el mensaje lo escribe este servidor desde tablas
+cerradas, **nunca se copia texto ni cabeceras de Express** (podrían llevar SQL, trazas o la key).
+
+| Qué ocurre                                                | El navegador recibe                                 |
+| --------------------------------------------------------- | --------------------------------------------------- |
+| Método no soportado                                       | `405 METHOD_NOT_ALLOWED` + `Allow`                  |
+| Origen o `Host` no permitido                              | `403 FORBIDDEN`                                     |
+| `id` o consulta inválidos; cuerpo no válido o cortado     | `400 BAD_REQUEST` (con `details` de `id`, `query` o `body`) |
+| Cuerpo demasiado grande                                   | `413 PAYLOAD_TOO_LARGE`                             |
+| Tipo o codificación no admitidos                          | `415 UNSUPPORTED_MEDIA_TYPE`                        |
+| Plazo de lectura del cuerpo agotado                       | `408 REQUEST_TIMEOUT`                               |
+| Error inesperado o configuración inválida                 | `500 INTERNAL_ERROR`                                |
+| Express: `400` de validación (`POST`, `PUT`)              | `400 VALIDATION_ERROR` con `details` filtrados      |
+| Express: `404` (`PUT`, `DELETE`)                          | `404 NOT_FOUND` «La tarea ya no existe.»            |
+| Express: `413` (`POST`, `PUT`)                            | `413 PAYLOAD_TOO_LARGE`                             |
+| Express: `429`                                            | `429 TOO_MANY_REQUESTS`, con `Retry-After` solo si es válido |
+| Express: `401`, `500`, `405`, `3xx`, éxito inesperado, JSON roto, forma inesperada o respuesta de más de 8 MiB | `502 BAD_GATEWAY` |
+| Express no responde (conexión rechazada)                  | `502 BAD_GATEWAY`                                   |
+| Express no responde en 15 segundos                        | `504 GATEWAY_TIMEOUT`                               |
+
+Detalles que conviene saber:
+
+- **`401` de Express se muestra como `502`**: es un fallo de configuración entre servidores (la key no coincide), no de
+  la persona; así no se da información de más.
+- **`details` del `400` de Express**: solo se conservan los campos conocidos (`body`, `query`, `id`, `title`,
+  `description`, `completed`) y solo los mensajes de la lista conocida; cualquier otro texto pasa a «Valor no válido.».
+- **`Retry-After` del `429`**: se acepta solo un entero de 1 a 3600 sin signo ni ceros a la izquierda; si no es válido
+  se omite la cabecera y el mensaje es «Demasiadas peticiones. Inténtalo de nuevo en unos instantes.». Con N válido, el
+  mensaje dice «Espera N segundos» (menos de 120) o los minutos redondeados hacia arriba.
+- **Una tarea de Express** se valida (cinco claves, UUID, longitudes, fecha ISO 8601 real) y se vuelve a construir; lo
+  que no cuadre es `502`.
+- **Sin redirecciones ni reintentos nunca.** Un `POST` reintentado crearía tareas duplicadas.
+- **Un `504` (o `502`) en un `POST` puede haber creado la tarea** (sin idempotencia). Por eso el mensaje es «No se pudo
+  confirmar si la tarea se creó. Revisa la lista antes de volver a enviarla.». Alternativa descartada: claves de
+  idempotencia (exigen almacenarlas en el backend); queda como trabajo futuro.
+- **Plazos**: 5 s para leer el cuerpo de la petición, 15 s para el reenvío (incluye leer la respuesta de Express) y
+  tope de 8 MiB en su respuesta. Los 15 s son mayores que la espera del pool del backend (`DB_POOL_CONNECTION_TIMEOUT_MS`,
+  5 s por defecto) más una consulta normal, para que Express conteste su propio error antes de que el frontend se rinda.
+  Si se sube `DB_POOL_CONNECTION_TIMEOUT_MS` por encima de unos 10 s, el frontend responderá `504` antes. El tope de
+  8 MiB deja margen sobre `TASKS_LIST_LIMIT` (por defecto 1000 tareas, unos cientos de KiB); si se sube ese límite al
+  máximo (10 000), la respuesta sigue cabiendo con holgura.
+- **Si el navegador cancela**, se cancela la petición a Express y no se registra como error.
+
+#### Defensa de origen y de `Host`
+
+Sin login, la API key autentica a la aplicación, no a la persona. Una web ajena abierta en el navegador podría intentar
+escribir contra `localhost:3001`. Por eso, en `POST`, `PUT` y `DELETE`, se responde `403` (sin tocar Express) si:
+
+- trae `Origin` y su host (con puerto) no es exactamente el `Host` de la petición, o es `null`, o está repetido;
+- trae `Sec-Fetch-Site: cross-site`.
+
+`Sec-Fetch-Site: same-origin` y `none` pasan; con `same-site` decide `Origin`. Opcionalmente,
+`ALLOWED_HOSTS` valida el `Host` de **cualquier** método (protege frente a la reasignación de DNS cuando se conoce el
+nombre público).
+
+- **Por qué cabeceras y no un token CSRF:** sin sesión no hay dónde anclar un token, y las cabeceras `Origin` y
+  `Sec-Fetch-Site` las pone el navegador y una web no puede falsificarlas. Alternativa descartada: CORS en las rutas
+  (no impide que la petición se envíe, solo que se lea la respuesta).
+- **Limitación:** un cliente que no es un navegador (`curl`, un script) no envía `Origin` y pasa. Es inevitable sin
+  login: quien alcance el puerto 3001 puede usar la API. Por eso el servidor escucha solo en `127.0.0.1`.
+
+#### Qué viaja a Express
+
+El servidor del frontend envía a Express **solo** `Authorization: Bearer <API_KEY>` y, con cuerpo,
+`Content-Type: application/json` (más lo que añade el propio cliente HTTP). **No copia ninguna cabecera del
+navegador** (`Cookie`, `Authorization`, `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, `Origin`, `Referer`,
+`Content-Encoding`). Por qué: copiarlas permitiría falsificar la IP que cuenta el límite de peticiones y reenviar
+credenciales ajenas.
+
+- **Todavía no se envía `X-Forwarded-For`** (llegará con la integración, que enviará la IP real del socket
+  sobrescribiendo, nunca copiando). Consecuencia: **el backend ve a todos los usuarios como un único cliente**, con un
+  único cupo compartido de peticiones. En una demo con varias personas, súbanse los cupos del backend
+  (`RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX`, ver «Variables del servicio»).
+- **Sin límite de peticiones propio en el frontend:** el límite por IP está en Express; duplicarlo aquí sin conocer la
+  IP real no aportaría nada.
+- **Sin login:** la key autentica a la aplicación, no a la persona; quien alcance el frontend usa la API.
+- **Sin `Content-Security-Policy`** (ver «Cabeceras de seguridad»): trabajo futuro.
+
+#### Registros de las rutas
+
+Los errores de las rutas se registran con el logger propio (ver «Registros del frontend»): el evento `route_failed`
+con `method`, `route` (la plantilla `/api/tasks` o `/api/tasks/:id`, nunca la dirección real), `errorName` y
+`errorCode`. Se registran el error inesperado de un manejador y la conexión rechazada con Express. No se registra el
+`message`, la traza, la URL, las cabeceras, el cuerpo, el `id`, la key ni valores de variables. Con una configuración
+inválida las rutas responden `500` y los nombres de las variables se registran una sola vez (`config_invalid`).
+
+#### Comprobar la salida del navegador: `npm run verify:build`
+
+Compila dos veces: sin ninguna variable de configuración (la compilación no debe necesitarla) y con valores centinela;
+después recorre `.next/static`, que es lo único que se envía al navegador, y falla si encuentra un centinela o el
+nombre de `API_KEY`, `READER_DATABASE_URL` o `BACKEND_URL`. Alternativa descartada: hacerlo dentro de `npm test`
+(es lento y choca con la carpeta `.next` de `npm run build`).
+
+#### Lista de verificación manual (contra `next start`)
+
+Con la base de datos, el backend y `npm run build` + `npm run start` en `frontend/` en marcha. Anote el resultado de
+cada punto. (`<id>` es el de una tarea existente; `$KEY` es la API key, que no debe pegarse en ningún sitio público.)
+
+1. Arrancar `npm run start` sin `frontend/.env` falla con un mensaje que nombra las variables inválidas y sin valores.
+2. `curl` a las cuatro operaciones con backend y frontend a la vez:
+   `curl -i http://127.0.0.1:3001/api/tasks`, `curl -i -X POST -H "Content-Type: application/json" -d '{"title":"Prueba"}' http://127.0.0.1:3001/api/tasks`,
+   y `PUT` y `DELETE` sobre `/api/tasks/<id>` (`PUT` con un JSON con `title`).
+3. `/api/tasks/` y `/api/tasks/<id>/` (con barra final) responden `308` hacia la ruta sin barra y no llegan a Express.
+4. `curl -i -X OPTIONS` y `curl -i -I` (`HEAD`) sobre `/api/tasks` responden `405` propio con `Allow`.
+5. Cabeceras reales: `curl -i http://127.0.0.1:3001/` y `curl -i http://127.0.0.1:3001/api/tasks` llevan
+   `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, no llevan `X-Powered-By`, y la ruta lleva
+   `Cache-Control: no-store`.
+6. `curl -i -X POST -H "Origin: http://evil.example" -H "Content-Type: application/json" -d '{"title":"x"}' http://127.0.0.1:3001/api/tasks`
+   responde `403`.
+7. Se puede entrar por `http://localhost:3001` y por `http://127.0.0.1:3001` (y una escritura desde la propia página,
+   o con `Origin` igual al `Host`, pasa).
+8. Con `PORT=4000 npm run start` el servidor sigue en el puerto 3001.
+9. Con el backend apagado, `GET /api/tasks` responde `502` (o `504` si tarda) y el servidor del frontend sigue
+   atendiendo después.
+10. `npm run verify:build` termina con «OK» y sin hallazgos.
+11. Cancelación del navegador: iniciar con el backend lento o parado un `curl` a `/api/tasks`, cortarlo con Ctrl+C y
+    comprobar que el servidor del frontend sigue sano. Pendiente de comprobar si `request.signal` se aborta al cortar la
+    conexión; si no se aborta, es una limitación conocida y el plazo de 15 s sigue protegiendo.
 
 ### Por qué el proyecto se creó a mano
 
