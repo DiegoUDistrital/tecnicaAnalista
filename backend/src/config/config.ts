@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { ConfigError } from '../errors/config-error';
+import { checkApiKey } from '../security/api-key';
 
 /** Configuración validada que usa el resto del backend. */
 export interface AppConfig {
@@ -14,10 +15,14 @@ export interface AppConfig {
     host: string;
     shutdownTimeoutMs: number;
   };
+  security: {
+    apiKey: string;
+  };
 }
 
 type VariableSpec =
   | { name: string; kind: 'writer-url' }
+  | { name: string; kind: 'api-key' }
   | { name: string; kind: 'host'; fallback: string }
   | { name: string; kind: 'int'; min: number; max: number; fallback: number };
 
@@ -33,6 +38,7 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'PORT', kind: 'int', min: 1, max: 65535, fallback: 3000 },
   { name: 'HOST', kind: 'host', fallback: '127.0.0.1' },
   { name: 'SHUTDOWN_TIMEOUT_MS', kind: 'int', min: 1000, max: 120000, fallback: 10000 },
+  { name: 'API_KEY', kind: 'api-key' },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -110,6 +116,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       }
       continue;
     }
+    if (variable.kind === 'api-key') {
+      const message = checkApiKey(raw);
+      if (message !== undefined) {
+        messages.push(message);
+      } else if (raw !== undefined) {
+        values.set(variable.name, raw);
+      }
+      continue;
+    }
     if (variable.kind === 'host') {
       const host = raw ?? variable.fallback;
       if (isLiteralIp(host)) {
@@ -143,5 +158,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       host: String(values.get('HOST')),
       shutdownTimeoutMs: Number(values.get('SHUTDOWN_TIMEOUT_MS')),
     },
+    security: { apiKey: String(values.get('API_KEY')) },
   };
 }

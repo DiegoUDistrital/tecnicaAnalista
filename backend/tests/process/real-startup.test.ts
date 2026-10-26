@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { startServer } from '../../src/server/start-server';
+import { baseEnv } from '../helpers/config-env';
 import { createFakeProcess, type FakeProcess, getFreePort } from '../helpers/server-fakes';
 import { getTestDatabase } from '../helpers/test-database';
 
@@ -8,11 +9,11 @@ async function startReal(): Promise<{ code: Promise<number>; port: number; fake:
   getTestDatabase(); // aplica la guarda: solo se usa la base de pruebas
   const port = await getFreePort();
   const fake = createFakeProcess();
-  const env = {
+  const env = baseEnv({
     DATABASE_URL: process.env['TEST_DATABASE_URL'],
     PORT: String(port),
     HOST: '127.0.0.1',
-  };
+  });
   return { code: startServer({ env, process: fake.process }), port, fake };
 }
 

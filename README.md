@@ -156,6 +156,19 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `PORT` | entero 1-65535 | `3000` | Puerto en el que escuchará el servicio. |
 | `HOST` | dirección IP literal | `127.0.0.1` | Dirección en la que escuchará el servicio. |
 | `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
+| `API_KEY` | 43 a 128 caracteres de `A-Za-z0-9_-`, al menos 10 distintos | (obligatoria) | Clave de la API (secreta). |
+
+`API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
+
+```
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+El servicio comprueba el formato y que la clave no sea trivial (una letra repetida, por ejemplo), pero NO verifica su
+entropía: la garantía real viene de generarla con el comando anterior. El valor de ejemplo de `.env.example`
+(`change-me-use-randomBytes-32`) no es un secreto y el servicio lo rechaza al arrancar, para que nadie deje la clave
+sin cambiar. El `.env` necesita `API_KEY` antes de `npm start`. La clave se valida al arrancar; la protección de las
+rutas llega en el siguiente paso.
 
 `0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No
 se admiten nombres de host, corchetes ni zonas como `%eth0`. El servicio valida estas variables junto con las de la

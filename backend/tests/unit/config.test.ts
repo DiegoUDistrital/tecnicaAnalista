@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config/config';
 import { AppError } from '../../src/errors/app-error';
 import { ConfigError } from '../../src/errors/config-error';
+import { EXAMPLE_API_KEY } from '../../src/security/api-key';
 import { baseEnv } from '../helpers/config-env';
+import { TEST_API_KEY } from '../helpers/security';
 
 const VALID_URL = 'postgresql://writer:change-me@127.0.0.1:5433/todo_app';
 
@@ -155,6 +157,7 @@ describe('RF-D1: mensajes sin valores y orden', () => {
       databaseUrl: VALID_URL,
       pool: { max: 20, idleTimeoutMillis: 1000, connectionTimeoutMillis: 60000 },
       server: { port: 3000, host: '127.0.0.1', shutdownTimeoutMs: 10000 },
+      security: { apiKey: TEST_API_KEY },
     });
   });
 });
@@ -229,5 +232,75 @@ describe('RF-S1: variables del servicio', () => {
       return;
     }
     throw new Error('loadConfig no lanzó ningún error');
+  });
+});
+
+describe('RF-G6: API_KEY', () => {
+  const OBLIGATORY = 'API_KEY: obligatoria';
+  const FORMAT = 'API_KEY: formato inválido';
+  const EXAMPLE = 'API_KEY: no puede ser el valor de ejemplo';
+
+  it('RF-G6: una key válida llega a security.apiKey', () => {
+    expect(loadConfig(baseEnv()).security).toEqual({ apiKey: TEST_API_KEY });
+  });
+
+  it(
+    'RF-G6: API_KEY de 42 y de 129 caracteres, con un carácter no permitido, vacía y ausente son inválidas ' +
+      'y se nombran sin el valor',
+    () => {
+      const base = TEST_API_KEY;
+      const cases: [string | undefined, string][] = [
+        [base.slice(0, 42), FORMAT],
+        [`${base}${'a'.repeat(86)}`, FORMAT],
+        [`${base.slice(0, 42)}.`, FORMAT],
+        [`${base.slice(0, 42)}+`, FORMAT],
+        [`${base.slice(0, 42)} `, FORMAT],
+        ['', FORMAT],
+        [undefined, OBLIGATORY],
+      ];
+      for (const [value, expected] of cases) {
+        const message = messageOf(baseEnv({ API_KEY: value }));
+
+        expect(message).toBe(expected);
+        if (value !== undefined && value !== '') {
+          expect(message).not.toContain(value);
+        }
+      }
+      expect(() => loadConfig(baseEnv({ API_KEY: `${base}${'a'.repeat(85)}` }))).not.toThrow();
+    },
+  );
+
+  it('RF-G6: el valor de ejemplo (EXAMPLE_API_KEY) se rechaza', () => {
+    expect(messageOf(baseEnv({ API_KEY: EXAMPLE_API_KEY }))).toBe(EXAMPLE);
+  });
+
+  it(
+    'RF-G6: A repetida 43 veces se rechaza; 43 caracteres con solo 9 distintos se rechaza; ' +
+      'con 10 distintos se acepta',
+    () => {
+      const nine = 'abcdefghi'.repeat(5).slice(0, 43);
+      const ten = 'abcdefghij'.repeat(5).slice(0, 43);
+
+      expect(messageOf(baseEnv({ API_KEY: 'A'.repeat(43) }))).toBe(FORMAT);
+      expect(new Set(nine).size).toBe(9);
+      expect(messageOf(baseEnv({ API_KEY: nine }))).toBe(FORMAT);
+      expect(new Set(ten).size).toBe(10);
+      expect(loadConfig(baseEnv({ API_KEY: ten })).security.apiKey).toBe(ten);
+    },
+  );
+
+  it('RF-G6: una API_KEY inválida junto a un PORT inválido nombra ambas, sin valores', () => {
+    const message = messageOf(baseEnv({ API_KEY: 'corta-sentinel', PORT: 'port-sentinel-9' }));
+
+    expect(message).toBe(['PORT: entero inválido o fuera de rango', FORMAT].join('; '));
+    expect(message).not.toContain('corta-sentinel');
+    expect(message).not.toContain('port-sentinel-9');
+  });
+
+  it('RF-G6: una key centinela inválida no aparece en el mensaje del error', () => {
+    const message = messageOf(baseEnv({ API_KEY: 'sentinel-key-value.invalid' }));
+
+    expect(message).toContain('API_KEY');
+    expect(message).not.toContain('sentinel-key-value');
   });
 });
