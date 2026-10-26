@@ -20,12 +20,18 @@ export function testProxies(raw: string | undefined): TrustedProxies {
 }
 
 /**
- * Ajustes de seguridad de la app de pruebas: la key válida y `TRUSTED_PROXIES=none` (ninguna cabecera de proxy
- * influye, así que la IP que cuenta es siempre la de la conexión). `overrides` los modifica (por ejemplo, para
- * probar la app con otra key o con otra lista de proxies).
+ * Cupos de la app de pruebas: tan altos que ningún test que no trate de los límites puede recibir un 429 (los tests
+ * de límites piden valores pequeños explícitos).
+ */
+export const TEST_RATE_LIMIT: AppConfig['security']['rateLimit'] = { windowMs: 900000, max: 10000, postMax: 10000 };
+
+/**
+ * Ajustes de seguridad de la app de pruebas: la key válida, `TRUSTED_PROXIES=none` (ninguna cabecera de proxy
+ * influye, así que la IP que cuenta es siempre la de la conexión) y cupos altos. `overrides` los modifica (por
+ * ejemplo, para probar la app con otra key, otra lista de proxies o cupos pequeños).
  */
 export function testSecurity(overrides: Partial<AppConfig['security']> = {}): AppConfig['security'] {
-  return { apiKey: TEST_API_KEY, trustedProxies: testProxies('none'), ...overrides };
+  return { apiKey: TEST_API_KEY, trustedProxies: testProxies('none'), rateLimit: TEST_RATE_LIMIT, ...overrides };
 }
 
 /**
@@ -37,8 +43,8 @@ export function testSecurity(overrides: Partial<AppConfig['security']> = {}): Ap
  * No inyecta si la petición ya trae `Authorization` (con cualquier mayúscula del nombre) ni si trae el marcador
  * `OMIT_KEY_HEADER`, que además se retira. Se modifican `headers` y `rawHeaders`, que son lo que lee la app.
  */
-export function withTestKey(app: Express): Express {
-  const target = app as Express & { handle: RequestHandler };
+export function withTestKey<T extends Express>(app: T): T {
+  const target = app as Express as Express & { handle: RequestHandler };
   const handle = target.handle.bind(app);
   target.handle = (req, res, next) => {
     const marker = OMIT_KEY_HEADER.toLowerCase();

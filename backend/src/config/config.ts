@@ -20,6 +20,8 @@ export interface AppConfig {
     apiKey: string;
     /** Direcciones de las que se cree `X-Forwarded-For`. */
     trustedProxies: TrustedProxies;
+    /** Cupos por IP: ventana fija, cupo general y cupo de `POST`. */
+    rateLimit: { windowMs: number; max: number; postMax: number };
   };
 }
 
@@ -44,12 +46,17 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'SHUTDOWN_TIMEOUT_MS', kind: 'int', min: 1000, max: 120000, fallback: 10000 },
   { name: 'API_KEY', kind: 'api-key' },
   { name: 'TRUSTED_PROXIES', kind: 'trusted-proxies' },
+  { name: 'RATE_LIMIT_WINDOW_MS', kind: 'int', min: 1000, max: 3600000, fallback: 900000 },
+  { name: 'RATE_LIMIT_MAX', kind: 'int', min: 1, max: 10000, fallback: 100 },
+  { name: 'RATE_LIMIT_POST_MAX', kind: 'int', min: 1, max: 10000, fallback: 20 },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
 export const CONFIG_VARIABLE_NAMES: readonly string[] = VARIABLES.map((variable) => variable.name);
 
 const URL_FORMAT_MESSAGE = 'DATABASE_URL: formato inválido';
+/** Un cupo de `POST` mayor que el general sería inalcanzable: nombra las dos variables, sin valores. */
+const CROSS_MESSAGE = 'RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX';
 const URL_ROLE_MESSAGE = 'DATABASE_URL: debe usar el rol writer';
 
 /** Dirección IP literal (v4 o v6) sin corchetes ni zona (`%eth0`): no se admiten nombres de host. */
@@ -155,6 +162,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     }
   }
 
+  // Validación cruzada: solo si ambas son válidas por separado (si no, ya se nombró la inválida).
+  if (
+    values.has('RATE_LIMIT_MAX') &&
+    values.has('RATE_LIMIT_POST_MAX') &&
+    Number(values.get('RATE_LIMIT_POST_MAX')) > Number(values.get('RATE_LIMIT_MAX'))
+  ) {
+    messages.push(CROSS_MESSAGE);
+  }
+
   if (messages.length > 0) {
     throw new ConfigError(messages);
   }
@@ -172,6 +188,14 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       shutdownTimeoutMs: Number(values.get('SHUTDOWN_TIMEOUT_MS')),
     },
     // Sin mensajes de error, `trustedProxies` está definida (se asigna en cada vuelta de la variable).
-    security: { apiKey: String(values.get('API_KEY')), trustedProxies: trustedProxies as TrustedProxies },
+    security: {
+      apiKey: String(values.get('API_KEY')),
+      trustedProxies: trustedProxies as TrustedProxies,
+      rateLimit: {
+        windowMs: Number(values.get('RATE_LIMIT_WINDOW_MS')),
+        max: Number(values.get('RATE_LIMIT_MAX')),
+        postMax: Number(values.get('RATE_LIMIT_POST_MAX')),
+      },
+    },
   };
 }

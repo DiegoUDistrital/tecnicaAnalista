@@ -157,7 +157,11 @@ describe('RF-D1: mensajes sin valores y orden', () => {
       databaseUrl: VALID_URL,
       pool: { max: 20, idleTimeoutMillis: 1000, connectionTimeoutMillis: 60000 },
       server: { port: 3000, host: '127.0.0.1', shutdownTimeoutMs: 10000 },
-      security: { apiKey: TEST_API_KEY, trustedProxies: expect.any(Object) as unknown },
+      security: {
+        apiKey: TEST_API_KEY,
+        trustedProxies: expect.any(Object) as unknown,
+        rateLimit: { windowMs: 900000, max: 100, postMax: 20 },
+      },
     });
   });
 });
@@ -332,5 +336,71 @@ describe('RF-G12: TRUSTED_PROXIES en la configuración', () => {
     const message = messageOf(baseEnv({ PORT: '0', TRUSTED_PROXIES: 'sentinel-proxy-value/99', API_KEY: undefined }));
     expect(message).toBe(`PORT: entero inválido o fuera de rango; API_KEY: obligatoria; ${MESSAGE}`);
     expect(message).not.toContain('sentinel-proxy-value');
+  });
+});
+
+describe('RF-G12: cupos de peticiones en la configuración', () => {
+  const INT_MESSAGE = 'entero inválido o fuera de rango';
+  const CUPOS = [
+    { name: 'RATE_LIMIT_WINDOW_MS', min: 1000, max: 3600000, fallback: 900000 },
+    { name: 'RATE_LIMIT_MAX', min: 1, max: 10000, fallback: 100 },
+    { name: 'RATE_LIMIT_POST_MAX', min: 1, max: 10000, fallback: 20 },
+  ] as const;
+
+  it('RF-G12: AppConfig.security.rateLimit trae los defectos (15 min, 100 y 20) con las variables ausentes', () => {
+    expect(loadConfig(baseEnv()).security.rateLimit).toEqual({ windowMs: 900000, max: 100, postMax: 20 });
+  });
+
+  it('RF-G12: AppConfig.security.rateLimit recoge los valores de las tres variables', () => {
+    const env = baseEnv({ RATE_LIMIT_WINDOW_MS: '60000', RATE_LIMIT_MAX: '50', RATE_LIMIT_POST_MAX: '7' });
+    expect(loadConfig(env).security.rateLimit).toEqual({ windowMs: 60000, max: 50, postMax: 7 });
+  });
+
+  it('RF-G12: los dos límites de cada rango son válidos (el par MAX y POST_MAX se ajusta junto)', () => {
+    const accepted = [
+      { RATE_LIMIT_WINDOW_MS: '1000' },
+      { RATE_LIMIT_WINDOW_MS: '3600000' },
+      { RATE_LIMIT_MAX: '1', RATE_LIMIT_POST_MAX: '1' },
+      { RATE_LIMIT_MAX: '10000', RATE_LIMIT_POST_MAX: '10000' },
+    ];
+    for (const overrides of accepted) {
+      expect(() => loadConfig(baseEnv(overrides)), JSON.stringify(overrides)).not.toThrow();
+    }
+  });
+
+  it.each(CUPOS)('RF-G12: $name rechaza los valores fuera de rango, vacíos y mal escritos', ({ name, min, max }) => {
+    for (const value of [String(min - 1), String(max + 1), '', '010', '1e3', ' 5', '5.5', 'abc']) {
+      expect(messageOf(baseEnv({ [name]: value })), `${name}=${JSON.stringify(value)}`).toBe(`${name}: ${INT_MESSAGE}`);
+    }
+  });
+
+  it('RF-G12: RATE_LIMIT_POST_MAX > RATE_LIMIT_MAX nombra las DOS variables sin valores', () => {
+    const message = messageOf(baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_POST_MAX: '31' }));
+    expect(message).toBe('RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX');
+    expect(message).not.toMatch(/\d/);
+  });
+
+  it('RF-G12: RATE_LIMIT_POST_MAX igual a RATE_LIMIT_MAX es válido', () => {
+    expect(loadConfig(baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_POST_MAX: '30' })).security.rateLimit.postMax).toBe(
+      30,
+    );
+  });
+
+  it('RF-G12: bajar solo RATE_LIMIT_MAX por debajo del defecto de POST (20) da error de configuración', () => {
+    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '10' }))).toBe('RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX');
+  });
+
+  it('RF-G12: con una de las dos inválida por separado no se evalúa la cruzada', () => {
+    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '0', RATE_LIMIT_POST_MAX: '5' }))).toBe(
+      `RATE_LIMIT_MAX: ${INT_MESSAGE}`,
+    );
+    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '5', RATE_LIMIT_POST_MAX: 'x' }))).toBe(
+      `RATE_LIMIT_POST_MAX: ${INT_MESSAGE}`,
+    );
+  });
+
+  it('RF-G12: la cruzada se nombra junto con las demás inválidas, tras ellas', () => {
+    const message = messageOf(baseEnv({ PORT: '0', RATE_LIMIT_MAX: '5', RATE_LIMIT_POST_MAX: '6' }));
+    expect(message).toBe(`PORT: ${INT_MESSAGE}; RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX`);
   });
 });

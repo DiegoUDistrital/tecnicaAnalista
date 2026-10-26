@@ -17,6 +17,7 @@ Las versiones se fijan al crear cada proyecto.
 - Node.js
 - Express
 - helmet 8.3.0 (cabeceras de seguridad)
+- express-rate-limit 8.7.1 (límite de peticiones por IP)
 - PostgreSQL
 - Next.js 15+ (App Router)
 - Prisma
@@ -41,8 +42,8 @@ configurado para las migraciones. Express construye la aplicación con `createAp
 `npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
 `DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API está protegida por API key (ver «Seguridad: API key») y las respuestas llevan cabeceras de `helmet` y
-`Cache-Control: no-store` (ver «Seguridad: cabeceras»). Todavía NO tiene límites por IP, CORS ni tope de la lista: no
-debe exponerse hasta que se añadan.
+`Cache-Control: no-store` (ver «Seguridad: cabeceras»). Limita las peticiones por IP con un cupo general y otro para `POST` (ver «Límite de peticiones»). Todavía NO tiene
+bloqueo por intentos fallidos, CORS ni tope de la lista: no debe exponerse hasta que se añadan.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -183,8 +184,9 @@ lleva las cabeceras de [`helmet`](https://helmetjs.github.io/) 8.3.0 con sus val
 
 ## IP real del cliente y proxies de confianza
 
-El servicio calcula una «clave de cliente» a partir de la IP de quien llama. Todavía no la usa para limitar
-peticiones (eso llega después); este apartado explica cómo se obtiene y cómo se configura.
+El servicio calcula una «clave de cliente» a partir de la IP de quien llama. La usa para contar las peticiones
+de cada persona en el límite de peticiones (ver «Límite de peticiones»); este apartado explica cómo se obtiene y cómo
+se configura.
 
 - **Por qué hace falta.** El navegador no llama a Express: lo hace el servidor del frontend. Para Express, todas las
   peticiones vienen de ese servidor. Si el límite contara su IP, un solo usuario agotaría el cupo de todos. Por eso el
@@ -223,6 +225,42 @@ peticiones (eso llega después); este apartado explica cómo se obtiene y cómo 
 - **Riesgo.** Si el frontend no envía la cabecera, o `TRUSTED_PROXIES` no incluye la red desde la que se conecta, todos
   los usuarios comparten una misma clave y un solo usuario podría agotar el cupo de todos.
 
+## Límite de peticiones
+
+El servicio limita cuántas peticiones puede hacer cada IP con la librería `express-rate-limit` 8.7.1. Hay dos cupos,
+que se cuentan por separado y por la IP real del cliente (ver «IP real del cliente y proxies de confianza»):
+
+- **Cupo general (100 por ventana).** Cuenta toda petición a una ruta que no sea `/health`, con cualquier método y con o
+  sin key: incluye las que acaban en `401`, `404` o `405`. `/health` no cuenta ni se limita.
+- **Cupo de `POST` (20 por ventana).** Cuenta solo los `POST` que llegan con una key válida y con cupo general
+  disponible. Un `POST` rechazado después por validación (`400`) o por tipo de contenido (`415`) sí cuenta (se cuenta la
+  petición, no el éxito); un `POST` sin key, uno rechazado por el cupo general o `POST /health` no lo consumen. `GET`,
+  `PUT` y `DELETE` solo cuentan en el general: son los `POST` los que crean filas.
+
+Al superar un cupo, la respuesta es `429 {"error":{"code":"TOO_MANY_REQUESTS","message":"Demasiadas peticiones.","details":[]}}`
+con la cabecera `Retry-After` (segundos enteros, al menos 1, hasta que termine la ventana de esa IP). No se envían
+cabeceras `RateLimit-*` ni `X-RateLimit-*`. El servicio no lee el cuerpo de una petición rechazada: si lo trae,
+responde con `Connection: close` y cierra la conexión (nunca da `413` en su lugar). Un `429` conserva las cabeceras de
+seguridad y no se registra en el log.
+
+- **Ventana fija por IP.** La ventana de cada IP dura `RATE_LIMIT_WINDOW_MS` (15 minutos por defecto) y empieza con su
+  primera petición contada; al terminar, su contador vuelve a cero. Con cupo N pasan las N primeras y la N+1 recibe
+  `429`. Límite aceptado: una ventana fija puede dejar pasar hasta 2N peticiones en la frontera entre dos ventanas
+  (N al final de una y N al principio de la siguiente). Alternativa descartada: ventana deslizante, más compleja y sin
+  beneficio con un único cliente.
+- **Orden.** El cupo general se cuenta ANTES de mirar la key: una IP agotada recibe `429` aunque la key sea errónea (el
+  `429` gana a un `401`). El cupo de `POST` va después de la key y antes de las rutas, así que un `POST` a una ruta que
+  daría `405` también se rechaza con `429` si el cupo está agotado.
+- **En memoria, un solo proceso.** Los contadores viven en la memoria de la instancia de Express: se pierden al
+  reiniciar y no se comparten entre instancias (con varias instancias, cada una cuenta aparte). Redis se deja como
+  trabajo futuro: no hay un problema de carga que lo justifique. Al cerrar el servicio se liberan los almacenes y sus
+  temporizadores (ver «Cierre ordenado»).
+- **Variables.** `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (ver «Variables del servicio»).
+  `RATE_LIMIT_POST_MAX` no puede ser mayor que `RATE_LIMIT_MAX`: un cupo de `POST` mayor que el general sería
+  inalcanzable, porque cada `POST` también gasta del general. Si lo es, el servicio no arranca y el error nombra las dos
+  variables (nunca sus valores). Como el defecto de `RATE_LIMIT_POST_MAX` es 20, bajar solo `RATE_LIMIT_MAX` por debajo
+  de 20 obliga a bajar también `RATE_LIMIT_POST_MAX`.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
@@ -236,6 +274,7 @@ Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type:
 | 405    | `METHOD_NOT_ALLOWED`     | Método no permitido.                              |
 | 413    | `PAYLOAD_TOO_LARGE`      | El cuerpo de la petición supera el tamaño máximo. |
 | 415    | `UNSUPPORTED_MEDIA_TYPE` | Tipo de contenido no admitido.                    |
+| 429    | `TOO_MANY_REQUESTS`      | Demasiadas peticiones.                            |
 | 500    | `INTERNAL_ERROR`         | Error interno del servidor.                       |
 
 Un error no previsto (una excepción, una promesa rechazada o cualquier valor lanzado, aunque no sea un `Error`)
@@ -263,6 +302,9 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
 | `API_KEY` | 43 a 128 caracteres de `A-Za-z0-9_-`, al menos 10 distintos | (obligatoria) | Clave de la API (secreta). |
 | `TRUSTED_PROXIES` | lista de `loopback`, `linklocal`, `uniquelocal`, IP o `IP/prefijo`; o `none` | `loopback` | Direcciones de las que se cree `X-Forwarded-For` (ver «IP real del cliente y proxies de confianza»). |
+| `RATE_LIMIT_WINDOW_MS` | entero 1000-3600000 | `900000` | Duración, en milisegundos, de la ventana de los cupos (15 minutos). |
+| `RATE_LIMIT_MAX` | entero 1-10000 | `100` | Cupo general por IP y ventana. |
+| `RATE_LIMIT_POST_MAX` | entero 1-10000, no mayor que `RATE_LIMIT_MAX` | `20` | Cupo de `POST` por IP y ventana (ver «Límite de peticiones»). |
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 
@@ -512,7 +554,10 @@ cuerpo, identificador) devuelven un único error.
 
 ### Orden de comprobación de una petición
 
-0. API key (`401`), salvo en `/health`. Va antes que todo lo demás, también que el `404` y el `405`.
+0. Etapas previas, salvo en `/health`, en este orden; van antes que todo lo demás, también que el `404` y el `405`:
+   - cupo general (`429`): va antes que la key, así que una IP agotada recibe `429` aunque la key sea errónea;
+   - API key (`401`);
+   - cupo de `POST` (`429`), solo para los `POST` con key válida.
 1. Ruta y método (`404` si la ruta no existe, `405` con `Allow` si el método no está permitido).
 2. Tamaño del cuerpo (`413`).
 3. Codificación y tipo de contenido (`415`).
@@ -750,7 +795,8 @@ Con el servicio en funcionamiento, `SIGTERM` o `SIGINT` inician un único cierre
 1. El servidor deja de aceptar conexiones nuevas y cierra las conexiones ociosas (keep-alive).
 2. Las peticiones en curso terminan con normalidad; su respuesta lleva `Connection: close`, así que su conexión se
    cierra al acabar (también `/health`).
-3. Cuando ya no quedan conexiones, se cierra el Pool de la base de datos.
+3. Cuando ya no quedan conexiones, se liberan los almacenes de los cupos de peticiones y se cierra el Pool de la base
+   de datos.
 
 Todo ocurre dentro del plazo `SHUTDOWN_TIMEOUT_MS`. Si el cierre es completo, el servicio registra
 `shutdown_started` (con la señal) y `shutdown_completed` (con `exitCode`) y termina con código 0. Si el plazo se
@@ -806,9 +852,9 @@ código 0).
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
 Aviso de seguridad: el servicio escucha solo en loopback y la API exige API key (`API_KEY` en el `.env`, ver
-«Seguridad: API key»); todavía NO tiene límites por IP, CORS ni tope de la lista. No debe
-exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve la lista completa, que crece sin cota,
-y quien tenga la key puede crear, modificar y borrar tareas.
+«Seguridad: API key»); limita las peticiones por IP (ver «Límite de peticiones»), pero todavía NO tiene bloqueo por intentos fallidos, CORS ni
+tope de la lista. No debe exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve la lista completa, que
+crece sin cota, y quien tenga la key puede crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -826,7 +872,9 @@ cuando exista el frontend.
 - Seguridad: los tests envían una key de prueba (`TEST_API_KEY`, una constante pública definida en
   `backend/tests/helpers/security.ts`) en toda petición que llega a la aplicación, así que los que no tratan de la
   seguridad no la escriben. Para probar una petición sin key se usa el marcador `X-Test-Omit-Key`, que el ayudante
-  retira antes de que la vea la aplicación. Los tests de la protección (401, sin registro en el log e inyección SQL con
+  retira antes de que la vea la aplicación. Los cupos de peticiones de la aplicación de pruebas son altos (10000) y
+  `TRUSTED_PROXIES` vale `none`, así que ningún test que no trate de los límites puede recibir un `429`; los que sí
+  tratan de ellos (`backend/tests/http/rate-limits.test.ts`) piden cupos pequeños explícitos. Los tests de la protección (401, sin registro en el log e inyección SQL con
   la pila completa) están en `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
   `backend/tests/api/sql-injection-stack.test.ts`.
 - Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
@@ -891,9 +939,11 @@ tiempo depende de dónde falla) y comprobar la longitud antes (la revela). La gu
 registrar `/health`, y no con una comparación de rutas, porque dos lógicas distintas podrían discrepar (`/health;x`,
 `//health`) y dejar una ruta sin proteger.
 
-**g) Rate limiting (pendiente).** Se añadirá con `express-rate-limit` y valores configurables por variables de entorno,
-para frenar el abuso y los intentos repetidos con una API key inválida. Todavía NO existe: el servicio no limita las
-peticiones. El contador en memoria será válido solo para una instancia de Express.
+**g) Rate limiting.** Dos cupos por IP real (general y de `POST`) con `express-rate-limit`, ventana fija, almacén en
+memoria y valores configurables por variables de entorno (ver «Límite de peticiones»). Se eligió la librería porque
+hace el trabajo sin código propio de más; el almacén en memoria basta para una sola instancia. Alternativas
+descartadas: un contador propio para estos dos cupos (más código y deja la librería sin uso) y Redis (sin problema de
+carga que lo justifique). Todavía NO existe el bloqueo por intentos fallidos con key inválida.
 
 **h) Redis descartado.** No hay un problema de carga que lo justifique y añade un servicio, una credencial y más
 superficie de ataque. Se mide la necesidad antes de añadir infraestructura; el `Pool` y el índice cubren la carga
@@ -944,10 +994,11 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
 
 **Limitaciones conocidas de la API actual.**
 
-- Seguridad incompleta: hay API key y cabeceras de `helmet`, pero todavía no hay límite de peticiones por IP, CORS ni
-  tope de la lista. No debe exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las
+- Seguridad incompleta: hay API key, cabeceras de `helmet` y límite de peticiones por IP, pero todavía no hay bloqueo
+  por intentos fallidos, CORS ni tope de la lista. No debe exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las
   personas.
-- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST`, `PUT` y `DELETE` no tienen límite de uso.
+- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota). Los contadores de peticiones viven en la memoria
+  de una sola instancia: se pierden al reiniciar y no se comparten entre instancias.
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
   mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la

@@ -82,6 +82,21 @@ describe('RF-D2: .env.example', () => {
     }
   });
 
+  it('RF-G12: los tres cupos figuran en .env.example con sus defectos y un comentario explicativo', () => {
+    const expected = { RATE_LIMIT_WINDOW_MS: '900000', RATE_LIMIT_MAX: '100', RATE_LIMIT_POST_MAX: '20' };
+    for (const [name, value] of Object.entries(expected)) {
+      expect(CONFIG_VARIABLE_NAMES, name).toContain(name);
+      expect(values[name], name).toBe(value);
+      const comment = new RegExp(`((?:^#.*\\r?\\n)+)${name}=`, 'm').exec(raw)?.[1] ?? '';
+      expect(comment, name).not.toBe('');
+    }
+    const maxComment = /((?:^#.*\r?\n)+)RATE_LIMIT_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(maxComment).toContain('RATE_LIMIT_POST_MAX');
+    expect(maxComment).toContain('20');
+    const postComment = /((?:^#.*\r?\n)+)RATE_LIMIT_POST_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(postComment).toContain('RATE_LIMIT_MAX');
+  });
+
   it('RF-D2 (v): DB_NAME y DB_NAME_TEST cumplen [a-z0-9_]{1,63} y DB_NAME_TEST termina en _test', () => {
     expect(values['DB_NAME']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/^[a-z0-9_]{1,63}$/);
