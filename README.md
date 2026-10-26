@@ -1018,10 +1018,10 @@ editar `package.json`.
 - `server/proxy/`: las rutas hacia Express (comprobaciones del borde, cliente de Express y traducción de respuestas); `app/api/tasks/` solo las expone.
 - `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
 - `generated/`: cliente de Prisma generado (no se sube a git; lo crea `npm install`).
-- `client/`: reservada para el código que corre en el navegador (aún no existe).
+- `client/`: código que corre en el navegador (`'use client'`): la lista y sus tarjetas. No importa nada de `server/` ni lee variables de entorno.
 
 Fuera de `src`, `prisma/` y `prisma.config.ts` tienen el esquema y la configuración del CLI de Prisma. Solo `app/`,
-`lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
+`components/`, `client/`, `lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
 hay un alias menos que mantener entre `tsconfig` y Vitest.
 
 ### Pruebas de componentes y validación de texto del cliente
@@ -1190,7 +1190,44 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
 - **Contadores**: se leen en el servidor en cada petición (`readCounters`) y no dependen del filtro activo. Si fallan, cada cantidad es `—` y sale el aviso «No se pudieron cargar los contadores.» (`role="status"`); los enlaces siguen funcionando.
 - **Por petición, no en la compilación**: `page` exporta `dynamic = 'force-dynamic'`, así `next build` no se conecta a la BD (en la salida de la compilación `/` aparece como `ƒ (Dynamic)`).
 - **Página fina**: `page.tsx` solo une `readFilter`, `readCounters` y `HomeView`; la lógica y el HTML están en funciones y componentes puros que se prueban sin invocar un componente de servidor asíncrono.
-- **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas llegará con la interfaz del cliente.
+- **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas necesita JavaScript (ver «Interfaz del cliente»).
+
+### Interfaz del cliente
+
+La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista y sus estados) y `client/task-card.tsx` (una tarea). El reparto es este:
+
+- **Servidor (Server Component)**: la página lee el filtro de la dirección y los contadores, y calcula el total de cada filtro.
+- **Navegador (Client Component)**: pide la lista a `GET /api/tasks` de este mismo servidor, nunca a Express, y la pinta.
+
+**Por qué:** los contadores se leen en el servidor sin enviar nada extra al navegador, y la lista cambia con cada
+acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
+recargaría la página entera).
+
+En esta versión la pantalla solo muestra la lista. Crear, completar, editar y borrar se añaden en pasos siguientes.
+
+**Estados de la lista:**
+
+- **Cargando**: al abrir la página y al cambiar de filtro, la región de estado dice «Cargando tareas…» y la lista no se ve.
+- **Lista**: cada tarea muestra su título, su descripción (si tiene), la fecha de creación y su estado con texto,
+  «Completada» o «Pendiente» (no solo con color).
+- **Vacía**: según el filtro, «Aún no hay tareas…», «No hay tareas completadas.» o «No hay tareas pendientes.». No es un error.
+- **Error**: si la carga falla, aparece un aviso con `role="alert"` y el botón «Reintentar», que repite solo esa petición.
+- **Truncado**: la API devuelve como mucho el tope de la lista (1 000 por defecto, `TASKS_LIST_LIMIT`). Si el total del filtro (de los contadores) es mayor que las
+  tareas recibidas, aparece «Mostrando las N tareas más recientes de M.». No aparece mientras hay una carga en curso
+  ni si los contadores no están disponibles.
+
+**El texto siempre se muestra como texto.** React escribe el título y la descripción como texto: un `<b>` o un
+`<img onerror=…>` se ven tal cual y no se ejecutan. Los saltos de línea de la descripción se conservan. El cliente no
+usa `dangerouslySetInnerHTML`: el lint lo prohíbe y una prueba lo comprueba.
+
+**Fecha:** se muestra con el locale fijo `es-CO` (fecha media y hora corta) y la zona horaria del navegador. El
+locale fijo hace que la salida no dependa del idioma del equipo.
+
+**Limitaciones:**
+
+- **Hace falta JavaScript**: sin él, los filtros y los contadores funcionan, pero la lista no se carga.
+- **Sin paginación ni virtualización**: se muestran todas las tareas recibidas (como mucho 1 000). Con ese número la
+  página se pinta entera.
 
 ### Rutas del servidor del frontend
 
@@ -1206,7 +1243,7 @@ página (Server Component) -> Prisma con el rol reader -> vista task_counts
 
 - **Server Component** para los contadores: se leen en el servidor, con credenciales que el navegador no ve.
 - **Rutas de API** (`app/api/tasks`) para la lista y las escrituras: añaden la API key, que solo existe en el servidor.
-- **Client Component** (la lista interactiva): llegará con la interfaz del cliente; hablará con estas rutas.
+- **Client Component** (la lista, en `client/task-manager.tsx`): pide la lista a `GET /api/tasks` de este mismo servidor. Ver «Interfaz del cliente».
 - **Por qué rutas de API y no llamar a Express desde el navegador:** la key tendría que estar en el navegador.
   Alternativa descartada: `NEXT_PUBLIC_API_KEY` (cualquiera la vería en las herramientas del navegador).
 - **Por qué no Server Actions:** las rutas son un contrato HTTP explícito, fácil de probar con `curl` y con tests.
