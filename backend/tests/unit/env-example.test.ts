@@ -133,9 +133,9 @@ describe('RF-G12: TASKS_LIST_LIMIT en .env.example', () => {
 });
 
 describe('RF-G15: CORS_ORIGIN en .env.example', () => {
-  it('RF-G15: CORS_ORIGIN figura con el valor provisional, es válida y su comentario explica el formato', () => {
+  it('RF-G15: CORS_ORIGIN figura con el origen del frontend, es válida y su comentario explica el formato', () => {
     expect(CONFIG_VARIABLE_NAMES).toContain('CORS_ORIGIN');
-    expect(values['CORS_ORIGIN']).toBe('http://localhost:3000');
+    expect(values['CORS_ORIGIN']).toBe('http://localhost:3001');
     const comment = /((?:^#.*\r?\n)+)CORS_ORIGIN=/m.exec(raw)?.[1] ?? '';
     for (const word of ['obligatoria', 'origen', 'frontend']) {
       expect(comment, word).toContain(word);

@@ -29,3 +29,7 @@ Thumbs.db
 # --- Editor ---
 .vscode/
 .idea/
+# --- Next.js (generado por next dev/build) ---
+next-env.d.ts
+/frontend/AGENTS.md
+/frontend/src/generated/
