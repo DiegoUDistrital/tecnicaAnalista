@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useId, useReducer, useRef, useState, useTransition } from 'react';
 import type { TaskFilter } from '../lib/task-filter';
 import { initialUiState, uiReducer } from '../lib/task-ui-state';
@@ -22,11 +23,22 @@ const ALERT_CLASS =
   'mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800';
 const SKELETON_ROWS = [0, 1, 2];
 
+interface TaskManagerProps {
+  filter: TaskFilter;
+  total: number | null;
+  heading?: ReactNode;
+  children?: ReactNode;
+}
+
 /**
  * Lista de tareas del filtro recibido. El padre no se desmonta al cambiar de filtro (lo garantiza la página), así que
  * aquí no hay `key` que dependa del filtro.
+ *
+ * `heading` (el título, de servidor) comparte fila con el botón «Nueva tarea»; `children` (filtros y aviso de
+ * contadores, también de servidor) van entre el panel y la lista. Así el estado `open` y el orden de lectura
+ * (título, botón, panel, filtros, lista) viven en un solo componente.
  */
-export function TaskManager({ filter, total }: { filter: TaskFilter; total: number | null }) {
+export function TaskManager({ filter, total, heading, children }: TaskManagerProps) {
   const { tasks, status, loadError, refreshError, pending, reload } = useTaskList(filter);
   const router = useRouter();
   // `routerPending` dura hasta que Next entrega los contadores nuevos: es el refresco en curso de los contadores.
@@ -91,22 +103,26 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
 
   return (
     <div>
-      <button
-        ref={newButton}
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        className={`${BTN_PRIMARY} mb-4`}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <PlusIcon />
-        Nueva tarea
-      </button>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        {heading}
+        <button
+          ref={newButton}
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          className={BTN_PRIMARY}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <PlusIcon />
+          Nueva tarea
+        </button>
+      </div>
       {open ? (
-        <div id={panelId}>
+        <div id={panelId} className="mb-6">
           <CreateForm onStart={clearNotice} onCreated={created} onCancel={closePanel} />
         </div>
       ) : null}
+      {children}
       <section>
         <h2 ref={headingRef} tabIndex={-1} className="mb-2 text-xl font-semibold">
           Tareas

@@ -42,4 +42,4 @@ export const PILL =
 /** Contador pequeño dentro de la píldora; se invierte cuando el enlace es la página actual. */
 export const PILL_COUNT =
   'rounded-full bg-slate-100 px-2 text-xs text-slate-700 ' +
-  'group-aria-[current=page]:bg-indigo-500 group-aria-[current=page]:text-white';
+  'group-aria-[current=page]:bg-indigo-800 group-aria-[current=page]:text-white';

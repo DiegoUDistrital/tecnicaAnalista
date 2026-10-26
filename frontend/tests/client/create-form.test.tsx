@@ -59,7 +59,7 @@ const serverError = (status: number, code: string, message: string, details?: un
   jsonResponse(status, { error: { code, message, ...(details === undefined ? {} : { details }) } });
 
 describe('CreateForm: crear una tarea', () => {
-  it('RF-F9: envía título y descripción recortados, cierra el panel, muestra «Tarea creada.», lleva el foco al botón', async () => {
+  it('RF-F9: envía los textos recortados, cierra el panel, avisa y devuelve el foco al botón', async () => {
     const { api } = await setup();
     fill('  Comprar pan  ', '\n leche 　');
     fireEvent.click(submitButton());

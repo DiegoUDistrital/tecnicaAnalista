@@ -20,7 +20,7 @@ function Icon({ children }: { children: ReactNode }) {
   );
 }
 
-/** Crear y guardar. */
+/** Crear. */
 export const PlusIcon = () => (
   <Icon>
     <path d="M12 5v14M5 12h14" />
@@ -34,7 +34,7 @@ export const PencilIcon = () => (
   </Icon>
 );
 
-/** Completar. */
+/** Completar y guardar. */
 export const CheckIcon = () => (
   <Icon>
     <path d="M5 12l5 5L20 7" />

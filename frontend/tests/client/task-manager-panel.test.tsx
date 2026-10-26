@@ -38,7 +38,7 @@ async function submitTitle(api: Awaited<ReturnType<typeof setup>>, response: Res
 }
 
 describe('TaskManager: panel «Nueva tarea»', () => {
-  it('RF-V7: empieza cerrado y el botón alterna aria-expanded y el formulario; al abrir el foco va al título', async () => {
+  it('RF-V7: empieza cerrado, alterna aria-expanded y formulario, y al abrir enfoca el título', async () => {
     await setup();
     const button = newTaskButton();
     expect(form()).toBeNull();
@@ -53,6 +53,25 @@ describe('TaskManager: panel «Nueva tarea»', () => {
     fireEvent.click(button);
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(form()).toBeNull();
+  });
+
+  it('RF-V7: título y botón comparten fila; el panel y los filtros van debajo, en ese orden', async () => {
+    const api = installFakeApi();
+    render(
+      <TaskManager filter="all" total={null} heading={<h1>Título</h1>}>
+        <nav aria-label="Filtros" />
+      </TaskManager>,
+    );
+    act(() => api.calls[0]?.resolve(jsonResponse(200, [])));
+    await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe('Cargando tareas…'));
+    openPanel();
+    const heading = screen.getByRole('heading', { level: 1 });
+    const button = newTaskButton();
+    const panel = form()?.parentElement as HTMLElement;
+    const filters = screen.getByRole('navigation', { name: 'Filtros' });
+    expect(heading.parentElement).toBe(button.parentElement);
+    const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(heading, button) && follows(button, panel) && follows(panel, filters)).toBe(true);
   });
 
   it('RF-V7: tras crear con éxito el panel se cierra y el foco vuelve al botón «Nueva tarea»', async () => {
