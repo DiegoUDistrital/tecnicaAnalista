@@ -19,6 +19,9 @@ export function testProxies(raw: string | undefined): TrustedProxies {
   return parsed;
 }
 
+/** Origen permitido de la app de pruebas (el valor provisional de `.env.example`). */
+export const TEST_CORS_ORIGIN = 'http://localhost:3000';
+
 /**
  * Cupos de la app de pruebas: tan altos que ningún test que no trate de los límites puede recibir un 429 (los tests
  * de límites piden valores pequeños explícitos). Los intentos fallidos también: 1000, para que un test que mande
@@ -33,11 +36,17 @@ export const TEST_RATE_LIMIT: AppConfig['security']['rateLimit'] = {
 
 /**
  * Ajustes de seguridad de la app de pruebas: la key válida, `TRUSTED_PROXIES=none` (ninguna cabecera de proxy
- * influye, así que la IP que cuenta es siempre la de la conexión) y cupos altos. `overrides` los modifica (por
- * ejemplo, para probar la app con otra key, otra lista de proxies o cupos pequeños).
+ * influye, así que la IP que cuenta es siempre la de la conexión), cupos altos y el origen de pruebas.
+ * `overrides` los modifica (por ejemplo, para probar la app con otra key, otra lista de proxies o cupos pequeños).
  */
 export function testSecurity(overrides: Partial<AppConfig['security']> = {}): AppConfig['security'] {
-  return { apiKey: TEST_API_KEY, trustedProxies: testProxies('none'), rateLimit: TEST_RATE_LIMIT, ...overrides };
+  return {
+    apiKey: TEST_API_KEY,
+    trustedProxies: testProxies('none'),
+    rateLimit: TEST_RATE_LIMIT,
+    corsOrigin: TEST_CORS_ORIGIN,
+    ...overrides,
+  };
 }
 
 /**

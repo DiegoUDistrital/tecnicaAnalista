@@ -4,7 +4,7 @@ import { AppError } from '../../src/errors/app-error';
 import { ConfigError } from '../../src/errors/config-error';
 import { EXAMPLE_API_KEY } from '../../src/security/api-key';
 import { baseEnv } from '../helpers/config-env';
-import { TEST_API_KEY } from '../helpers/security';
+import { TEST_API_KEY, TEST_CORS_ORIGIN } from '../helpers/security';
 
 const VALID_URL = 'postgresql://writer:change-me@127.0.0.1:5433/todo_app';
 
@@ -161,6 +161,7 @@ describe('RF-D1: mensajes sin valores y orden', () => {
         apiKey: TEST_API_KEY,
         trustedProxies: expect.any(Object) as unknown,
         rateLimit: { windowMs: 900000, max: 100, postMax: 20, authFailuresMax: 10 },
+        corsOrigin: TEST_CORS_ORIGIN,
       },
     });
   });
@@ -470,5 +471,49 @@ describe('RF-G12: intentos fallidos de la key en la configuración', () => {
     const message = messageOf(baseEnv({ RATE_LIMIT_MAX: '5' }));
 
     expect(message).toBe(`RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX; ${CROSS}`);
+  });
+});
+
+describe('RF-G15: CORS_ORIGIN', () => {
+  const OBLIGATORIA = 'CORS_ORIGIN: obligatoria';
+  const INVALIDA = 'CORS_ORIGIN: origen inválido';
+
+  it('RF-G15: ausente es «obligatoria» (no hay defecto)', () => {
+    expect(messageOf(baseEnv({ CORS_ORIGIN: undefined }))).toBe(OBLIGATORIA);
+  });
+
+  it.each([
+    '',
+    '*',
+    'http://localhost:3000,https://app.example.com',
+    'http://localhost:3000/app',
+    'http://localhost:3000?x=1',
+    'http://localhost:3000#top',
+    'http://localhost:3000/',
+    'null',
+    'ftp://localhost:3000',
+    'http://user:secret-pw-9@localhost:3000',
+    'http://LOCALHOST:3000',
+    'http://localhost:80',
+    ' http://localhost:3000',
+    'http://localhost:3000 ',
+  ])('RF-G15: CORS_ORIGIN %j es inválida y el mensaje no lleva el valor', (value) => {
+    const message = messageOf(baseEnv({ CORS_ORIGIN: value }));
+
+    expect(message).toBe(INVALIDA);
+    expect(message).not.toContain('secret-pw-9');
+  });
+
+  it.each(['http://localhost:3000', 'https://app.example.com', 'http://[::1]:3000'])(
+    'RF-G15: CORS_ORIGIN %s es válida y llega a AppConfig.security.corsOrigin',
+    (value) => {
+      expect(loadConfig(baseEnv({ CORS_ORIGIN: value })).security.corsOrigin).toBe(value);
+    },
+  );
+
+  it('RF-G15: una CORS_ORIGIN inválida se nombra junto con las demás inválidas', () => {
+    const message = messageOf(baseEnv({ CORS_ORIGIN: '*', PORT: '0' }));
+
+    expect(message).toBe(`PORT: entero inválido o fuera de rango; ${INVALIDA}`);
   });
 });

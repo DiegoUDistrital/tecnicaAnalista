@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { ConfigError } from '../errors/config-error';
 import { checkApiKey } from '../security/api-key';
+import { checkCorsOrigin } from '../security/cors';
 import { parseTrustedProxies, type TrustedProxies } from '../security/trusted-proxies';
 
 /** Configuración validada que usa el resto del backend. */
@@ -22,6 +23,8 @@ export interface AppConfig {
     trustedProxies: TrustedProxies;
     /** Límites por IP: ventana fija, cupo general, cupo de `POST` y fallos de key tolerados antes de bloquear la IP. */
     rateLimit: { windowMs: number; max: number; postMax: number; authFailuresMax: number };
+    /** Único origen del navegador al que se permite leer las respuestas (CORS), en su forma canónica. */
+    corsOrigin: string;
   };
 }
 
@@ -29,6 +32,7 @@ type VariableSpec =
   | { name: string; kind: 'writer-url' }
   | { name: string; kind: 'api-key' }
   | { name: string; kind: 'trusted-proxies' }
+  | { name: string; kind: 'cors-origin' }
   | { name: string; kind: 'host'; fallback: string }
   | { name: string; kind: 'int'; min: number; max: number; fallback: number };
 
@@ -50,6 +54,7 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'RATE_LIMIT_MAX', kind: 'int', min: 1, max: 10000, fallback: 100 },
   { name: 'RATE_LIMIT_POST_MAX', kind: 'int', min: 1, max: 10000, fallback: 20 },
   { name: 'RATE_LIMIT_AUTH_FAILURES_MAX', kind: 'int', min: 1, max: 1000, fallback: 10 },
+  { name: 'CORS_ORIGIN', kind: 'cors-origin' },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -141,6 +146,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       }
       continue;
     }
+    if (variable.kind === 'cors-origin') {
+      const message = checkCorsOrigin(raw);
+      if (message !== undefined) {
+        messages.push(message);
+      } else if (raw !== undefined) {
+        values.set(variable.name, raw);
+      }
+      continue;
+    }
     if (variable.kind === 'trusted-proxies') {
       trustedProxies = parseTrustedProxies(raw);
       if (trustedProxies === undefined) {
@@ -207,6 +221,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
         postMax: Number(values.get('RATE_LIMIT_POST_MAX')),
         authFailuresMax: Number(values.get('RATE_LIMIT_AUTH_FAILURES_MAX')),
       },
+      corsOrigin: String(values.get('CORS_ORIGIN')),
     },
   };
 }

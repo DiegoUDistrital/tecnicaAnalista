@@ -295,6 +295,35 @@ bloquea.
   supera, el servicio no arranca y el error nombra las dos variables (nunca sus valores). Como el defecto es 10, bajar
   solo `RATE_LIMIT_MAX` por debajo de 10 obliga a bajar también esta variable.
 
+## CORS
+
+CORS es el mecanismo con el que un navegador decide si una página de un origen puede leer las respuestas de otro. El
+servicio solo reconoce UN origen, el de `CORS_ORIGIN` (por ejemplo, `http://localhost:3000`). Una petición que trae
+exactamente un `Origin` idéntico a ese valor recibe `Access-Control-Allow-Origin` con ese mismo valor; cualquier otra
+(otro dominio, otro puerto, otro esquema, `null`, una barra final, mayúsculas distintas, la cabecera repetida o sin
+`Origin`) no recibe ninguna cabecera `Access-Control-Allow-*` y se procesa igual que antes: CORS no rechaza nada, solo
+informa al navegador. Por eso la protección real sigue siendo la API key y el aislamiento de red.
+
+- **Por qué existe aunque el navegador no llame a Express.** En esta arquitectura quien llama a Express es el servidor del
+  frontend, que no envía `Origin`; CORS no interviene. Se añade como segunda barrera, por si algún día la API se expone o
+  se prueba desde una página de un navegador: así solo esa página puede leer las respuestas.
+- **Siempre `Vary: Origin`.** Toda respuesta de una ruta protegida (incluidos `401`, `404`, `405` y `429`) lleva
+  `Vary: Origin`, también cuando la petición no trae `Origin`: la respuesta depende de esa cabecera y una caché no debe
+  servirle a un origen la respuesta pensada para otro. Se suma al `Vary` que ya hubiera. `GET /health` no lleva `Vary` ni
+  cabeceras de CORS (no es una ruta de la API).
+- **Nunca `*` ni credenciales.** No se envía `Access-Control-Allow-Origin: *` ni `Access-Control-Allow-Credentials`, y
+  nunca se refleja el `Origin` recibido: solo se escribe el valor configurado, y solo si coincide exactamente.
+- **También en los errores.** Las cabeceras se añaden antes de la guarda y de los cupos, así que un `401` o un `429` para
+  el origen permitido las lleva y el navegador puede leer el error.
+- **Escrito a mano.** Son unas pocas líneas sobre `rawHeaders` (donde se cuenta cuántas cabeceras `Origin` llegan, porque
+  Node descarta las repetidas en `req.headers`). Alternativa descartada: el paquete `cors`, cuyos valores por defecto
+  aceptan cualquier origen o lo reflejan, y que añade una dependencia para algo que aquí cabe en una función.
+- **Variable obligatoria `CORS_ORIGIN`.** Sin valor por defecto: si falta o es inválida, el servicio no arranca y el
+  error nombra la variable (nunca su valor). Debe ser un origen canónico: `esquema://host[:puerto]` con `http` o
+  `https`, host en minúsculas, sin ruta, barra final, consulta, fragmento ni credenciales, y sin el puerto por defecto
+  (`http://localhost:80` es inválido; `http://localhost` es válido). No admite `*`, `null` ni listas. El `.env`
+  necesita las dos variables, `API_KEY` y `CORS_ORIGIN`, antes de `npm start`.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
@@ -340,6 +369,7 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `RATE_LIMIT_MAX` | entero 1-10000 | `100` | Cupo general por IP y ventana. |
 | `RATE_LIMIT_POST_MAX` | entero 1-10000, no mayor que `RATE_LIMIT_MAX` | `20` | Cupo de `POST` por IP y ventana (ver «Límite de peticiones»). |
 | `RATE_LIMIT_AUTH_FAILURES_MAX` | entero 1-1000, no mayor que `RATE_LIMIT_MAX` | `10` | Intentos fallidos de key por IP y ventana antes de bloquear la IP (ver «Bloqueo por intentos fallidos»). |
+| `CORS_ORIGIN` | un origen canónico `http(s)://host[:puerto]` | (obligatoria) | Único origen del navegador que recibe `Access-Control-Allow-Origin` (ver «CORS»). |
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 
@@ -350,7 +380,7 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'
 El servicio comprueba el formato y que la clave no sea trivial (una letra repetida, por ejemplo), pero NO verifica su
 entropía: la garantía real viene de generarla con el comando anterior. El valor de ejemplo de `.env.example`
 (`change-me-use-randomBytes-32`) no es un secreto y el servicio lo rechaza al arrancar, para que nadie deje la clave
-sin cambiar. El `.env` necesita `API_KEY` antes de `npm start`. La clave se valida al arrancar y la API la exige en
+sin cambiar. El `.env` necesita `API_KEY` y `CORS_ORIGIN` antes de `npm start`. La clave se valida al arrancar y la API la exige en
 cada petición (ver «Seguridad: API key»).
 
 `0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No

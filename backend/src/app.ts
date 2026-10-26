@@ -9,6 +9,7 @@ import { registerRoute } from './http/route-table';
 import type { Logger } from './logging/logger';
 import { createTaskRepository } from './repositories/task-repository';
 import { createAuthGuard } from './security/auth-guard';
+import { createCors } from './security/cors';
 import { createRateLimiters } from './security/rate-limiters';
 import { createSecurityHeaders, noStore } from './security/response-headers';
 import { registerTaskRoutes } from './routes/task-routes';
@@ -57,7 +58,8 @@ export function createApp(options: CreateAppOptions): ShutdownApp {
   app.use(createSecurityHeaders());
   registerRoute(app, '/health', { GET: health });
   app.use(noStore);
-  const { apiKey, trustedProxies, rateLimit } = options.security;
+  const { apiKey, trustedProxies, rateLimit, corsOrigin } = options.security;
+  app.use(createCors(corsOrigin));
   const limiters = createRateLimiters(rateLimit, trustedProxies);
   app.use(limiters.general);
   app.use(
