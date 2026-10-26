@@ -189,3 +189,48 @@ dos consultas escritas a mano (filtro por `completed` y conteo agrupado por esta
 sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio;
 se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
 de la tabla.
+
+## Detalle de las pruebas
+
+Complementa la sección «Pruebas» del README.
+
+Detalle por paquete:
+
+- Cobertura mínima del 95 % sobre el código propio (backend y frontend).
+- Además de los tests se comprueban `lint` y `typecheck`.
+- Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
+  Los tests de base de datos y de la API (`backend/tests/api`) usan PostgreSQL real, necesitan el contenedor arriba y el
+  `.env` (ver «Base de datos de desarrollo») y reinician el esquema: no se ejecutan a la vez que otro proceso.
+  Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
+  Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
+  a mano en Linux.
+- Seguridad: los tests envían una key de prueba (`TEST_API_KEY`, una constante pública definida en
+  `backend/tests/helpers/security.ts`) en toda petición que llega a la aplicación, así que los que no tratan de la
+  seguridad no la escriben. Para probar una petición sin key se usa el marcador `X-Test-Omit-Key`, que el ayudante
+  retira antes de que la vea la aplicación. Los cupos de peticiones de la aplicación de pruebas son altos (10000) y
+  `TRUSTED_PROXIES` vale `none`, así que ningún test que no trate de los límites puede recibir un `429`; los que sí
+  tratan de ellos (`backend/tests/http/rate-limits.test.ts`) piden cupos pequeños explícitos. Los tests de la
+  protección (401, sin registro en el log e inyección SQL con la pila completa) están en
+  `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
+  `backend/tests/api/sql-injection-stack.test.ts`. El orden de las etapas
+  de seguridad con todos los mecanismos activos a la vez (cada par de etapas contiguas) está en
+  `backend/tests/http/security-order.test.ts`.
+- Cierre ordenado: `backend/tests/process/graceful-exit.test.ts` arranca el servicio compilado en un proceso hijo con un
+  proceso falso (un emisor de eventos en lugar del proceso real). El hijo recibe dos `401` y un `429` (el segundo fallo bloquea la IP), emite la señal a
+  mano y debe terminar solo, con código 0, sin llamar a `process.exit`. Si quedara un temporizador vivo, el hijo no
+  acabaría y el test fallaría por el plazo de 20 segundos.
+- Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
+  haber un éxito y nueve «no existe»), y `backend/tests/api/tasks-delete.test.ts` y `tasks-put.test.ts` lanzan dos
+  `DELETE` a la vez, dos `PUT` de campos distintos y 50 iteraciones de `PUT` y `DELETE` simultáneos con un Pool de 2
+  conexiones (nunca debe haber un `500`). Las pruebas de concurrencia y las de socket crudo dependen del reparto de
+  turnos del sistema, así que conviene repetirlas varias veces seguidas
+  (`npx vitest run tests/api/tasks-delete.test.ts tests/api/tasks-put.test.ts`, tres veces) para ver que son estables.
+- La prueba de humo HTTP (`backend/tests/api/node-http-smoke.test.ts`) envía por socket crudo cabeceras o URL enormes,
+  un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
+  comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
+  caracterización: documenta lo que hace Node, no código propio.
+- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`,
+  de la página, de las funciones puras de la interfaz y del cliente interactivo (componentes con Testing Library), con
+  Vitest en entorno Node (jsdom solo en las de componentes). Las reglas de ESLint propias (`react/no-danger`, las de
+  `@next/next`, las de hooks y la prohibición de importar el servidor desde `src/client/`) se comprobaron una vez con
+  archivos de ejemplo que deben fallar y que se borraron después.

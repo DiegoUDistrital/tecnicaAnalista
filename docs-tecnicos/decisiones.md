@@ -212,3 +212,24 @@ quedan abiertos no se repiten aquí: están en «Riesgos residuales y limitacion
 
 **Nota sobre el historial.** El commit «backend setup con Express y Prisma» abre el backend: Prisma se usa allí para el
 esquema y las migraciones, mientras que las consultas de la API se hacen con `pg` y `Pool`.
+
+## Límites de la implementación (detalle)
+
+Lista completa de los límites que el README resume en «Riesgos residuales y limitaciones».
+
+- Hay dos credenciales de base de datos en la aplicación (`writer` y `reader`; el daño posible con `reader` es muy
+  limitado).
+- Hay dos caminos de lectura: los contadores vía Prisma y la lista vía Express, que pueden diferir un instante tras una
+  escritura; se resuelve refrescando tras cada acción.
+- Ventana fija en los cupos: en la frontera entre dos ventanas pueden pasar hasta el doble del cupo (2N).
+- Los contadores (cupos y fallos) viven en la memoria de una sola instancia: se pierden al reiniciar y no se comparten
+  entre instancias.
+- El frontend termina con código 143 al parar (limitación conocida de Next; no pierde datos).
+- `GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (las más recientes, sin paginación) y no avisa de que la
+  lista está truncada; la tabla puede seguir creciendo (ver «Tope de la lista»).
+- No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
+- Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
+  mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la conexión;
+  el servicio sigue atendiendo.
+- Un cuerpo lento (declara más bytes de los que envía y deja el socket abierto) lo resuelve el plazo de Node.
+- Los caracteres invisibles se aceptan (un título solo con U+200B se guarda y se vería vacío).

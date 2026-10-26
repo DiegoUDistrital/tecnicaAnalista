@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readRepoText } from '../helpers/repo-files';
 
-// Lectura estática: comprueba que docs-tecnicos/comprobacion-manual.md contiene la lista de comprobación manual completa.
+// Lectura estática: comprueba que docs-tecnicos/comprobacion-manual.md contiene la lista de comprobación manual
+// completa.
 const HEADING = '# Comprobación manual';
 const STEP_COUNT = 20;
 
