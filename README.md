@@ -1812,6 +1812,76 @@ sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: c
 se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
 de la tabla.
 
+## Despliegue con Docker Compose
+
+Esta sección explica cómo se empaqueta y se ejecuta la aplicación completa con Docker: PostgreSQL, una tarea de un
+solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: por ahora existen las
+imágenes del backend; el archivo `docker-compose.yml` que las une se documenta cuando se añada.
+
+Aviso para quien ejecute comandos: en esta carpeta conviven dos archivos de Compose, el de desarrollo
+(`docker-compose.dev.yml`, solo PostgreSQL) y el de despliegue (`docker-compose.yml`). Por eso TODOS los comandos de
+despliegue llevan `-f docker-compose.yml` de forma explícita: sin él, Compose elegiría un archivo por su cuenta y
+podría tocar el contenedor equivocado.
+
+### Imagen del backend
+
+El archivo `backend/Dockerfile` construye la imagen en varias etapas. Cada etapa parte de una imagen limpia y solo
+se lleva a la siguiente lo que esa necesita; lo que no se copia no está en la imagen final.
+
+| Etapa       | Para qué sirve                                                                                      |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `deps`      | Instala todas las dependencias (con las de desarrollo: el compilador de TypeScript y Prisma).      |
+| `build`     | Compila TypeScript a `dist/`.                                                                       |
+| `prod-deps` | Instala solo las dependencias de ejecución (`express`, `helmet`, `pg`, `express-rate-limit`).       |
+| `runtime`   | Imagen del servicio: `dist/`, las dependencias de ejecución y `package.json`. Nada más.             |
+| `migrate`   | Imagen de la tarea de migración: añade las dependencias completas (la herramienta de Prisma) y `prisma/`. |
+
+Decisiones y su porqué:
+
+- **Varias etapas.** La imagen que se ejecuta no lleva el código fuente, las pruebas, el compilador ni las
+  dependencias de desarrollo: menos peso y menos cosas que un atacante pueda aprovechar si entra al contenedor.
+  Alternativa descartada: una sola etapa que compila y ejecuta (la imagen final arrastraría todo lo anterior).
+- **`migrate` es la excepción.** La herramienta que aplica las migraciones (Prisma) es una dependencia de desarrollo
+  y necesita los archivos de `prisma/` (migraciones y script de permisos). Por eso vive en su propia etapa, que se usa
+  solo para la tarea de un solo uso y nunca para el servicio expuesto. Alternativa descartada: instalar Prisma en la
+  imagen del servicio (herramientas innecesarias en lo que escucha peticiones).
+- **Un único `Dockerfile` con `migrate` como etapa.** Un archivo que explicar y Compose elige la etapa con `target`.
+  Alternativa descartada: un `Dockerfile` aparte para migrar.
+- **Usuario sin privilegios.** Las dos imágenes finales declaran `USER 10001:10001`. Se usa un número y no un nombre
+  para poder comprobar que no es `root` sin resolver nombres dentro de la imagen; Node no necesita que el usuario
+  exista en `/etc/passwd`. Los archivos se copian con `--chown` para que ese usuario pueda leerlos.
+- **Debian «slim» y no Alpine.** Prisma incluye programas nativos compilados para la biblioteca de C habitual de
+  Debian; en Alpine (otra biblioteca de C) pueden fallar de maneras difíciles de explicar. Alternativa descartada:
+  Alpine, más pequeña pero con ese riesgo. Nota: al migrar, Prisma avisa de que no detecta OpenSSL en la imagen
+  «slim» y usa su motor por defecto; el aviso es informativo y la migración se comprobó contra un PostgreSQL real.
+- **Versión de Node fija.** Todas las etapas usan `node:26.1.0-bookworm-slim`: la etiqueta completa (mayor, menor y
+  parche) y la misma versión mayor con la que se desarrolló y se probó, que además figura en el campo `engines` de
+  los dos paquetes. Nunca `latest` ni solo `26`: así, reconstruir la imagen mañana da lo mismo que hoy. Alternativa
+  descartada: una etiqueta flotante (un cambio externo podría romper la construcción sin que nadie toque el código).
+- **`node` directo y no `npm`.** El comando de la imagen es `node dist/index.js`. `npm` no reenvía bien las señales
+  de parada (`SIGTERM`) al programa y, con `npm start`, recompilaría en cada arranque. Con `node` como proceso
+  principal, el backend recibe la señal y puede cerrar ordenadamente. `migrate` ejecuta `node dist/db/migrate-cli.js`,
+  el mismo comando de despliegue de la migración, y recibe las variables de Compose (no lee ningún `.env`).
+- **Contexto recortado y sin `COPY . .`.** `backend/.dockerignore` deja fuera `.env` (y `.env.*` salvo
+  `.env.example`), `node_modules`, `.git`, `dist`, `coverage` y las pruebas. Además, cada `COPY` del `Dockerfile`
+  nombra exactamente lo que copia: aunque un archivo sensible llegara al contexto, no entraría en la imagen.
+- **Sin secretos en las capas.** Ninguna contraseña, URL ni key se escribe con `ARG` o `ENV`: las entrega Compose al
+  ejecutar. Riesgo residual declarado: las variables de un contenedor son visibles con `docker inspect` para quien
+  tenga acceso al socket de Docker, lo que equivale a ser administrador de la máquina. Alternativa descartada:
+  `secrets` de Docker o Swarm (más piezas, las aplicaciones leen variables y no archivos, y los orquestadores quedan
+  fuera de alcance).
+
+Construcción manual de una etapa (solo para probar; Compose lo hará por ti):
+
+```powershell
+docker build --target runtime -t todo-backend-runtime backend
+docker build --target migrate -t todo-backend-migrate backend
+```
+
+Las pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) comprueban sin Docker las etapas y su orden, el
+usuario numérico, la etiqueta de Node, la ausencia de credenciales y de `COPY . .`, el contenido de
+`backend/.dockerignore` y la forma de los comandos de arranque.
+
 ## Despliegue en Ubuntu
 
 Pendiente.
