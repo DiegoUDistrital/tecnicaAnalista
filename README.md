@@ -2,8 +2,6 @@
 
 Prueba Técnica para Analista de Desarrollo.
 
-Estado: en construcción
-
 ## Descripción
 
 Aplicación de lista de tareas (To-Do) con backend en Express, base de datos PostgreSQL y frontend en Next.js.
@@ -31,12 +29,12 @@ Las versiones se fijan al crear cada proyecto.
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
 - `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
-  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend (estado actual)»).
+  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: despliegue completo con Docker Compose (ver «Despliegue con Docker Compose»).
 - `backend/queries.sql`: consultas SQL de la prueba.
 
-## Backend (estado actual)
+## Backend
 
 El paquete del backend usa TypeScript estricto, ESLint, Prettier y Vitest con cobertura mínima del 95 %, y Prisma está
 configurado para las migraciones. Express construye la aplicación con `createApp` y el servicio se arranca con
@@ -335,7 +333,7 @@ bloquea.
   real del cliente y proxies de confianza»). Los contadores están en memoria de una instancia: se pierden al reiniciar.
 - **Rotar la API key.** Si se cambia `API_KEY` y el frontend sigue enviando la antigua, cada petición del frontend es un
   intento fallido y la IP del frontend queda bloqueada hasta que termine su ventana (15 minutos por defecto). El resto de
-  usuarios, que llegan por esa misma IP si el frontend no reenvía la suya, también quedan bloqueados. Por eso conviene
+  usuarios, que llegan por esa misma IP (el frontend nunca envía la del navegador), también quedan bloqueados. Por eso conviene
   reiniciar Express y el frontend a la vez con la key nueva: al reiniciar Express se borran los contadores.
 - **Variable.** `RATE_LIMIT_AUTH_FAILURES_MAX` (entero 1-1000, por defecto 10). No puede superar `RATE_LIMIT_MAX`: el
   cupo general también cuenta los `401`, y más fallos tolerados que peticiones permitidas serían inalcanzables. Si lo
@@ -1092,9 +1090,9 @@ termina con código 1. Las promesas rechazadas dentro de una petición NO llegan
 cierre en curso, una excepción o un rechazo solo se registra: el cierre continúa, no cuenta como segunda señal y fuerza
 el código final a 1. Lo que se registra de lo lanzado sigue las reglas de «Logs»: si no es un `Error`, solo su tipo.
 
-El frontend se documenta en «Frontend (estado actual)».
+El frontend se documenta en «Frontend».
 
-## Frontend (estado actual)
+## Frontend
 
 El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Hoy ya tiene
 la página principal con el filtro en la URL (`/?filter=completed|pending`) y los contadores de tareas, leídos en el
@@ -1701,8 +1699,8 @@ cada punto. (`<id>` es el de una tarea existente; `$KEY` es la API key, que no d
    atendiendo después.
 10. `npm run verify:build` termina con «OK» y sin hallazgos.
 11. Cancelación del navegador: iniciar con el backend lento o parado un `curl` a `/api/tasks`, cortarlo con Ctrl+C y
-    comprobar que el servidor del frontend sigue sano. Pendiente de comprobar si `request.signal` se aborta al cortar la
-    conexión; si no se aborta, es una limitación conocida y el plazo de 15 s sigue protegiendo.
+    comprobar que el servidor del frontend sigue sano. Si `request.signal` no se aborta al cortar la
+    conexión, es una limitación conocida y el plazo de 15 s sigue protegiendo.
 
 ### Por qué el proyecto se creó a mano
 
@@ -2150,7 +2148,7 @@ Desktop, lo que solo se ve con los contenedores en marcha. Reglas de la lista:
 **Nota sobre `SIGTERM`.** Docker Desktop ejecuta contenedores Linux, así que parar un servicio con `stop` envía un `SIGTERM`
 real al proceso principal (en Windows nativo no existe, ver «Cierre ordenado»). El paso 14 lo comprueba con el
 backend: debe registrar `shutdown_started` y `shutdown_completed`, y terminar con código 0. El paso 14a comprobó esa
-señal real en el backend, que era la comprobación pendiente de la fase del servicio; los pasos 14b, 14c y 14d (cierre
+señal real en el backend (el `SIGTERM` real solo se comprobó en el backend); los pasos 14b, 14c y 14d (cierre
 con una petición en curso, frontend y PostgreSQL) no se ejecutaron.
 
 1. **`.env` vacío falla; con el `.env` real, la configuración es válida.** Prueba que las variables obligatorias se
@@ -2552,7 +2550,8 @@ despliegue.
 
 ## Despliegue en Ubuntu
 
-Pendiente.
+Los pasos de Ubuntu no se han probado en una máquina Ubuntu. Mientras tanto, el despliegue con Docker y su
+comprobación manual están en «Despliegue con Docker Compose».
 
 ## Decisiones técnicas
 
