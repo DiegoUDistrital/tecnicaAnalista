@@ -1,8 +1,27 @@
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HomeView } from '../../src/components/home-view';
+import { TaskManager } from '../../src/client/task-manager';
 import type { Counters } from '../../src/server/counters/counters';
 import type { TaskFilter } from '../../src/lib/task-filter';
+
+// Se simula: el de verdad pinta su propia región role="status" y estas pruebas miden la página, no la lista.
+vi.mock('../../src/client/task-manager', () => ({ TaskManager: () => null }));
+
+/** Todos los elementos de un árbol de React (sin ejecutar componentes). */
+function elementsIn(node: ReactNode): ReactElement<{ children?: ReactNode }>[] {
+  if (Array.isArray(node)) {
+    return node.flatMap(elementsIn);
+  }
+  if (!isValidElement<{ children?: ReactNode }>(node)) {
+    return [];
+  }
+  return [node, ...elementsIn(node.props.children)];
+}
+
+const taskManagerOf = (filter: TaskFilter, counters: Counters) =>
+  elementsIn(HomeView({ filter, counters })).find((element) => element.type === TaskManager);
 
 const available: Counters = { available: true, completed: 3, pending: 5, all: 8 };
 const render = (filter: TaskFilter, counters: Counters) =>
@@ -57,5 +76,27 @@ describe('HomeView', () => {
 
   it('RF-F28: hay un único h1', () => {
     expect(render('all', available).match(/<h1[ >]/g)).toHaveLength(1);
+  });
+
+  it.each([
+    ['all', available, 8],
+    ['completed', available, 3],
+    ['pending', available, 5],
+    ['completed', { available: false }, null],
+  ] as const)(
+    'RF-F6: HomeView monta TaskManager con el filtro y el total del filtro (%s, contadores %j -> %s) o null si los contadores no están',
+    (filter, counters, total) => {
+      const element = taskManagerOf(filter, counters);
+      expect(element?.props).toEqual({ filter, total });
+    },
+  );
+
+  it('RF-F6: el elemento TaskManager no cambia de tipo ni lleva key al cambiar el filtro (3.5)', () => {
+    const before = taskManagerOf('all', available);
+    const after = taskManagerOf('completed', available);
+    expect(before?.type).toBe(TaskManager);
+    expect(after?.type).toBe(before?.type);
+    expect(before?.key).toBeNull();
+    expect(after?.key).toBeNull();
   });
 });
