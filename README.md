@@ -30,7 +30,8 @@ Las versiones se fijan al crear cada proyecto.
 ## Estructura del repositorio
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
-- `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Hoy tiene la base del proyecto y una página provisional (ver «Frontend (estado actual)»).
+- `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
+  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend (estado actual)»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
 - `backend/queries.sql`: consultas SQL de la prueba.
@@ -980,8 +981,8 @@ El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Ta
 la página principal con el filtro en la URL (`/?filter=completed|pending`) y los contadores de tareas, leídos en el
 servidor con Prisma y el rol `reader` (ver «Contadores y Prisma en el frontend»). También tiene las rutas
 `/api/tasks` y `/api/tasks/<id>`, que reenvían las peticiones a Express con la API key solo en el servidor (ver
-«Rutas del servidor del frontend»). Aún no tiene la interfaz interactiva (lista, crear, completar, editar y borrar):
-llega en una fase posterior. La configuración propia (ver «Configuración del frontend»), las cabeceras de
+«Rutas del servidor del frontend»). Tiene además la lista interactiva (crear, completar, desmarcar, editar y borrar),
+que se describe en «Interfaz del cliente». La configuración propia (ver «Configuración del frontend»), las cabeceras de
 seguridad y las herramientas de calidad se describen en las secciones siguientes.
 
 ### Comandos
@@ -1018,11 +1019,33 @@ editar `package.json`.
 - `server/proxy/`: las rutas hacia Express (comprobaciones del borde, cliente de Express y traducción de respuestas); `app/api/tasks/` solo las expone.
 - `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
 - `generated/`: cliente de Prisma generado (no se sube a git; lo crea `npm install`).
-- `client/`: reservada para el código que corre en el navegador (aún no existe).
+- `client/`: código que corre en el navegador (`'use client'`): la lista, las tarjetas, los formularios y las acciones.
+  No importa nada de `server/` ni lee variables de entorno.
 
 Fuera de `src`, `prisma/` y `prisma.config.ts` tienen el esquema y la configuración del CLI de Prisma. Solo `app/`,
-`lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
+`components/`, `client/`, `lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
 hay un alias menos que mantener entre `tsconfig` y Vitest.
+
+### Pruebas de componentes y validación de texto del cliente
+
+Para probar componentes React se instalan Testing Library (`@testing-library/react` 16.3.3 y `@testing-library/dom`
+10.4.2) y `jsdom` 30.1.3, todos con versión exacta. `jsdom` simula un navegador dentro de Node y Testing Library
+permite buscar los elementos como los vería una persona (por rol y nombre accesible). Solo se usan en los archivos de
+componentes, que empiezan con `// @vitest-environment jsdom`; el resto de las pruebas sigue en entorno `node`, que es
+más rápido. Alternativa descartada: usar jsdom en todo el proyecto (haría más lentas las pruebas que no necesitan DOM).
+Tampoco se instalan `user-event` ni `jest-dom`: `fireEvent` y las aserciones de Vitest bastan. Testing Library no
+limpia el DOM por sí sola (no se usan `globals`), así que `tests/helpers/dom-cleanup.ts` lo hace tras cada prueba.
+
+Las funciones puras de la interfaz viven en `src/lib/` y se prueban sin DOM:
+
+- **Validación de título y descripción** (`task-text.ts`): recorta con `trim()`, rechaza NUL y sustitutos sueltos, y
+  cuenta la longitud en puntos de código (título de 1 a 100, descripción de hasta 500), con las mismas reglas y el mismo
+  orden que Express. Es solo una comodidad para avisar antes de enviar: la autoridad es Express, que vuelve a validar
+  todo. **Limitación:** un emoji compuesto (por ejemplo una familia, unida con ZWJ) cuenta varios puntos de código, igual
+  que en Express, así que el contador puede marcar más de lo que parece.
+- **Fecha** (`task-date.ts`): locale fijo `es-CO` con la zona del navegador, para que no dependa del idioma del equipo.
+- **Errores del servidor** (`api-error.ts`): el mensaje que envía el servidor solo se muestra si su `code` está en una
+  lista cerrada y mide de 1 a 200 caracteres; si no (por ejemplo una página HTML de un proxy), se usa un mensaje propio.
 
 ### Cabeceras de seguridad
 
@@ -1034,9 +1057,8 @@ con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el
 ### Registros del frontend
 
 El servidor del frontend registra sus errores con un registro propio (`src/server/logging/`). Escribe una línea JSON
-por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Hoy lo usa la
-configuración (`config_invalid`) y la lectura de contadores (`counters_failed`); las rutas lo usarán en tareas
-posteriores.
+por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Lo usan la
+configuración (`config_invalid`), la lectura de contadores (`counters_failed`) y las rutas (`route_failed`).
 
 - **Eventos cerrados.** `config_invalid` (configuración inválida), `counters_failed` (no se pudieron leer los
   contadores) y `route_failed` (fallo inesperado de una ruta).
@@ -1143,7 +1165,7 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
 - **Plazo de 2 s y fallo sin datos.** `readCounters` nunca lanza: si la base no responde en 2 segundos, si falla la
   conexión, si las filas no tienen la forma esperada o si la configuración es inválida, registra el evento
   `counters_failed` (solo nombre de la clase y código del error, nunca el mensaje ni la URL) y devuelve «no disponibles».
-  La página (siguiente tarea) mostrará entonces «—» con un aviso. La consulta que pierde la carrera sigue en curso sin
+  La página muestra entonces «—» con un aviso. La consulta que pierde la carrera sigue en curso sin
   bloquear la respuesta.
 - **Un solo cliente.** `src/server/counters/reader-database.ts` crea el cliente la primera vez que se lee (nunca al
   importar ni en `npm run build`, que no abre ninguna conexión) con `READER_DATABASE_URL`, `log: []` (Prisma no escribe
@@ -1169,7 +1191,221 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
 - **Contadores**: se leen en el servidor en cada petición (`readCounters`) y no dependen del filtro activo. Si fallan, cada cantidad es `—` y sale el aviso «No se pudieron cargar los contadores.» (`role="status"`); los enlaces siguen funcionando.
 - **Por petición, no en la compilación**: `page` exporta `dynamic = 'force-dynamic'`, así `next build` no se conecta a la BD (en la salida de la compilación `/` aparece como `ƒ (Dynamic)`).
 - **Página fina**: `page.tsx` solo une `readFilter`, `readCounters` y `HomeView`; la lógica y el HTML están en funciones y componentes puros que se prueban sin invocar un componente de servidor asíncrono.
-- **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas llegará con la interfaz del cliente.
+- **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas necesita JavaScript (ver «Interfaz del cliente»).
+
+### Interfaz del cliente
+
+La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista y sus estados) y `client/task-card.tsx` (una tarea). El reparto es este:
+
+- **Servidor (Server Component)**: la página lee el filtro de la dirección y los contadores, y calcula el total de cada filtro.
+- **Navegador (Client Component)**: pide la lista a `GET /api/tasks` de este mismo servidor, nunca a Express, y la pinta.
+
+**Por qué:** los contadores se leen en el servidor sin enviar nada extra al navegador, y la lista cambia con cada
+acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
+recargaría la página entera).
+
+En esta versión la pantalla muestra la lista y permite crear, completar, desmarcar, editar y borrar tareas.
+
+**Estados de la lista:**
+
+- **Cargando**: al abrir la página y al cambiar de filtro, la región de estado (`role="status"`, `aria-live="polite"`)
+  dice «Cargando tareas…» y sustituye a la lista. El formulario de crear sigue disponible.
+- **Lista**: cada tarea muestra su título, su descripción (si tiene), la fecha de creación y su estado con texto,
+  «Completada» o «Pendiente» (no solo con color).
+- **Vacía**: según el filtro, «Aún no hay tareas…», «No hay tareas completadas.» o «No hay tareas pendientes.». No es un error.
+- **Error de carga**: si la carga falla, aparece un aviso con `role="alert"` y el botón «Reintentar», que
+  repite solo esa petición.
+- **Refresco fallido**: si la lista no se puede actualizar tras una acción, se mantiene la lista que había y sale
+  «No se pudo actualizar la lista.» con «Reintentar».
+- **Errores de una tarea**: van junto a su tarjeta con `role="alert"` (red, 500, 429 con la espera y 400). El 404 es un
+  aviso general, no un error de la tarjeta.
+- **Avisos**: «Tarea creada.» tras crear; «Lista actualizada.» tras una escritura correcta de completar, desmarcar,
+  editar o borrar; «La tarea ya no existe.» cuando la tarea ya no está (404).
+- **Truncado**: la API devuelve como mucho el tope de la lista (1 000 por defecto, `TASKS_LIST_LIMIT`). Si el total del
+  filtro, según los contadores, es mayor que las tareas recibidas, aparece «Mostrando las N tareas más recientes de M.».
+  Solo aparece sin carga, refresco ni escritura pendientes, y con los contadores disponibles.
+
+**El texto siempre se muestra como texto.** React escribe el título y la descripción como texto: un `<b>` o un
+`<img onerror=…>` se ven tal cual y no se ejecutan. Los saltos de línea de la descripción se conservan. El cliente no
+usa `dangerouslySetInnerHTML`: el lint lo prohíbe y una prueba lo comprueba.
+
+**Fecha:** se muestra con el locale fijo `es-CO` (fecha media y hora corta) y la zona horaria del navegador. El
+locale fijo hace que la salida no dependa del idioma del equipo.
+
+**Limitaciones:**
+
+- **Hace falta JavaScript**: sin él, los filtros y los contadores funcionan, pero la lista no se carga.
+- **Sin paginación ni virtualización**: se muestran todas las tareas recibidas, como mucho 1 000 (con el aviso de
+  truncado). Con ese número la página se pinta entera.
+- **Emojis compuestos**: un emoji formado por varios puntos de código unidos (como una familia) cuenta como varios
+  caracteres, igual que en Express (ver «Pruebas de componentes y validación de texto del cliente»).
+- **Sin login**: la clave autentica a la aplicación, no al usuario. Quien llega a la página puede crear, editar y borrar
+  tareas.
+- **No exponer a una red**: no tiene login ni HTTPS propio, y el frontend escucha solo en `127.0.0.1`.
+- **Fecha**: se muestra con el locale fijo `es-CO` y la zona horaria del navegador, así que la hora depende del equipo
+  desde el que se mire.
+- **Idioma y contraste**: la página va marcada como `es` y el contraste de los colores se revisa a mano. No hay pruebas
+  automáticas de ninguno de los dos.
+
+### Crear una tarea
+
+El formulario está encima de la lista (`client/create-form.tsx` y `client/text-field.tsx`), con título y descripción.
+
+- **Validación previa:** antes de enviar se aplican las mismas reglas que en Express: se recortan los espacios de los
+  extremos, el título mide de 1 a 100 caracteres, la descripción hasta 500 y no se admiten el carácter NUL ni los
+  sustitutos sueltos. Los mensajes salen junto al campo («Debe tener entre 1 y 100 caracteres.», «Debe tener como máximo
+  500 caracteres.», «Contiene caracteres no permitidos.») y el foco va al primer campo inválido. Un contador `n/100` y
+  `n/500` cuenta puntos de código sobre el texto recortado; no se usa `maxLength` porque cuenta otra unidad y
+  rechazaría 100 emojis válidos. Es solo una comodidad: Express sigue siendo la autoridad y, si responde 400, sus
+  mensajes se muestran junto al campo (o como mensaje general si el campo es otro).
+- **Si falla:** lo escrito se conserva, el error aparece junto al formulario con `role="alert"` y no hay aviso de
+  éxito. Si el fallo es de red o un 502/504, el mensaje invita a revisar la lista antes de volver a enviar, porque la
+  tarea pudo crearse.
+- **Si sale bien:** el formulario se vacía, el foco vuelve al título y una región accesible anuncia «Tarea creada.».
+- **Sin doble envío:** un guardia síncrono (una marca que se escribe antes de que React repinte) hace que dos clics o dos
+  Enter seguidos envíen una sola petición. El botón se marca con `aria-disabled` en lugar de `disabled` para no perder
+  el foco.
+- **Lista y contadores tras cada escritura:** tras crear se vuelve a pedir la lista (en segundo plano, con el filtro
+  vigente, sin quitarla de la pantalla) y se pide a Next que renderice otra vez el Server Component de los contadores
+  (`router.refresh()`). **Por qué:** son dos caminos de lectura distintos (la lista por Express, los contadores por
+  Prisma) y pueden diferir un instante tras escribir; refrescar ambos lo resuelve. Si se cambia de filtro, el borrador
+  del formulario se conserva.
+- **Sin actualización optimista:** la tarea nueva aparece cuando llega la lista, no antes. **Por qué:** así la pantalla
+  nunca muestra algo que el servidor no confirmó. Alternativa descartada: insertarla al enviar y deshacerlo si falla
+  (más código y estados intermedios que explicar).
+
+### Completar y desmarcar
+
+Cada tarjeta tiene un botón de completar (`client/task-card.tsx`; la lógica común está en `client/use-task-actions.ts`).
+
+- **Un botón con `aria-pressed`:** su nombre accesible es fijo, «Marcar «título» como completada», y no cambia con el
+  estado; `aria-pressed` dice si la tarea está completada. **Por qué:** un lector de pantalla anuncia siempre lo mismo y
+  el estado aparte. Alternativa descartada: una casilla (nombre y estado se anuncian de dos formas según el lector).
+- **Qué se envía:** `PUT /api/tasks/<id>` con solo `{"completed": true|false}`. Sin actualización optimista: el estado
+  cambia cuando llega la lista nueva (se vuelve a pedir la lista y a renderizar los contadores, como al crear). Bajo
+  Pendientes, completar hace desaparecer la tarea tras el refresco; bajo Completadas, desmarcar también. La región de
+  estado anuncia «Lista actualizada.» y el aviso se quita al empezar la siguiente acción (sin temporizadores).
+- **Sin doble clic:** un guardia síncrono por tarea hace que dos clics seguidos envíen una sola petición. Mientras dura
+  la petición el botón queda con `aria-disabled` (no `disabled`, que podría hacerle perder el foco). Tareas distintas
+  pueden tener peticiones a la vez.
+- **Errores por tarea:** si falla (red, 500, 400 o 429), el mensaje sale junto a esa tarjeta con `role="alert"`, la
+  tarea queda como estaba, el botón se reactiva y no se refresca nada. En un 429 el mensaje trae la espera, pero no hay
+  reintento automático: la persona decide cuándo volver a pulsar. El mensaje desaparece al empezar otra acción sobre
+  esa tarea.
+- **Si la tarea ya no existe (404):** no es un error de la tarjeta, que va a desaparecer. Se avisa en la región de estado
+  («La tarea ya no existe.») y se refrescan la lista y los contadores. Solo se interpreta así un 404 de Express con el
+  código `NOT_FOUND`; un 404 de otro origen (por ejemplo, un proxy) es un error normal.
+- **Dónde queda el foco:** si la tarea sigue en la lista, en su mismo botón; si desaparece, en el botón de la tarea que
+  ocupa su lugar (la siguiente o, si era la última, la anterior) y, si la lista queda vacía, en el encabezado «Tareas».
+  Si la persona ya había pasado a otro campo, no se le quita el foco.
+- **Estado por tarea:** los errores, las tareas ocupadas y los avisos viven en un reductor puro (`lib/task-ui-state.ts`)
+  en lugar de varios `useState`: un 404 cambia varias cosas a la vez y así no se descuadran. Al llegar una lista nueva
+  se olvidan los errores de las tareas que ya no están.
+
+### Borrar
+
+Cada tarjeta tiene un botón «Eliminar «título»». Reutiliza el mismo mecanismo de completar (guardia contra el doble
+clic, error junto a la tarjeta, aviso de 404 y foco).
+
+- **Confirmación con `window.confirm`:** borrar no se puede deshacer, así que se pregunta antes de enviar nada; si se
+  cancela, no hay petición. **Por qué:** es una línea, es accesible de serie y se simula fácil en los tests.
+  Alternativa descartada: un diálogo propio (habría que gestionar a mano el foco y la tecla Escape).
+- **Qué se envía:** `DELETE /api/tasks/<id>`. Con éxito (204) se vuelve a pedir la lista y a renderizar los contadores,
+  y el foco pasa a la tarea que ocupa su lugar o al encabezado «Tareas». Dos clics seguidos hacen una sola pregunta y
+  una sola petición.
+- **Borrado no idempotente:** el backend responde 204 la primera vez y 404 si la tarea ya no existe. Si se borra desde
+  dos pestañas, la segunda ve el aviso «La tarea ya no existe.» (no un error en una tarjeta que va a desaparecer) y su
+  lista se refresca. Si la tarea estaba en edición, la edición se descarta al llegar la lista nueva.
+- **Si falla** (red, 500, 400 o 429): el mensaje sale junto a la tarjeta, la tarea se queda y los botones se reactivan.
+
+### Editar
+
+Cada tarjeta tiene un botón «Editar «título»». Reutiliza el mismo mecanismo de completar y borrar (guardia contra el
+doble clic, error junto a la tarjeta, aviso de 404) y los mismos campos que el formulario de crear
+(`client/edit-form.tsx` y `client/text-field.tsx`).
+
+- **En la propia tarjeta:** el título y la descripción se sustituyen por un formulario con los valores actuales y el
+  foco va al título. **Por qué:** no se pierde el contexto de la lista ni hace falta otra ruta. Alternativa descartada:
+  una página aparte `/tasks/<id>` (más rutas, más navegación y una lista que recargar al volver).
+- **Solo viajan los campos que cambian:** `PUT /api/tasks/<id>` con el título, la descripción o ambos, según cuáles
+  difieran del original **una vez recortados**. Un cambio solo de espacios, o ningún cambio, no envía nada y sale de la
+  edición. Antes de enviar se validan con las mismas reglas que al crear (mensaje junto al campo y foco al primer campo
+  inválido); un 400 del servidor se muestra junto a su campo o, si no es de título ni de descripción, como mensaje
+  general del formulario.
+- **Una edición a la vez:** pulsar «Editar» en otra tarea con cambios sin guardar pregunta con `window.confirm`
+  («Hay cambios sin guardar en «título». ¿Descartarlos?»); si se rechaza, se queda donde estaba; sin cambios, cambia
+  sin preguntar. Alternativa descartada: varias ediciones a la vez (el foco y los refrescos se complican) o descartar
+  sin avisar (se pierde lo escrito).
+- **Cancelar y Escape:** descartan lo escrito y devuelven el foco al botón «Editar» de esa tarea. Lo mismo al guardar
+  con éxito.
+- **El borrador sobrevive:** el texto escrito se guarda por tarea en el estado común (`lib/task-ui-state.ts`), no en la
+  tarjeta, así que no se pierde al refrescar la lista (por ejemplo al completar otra tarea) ni al cambiar de filtro
+  mientras la tarea siga en la lista. Si la tarea ya no está tras un refresco, o si se borra, la edición se descarta.
+  Completar la tarea mientras se edita no descarta lo escrito.
+- **Si falla** (red, 500 o 429): el mensaje sale junto a la tarjeta, lo escrito se conserva y los botones se
+  reactivan, sin refrescar. Si la tarea ya no existe (404) se avisa «La tarea ya no existe.», se descarta la edición y
+  se refresca.
+
+### Cierre del cliente: refrescos, foco, capacidad y comprobaciones manuales
+
+Las cinco acciones (crear, completar, desmarcar, editar y borrar) siguen las mismas reglas:
+
+- **Sin doble envío.** Cada acción tiene un guardia síncrono, y el botón queda con `aria-disabled` mientras dura la
+  petición (no `disabled`, para no perder el foco).
+- **Sin actualización optimista.** La pantalla cambia solo cuando el servidor confirma. Alternativa descartada:
+  pintar el cambio antes y deshacerlo si falla.
+- **Qué se refresca.** Solo después de una escritura correcta o de un 404:
+
+| Resultado                 | Lee la lista | Refresca contadores | Aviso o error                                      |
+| ------------------------- | ------------ | ------------------- | -------------------------------------------------- |
+| Éxito                     | Sí           | Sí                  | «Tarea creada.» (crear) o «Lista actualizada.»     |
+| 404 (ya no existe)        | Sí           | Sí                  | «La tarea ya no existe.»                           |
+| Red, 500, 400 o 429       | No           | No                  | Error junto al campo, al formulario o a la tarjeta |
+
+- **Dónde queda el foco:**
+
+| Acción                              | Foco al terminar                                                    |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| Crear                               | Campo del título del formulario                                     |
+| Editar (guardar, cancelar o Escape) | Botón «Editar» de esa tarea                                         |
+| Completar o desmarcar               | Su botón; si la tarea desaparece, la tarjeta siguiente o la anterior |
+| Borrar                              | La tarjeta siguiente, la anterior o «Tareas»                        |
+
+  Si la lista queda vacía, el foco va al encabezado «Tareas». Si la persona ya había pasado a otro campo, no se le
+  quita el foco.
+
+#### Nota de capacidad
+
+- **Coste por acción.** Cada acción cuesta una escritura y una lectura de la lista al backend. Los contadores se
+  leen con Prisma (ver «Contadores y Prisma en el frontend») y no cuentan en el cupo de Express.
+- **StrictMode en desarrollo.** El modo de React que monta dos veces cada componente para detectar fallos duplica la
+  carga inicial: son dos `GET`. La cancelación de la petición anterior evita que se pinte una respuesta vieja, pero el
+  backend puede contar las dos peticiones.
+- **Demos rápidas.** Con los cupos por defecto (`RATE_LIMIT_MAX=100` peticiones generales y `RATE_LIMIT_POST_MAX=20`
+  de `POST` por IP, en ventanas de 15 minutos: `RATE_LIMIT_WINDOW_MS=900000`), una demo rápida puede recibir `429`.
+- **Cupo compartido.** Todos los usuarios cuentan como una sola IP hasta que el frontend reenvíe la IP real del cliente.
+  Para una demo con varias personas, suba `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (el segundo no puede superar al
+  primero). `.env.example` trae comentados los valores 1000 y 200. Ver «Variables del servicio».
+
+#### Comprobaciones manuales del cliente
+
+No las cubre ningún test. Las hace quien implementa y anota el resultado de cada punto.
+
+- [ ] **`isPending` en el refresco.** Comprobar que `startTransition(() => router.refresh())` expone `isPending` en
+  Next 16.4.3: añadir un `console.log` temporal del valor, ver que pasa a `true` durante el refresco y quitarlo antes de
+  hacer el commit.
+- [ ] **Formulario tras el refresco.** El formulario conserva su texto tras `router.refresh()`. Crear, completar y
+  desmarcar, editar y borrar hacen cambiar los contadores.
+- [ ] **Dos pestañas.** Borrar la misma tarea en la otra pestaña y ver «La tarea ya no existe.».
+- [ ] **Borrador al cambiar de filtro.** Con un borrador de crear y otro de editar a medias, cambiar de filtro: se
+  conservan si la tarea sigue en la lista.
+- [ ] **Diseño a 320, 768 y 1280 px.** Con un título de 100 caracteres sin espacios, una descripción de 500 caracteres
+  con saltos de línea y 1 000 tareas: sin scroll horizontal, con los saltos de línea conservados, controles de al
+  menos 44 px y formulario y acciones accesibles en móvil.
+- [ ] **Teclado.** Tab en orden lógico y con foco visible; Enter envía el formulario; Escape cancela la edición; el foco
+  llega a los destinos de la tabla anterior.
+- [ ] **Arranque conjunto.** Con el backend y el frontend en marcha: crear, completar, desmarcar, editar, borrar,
+  cambiar de filtro y ver cómo cambian los contadores.
 
 ### Rutas del servidor del frontend
 
@@ -1185,7 +1421,7 @@ página (Server Component) -> Prisma con el rol reader -> vista task_counts
 
 - **Server Component** para los contadores: se leen en el servidor, con credenciales que el navegador no ve.
 - **Rutas de API** (`app/api/tasks`) para la lista y las escrituras: añaden la API key, que solo existe en el servidor.
-- **Client Component** (la lista interactiva): llegará con la interfaz del cliente; hablará con estas rutas.
+- **Client Component** (la lista, en `client/task-manager.tsx`): pide la lista a `GET /api/tasks` de este mismo servidor. Ver «Interfaz del cliente».
 - **Por qué rutas de API y no llamar a Express desde el navegador:** la key tendría que estar en el navegador.
   Alternativa descartada: `NEXT_PUBLIC_API_KEY` (cualquiera la vería en las herramientas del navegador).
 - **Por qué no Server Actions:** las rutas son un contrato HTTP explícito, fácil de probar con `curl` y con tests.
@@ -1443,8 +1679,9 @@ cuando exista el frontend.
   un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
   comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
   caracterización: documenta lo que hace Node, no código propio.
-- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`
-  y de la página provisional, con Vitest en entorno Node. Las reglas de ESLint propias (`react/no-danger`, las de
+- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`,
+  de la página, de las funciones puras de la interfaz y del cliente interactivo (componentes con Testing Library), con
+  Vitest en entorno Node (jsdom solo en las de componentes). Las reglas de ESLint propias (`react/no-danger`, las de
   `@next/next`, las de hooks y la prohibición de importar el servidor desde `src/client/`) se comprobaron una vez con
   archivos de ejemplo que deben fallar y que se borraron después.
 

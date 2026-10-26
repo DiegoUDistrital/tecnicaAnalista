@@ -18,6 +18,8 @@ import {
   TASK,
 } from '../helpers/route-harness';
 
+// HomeView monta TaskManager, que usa `useRouter`: fuera de Next hay que simularlo (aquí solo importa el HTML).
+vi.mock('next/navigation', async () => (await import('../helpers/router-mock')).navigationMock);
 const SENTINELS = [SENTINEL_KEY, SENTINEL_BACKEND, SENTINEL_DATABASE, 'SENTINEL-DBPASS', 'backend-sentinel'];
 const ALLOWED_KEYS = ['time', 'level', 'event', 'method', 'route', 'status', 'errorName', 'errorCode', 'variables'];
 const LEAK = `fallo en ${SENTINEL_BACKEND} con ${SENTINEL_KEY} SELECT * FROM tasks at /srv/app.js:10`;
