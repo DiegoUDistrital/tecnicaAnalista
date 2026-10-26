@@ -90,7 +90,11 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
         {status === 'error' ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{loadError}</p>
-            <button type="button" className="rounded border px-3 py-1" onClick={() => reload('initial')}>
+            <button
+              type="button"
+              className="min-h-11 min-w-11 rounded border px-3 py-1"
+              onClick={() => reload('initial')}
+            >
               Reintentar
             </button>
           </div>
@@ -98,7 +102,11 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
         {status === 'ready' && refreshError !== undefined ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{refreshError}</p>
-            <button type="button" className="rounded border px-3 py-1" onClick={() => reload('background')}>
+            <button
+              type="button"
+              className="min-h-11 min-w-11 rounded border px-3 py-1"
+              onClick={() => reload('background')}
+            >
               Reintentar
             </button>
           </div>

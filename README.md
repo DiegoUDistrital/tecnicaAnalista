@@ -30,7 +30,8 @@ Las versiones se fijan al crear cada proyecto.
 ## Estructura del repositorio
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
-- `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Hoy tiene la base del proyecto y una página provisional (ver «Frontend (estado actual)»).
+- `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
+  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend (estado actual)»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
 - `backend/queries.sql`: consultas SQL de la prueba.
@@ -980,8 +981,8 @@ El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Ta
 la página principal con el filtro en la URL (`/?filter=completed|pending`) y los contadores de tareas, leídos en el
 servidor con Prisma y el rol `reader` (ver «Contadores y Prisma en el frontend»). También tiene las rutas
 `/api/tasks` y `/api/tasks/<id>`, que reenvían las peticiones a Express con la API key solo en el servidor (ver
-«Rutas del servidor del frontend»). Aún no tiene la interfaz interactiva (lista, crear, completar, editar y borrar):
-llega en una fase posterior. La configuración propia (ver «Configuración del frontend»), las cabeceras de
+«Rutas del servidor del frontend»). Tiene además la lista interactiva (crear, completar, desmarcar, editar y borrar),
+que se describe en «Interfaz del cliente». La configuración propia (ver «Configuración del frontend»), las cabeceras de
 seguridad y las herramientas de calidad se describen en las secciones siguientes.
 
 ### Comandos
@@ -1018,7 +1019,8 @@ editar `package.json`.
 - `server/proxy/`: las rutas hacia Express (comprobaciones del borde, cliente de Express y traducción de respuestas); `app/api/tasks/` solo las expone.
 - `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
 - `generated/`: cliente de Prisma generado (no se sube a git; lo crea `npm install`).
-- `client/`: código que corre en el navegador (`'use client'`): la lista y sus tarjetas. No importa nada de `server/` ni lee variables de entorno.
+- `client/`: código que corre en el navegador (`'use client'`): la lista, las tarjetas, los formularios y las acciones.
+  No importa nada de `server/` ni lee variables de entorno.
 
 Fuera de `src`, `prisma/` y `prisma.config.ts` tienen el esquema y la configuración del CLI de Prisma. Solo `app/`,
 `components/`, `client/`, `lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
@@ -1055,9 +1057,8 @@ con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el
 ### Registros del frontend
 
 El servidor del frontend registra sus errores con un registro propio (`src/server/logging/`). Escribe una línea JSON
-por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Hoy lo usa la
-configuración (`config_invalid`) y la lectura de contadores (`counters_failed`); las rutas lo usarán en tareas
-posteriores.
+por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Lo usan la
+configuración (`config_invalid`), la lectura de contadores (`counters_failed`) y las rutas (`route_failed`).
 
 - **Eventos cerrados.** `config_invalid` (configuración inválida), `counters_failed` (no se pudieron leer los
   contadores) y `route_failed` (fallo inesperado de una ruta).
@@ -1164,7 +1165,7 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
 - **Plazo de 2 s y fallo sin datos.** `readCounters` nunca lanza: si la base no responde en 2 segundos, si falla la
   conexión, si las filas no tienen la forma esperada o si la configuración es inválida, registra el evento
   `counters_failed` (solo nombre de la clase y código del error, nunca el mensaje ni la URL) y devuelve «no disponibles».
-  La página (siguiente tarea) mostrará entonces «—» con un aviso. La consulta que pierde la carrera sigue en curso sin
+  La página muestra entonces «—» con un aviso. La consulta que pierde la carrera sigue en curso sin
   bloquear la respuesta.
 - **Un solo cliente.** `src/server/counters/reader-database.ts` crea el cliente la primera vez que se lee (nunca al
   importar ni en `npm run build`, que no abre ninguna conexión) con `READER_DATABASE_URL`, `log: []` (Prisma no escribe
@@ -1207,14 +1208,22 @@ En esta versión la pantalla muestra la lista y permite crear, completar, desmar
 
 **Estados de la lista:**
 
-- **Cargando**: al abrir la página y al cambiar de filtro, la región de estado dice «Cargando tareas…» y la lista no se ve.
+- **Cargando**: al abrir la página y al cambiar de filtro, la región de estado (`role="status"`, `aria-live="polite"`)
+  dice «Cargando tareas…» y sustituye a la lista. El formulario de crear sigue disponible.
 - **Lista**: cada tarea muestra su título, su descripción (si tiene), la fecha de creación y su estado con texto,
   «Completada» o «Pendiente» (no solo con color).
 - **Vacía**: según el filtro, «Aún no hay tareas…», «No hay tareas completadas.» o «No hay tareas pendientes.». No es un error.
-- **Error**: si la carga falla, aparece un aviso con `role="alert"` y el botón «Reintentar», que repite solo esa petición.
-- **Truncado**: la API devuelve como mucho el tope de la lista (1 000 por defecto, `TASKS_LIST_LIMIT`). Si el total del filtro (de los contadores) es mayor que las
-  tareas recibidas, aparece «Mostrando las N tareas más recientes de M.». No aparece mientras hay una carga en curso,
-  mientras Next recalcula los contadores tras una escritura, ni si los contadores no están disponibles.
+- **Error de carga**: si la carga falla, aparece un aviso con `role="alert"` y el botón «Reintentar», que
+  repite solo esa petición.
+- **Refresco fallido**: si la lista no se puede actualizar tras una acción, se mantiene la lista que había y sale
+  «No se pudo actualizar la lista.» con «Reintentar».
+- **Errores de una tarea**: van junto a su tarjeta con `role="alert"` (red, 500, 429 con la espera y 400). El 404 es un
+  aviso general, no un error de la tarjeta.
+- **Avisos**: «Tarea creada.» tras crear; «Lista actualizada.» tras una escritura correcta de completar, desmarcar,
+  editar o borrar; «La tarea ya no existe.» cuando la tarea ya no está (404).
+- **Truncado**: la API devuelve como mucho el tope de la lista (1 000 por defecto, `TASKS_LIST_LIMIT`). Si el total del
+  filtro, según los contadores, es mayor que las tareas recibidas, aparece «Mostrando las N tareas más recientes de M.».
+  Solo aparece sin carga, refresco ni escritura pendientes, y con los contadores disponibles.
 
 **El texto siempre se muestra como texto.** React escribe el título y la descripción como texto: un `<b>` o un
 `<img onerror=…>` se ven tal cual y no se ejecutan. Los saltos de línea de la descripción se conservan. El cliente no
@@ -1226,8 +1235,17 @@ locale fijo hace que la salida no dependa del idioma del equipo.
 **Limitaciones:**
 
 - **Hace falta JavaScript**: sin él, los filtros y los contadores funcionan, pero la lista no se carga.
-- **Sin paginación ni virtualización**: se muestran todas las tareas recibidas (como mucho 1 000). Con ese número la
-  página se pinta entera.
+- **Sin paginación ni virtualización**: se muestran todas las tareas recibidas, como mucho 1 000 (con el aviso de
+  truncado). Con ese número la página se pinta entera.
+- **Emojis compuestos**: un emoji formado por varios puntos de código unidos (como una familia) cuenta como varios
+  caracteres, igual que en Express (ver «Pruebas de componentes y validación de texto del cliente»).
+- **Sin login**: la clave autentica a la aplicación, no al usuario. Quien llega a la página puede crear, editar y borrar
+  tareas.
+- **No exponer a una red**: no tiene login ni HTTPS propio, y el frontend escucha solo en `127.0.0.1`.
+- **Fecha**: se muestra con el locale fijo `es-CO` y la zona horaria del navegador, así que la hora depende del equipo
+  desde el que se mire.
+- **Idioma y contraste**: la página va marcada como `es` y el contraste de los colores se revisa a mano. No hay pruebas
+  automáticas de ninguno de los dos.
 
 ### Crear una tarea
 
@@ -1327,6 +1345,67 @@ doble clic, error junto a la tarjeta, aviso de 404) y los mismos campos que el f
 - **Si falla** (red, 500 o 429): el mensaje sale junto a la tarjeta, lo escrito se conserva y los botones se
   reactivan, sin refrescar. Si la tarea ya no existe (404) se avisa «La tarea ya no existe.», se descarta la edición y
   se refresca.
+
+### Cierre del cliente: refrescos, foco, capacidad y comprobaciones manuales
+
+Las cinco acciones (crear, completar, desmarcar, editar y borrar) siguen las mismas reglas:
+
+- **Sin doble envío.** Cada acción tiene un guardia síncrono, y el botón queda con `aria-disabled` mientras dura la
+  petición (no `disabled`, para no perder el foco).
+- **Sin actualización optimista.** La pantalla cambia solo cuando el servidor confirma. Alternativa descartada:
+  pintar el cambio antes y deshacerlo si falla.
+- **Qué se refresca.** Solo después de una escritura correcta o de un 404:
+
+| Resultado                 | Lee la lista | Refresca contadores | Aviso o error                                      |
+| ------------------------- | ------------ | ------------------- | -------------------------------------------------- |
+| Éxito                     | Sí           | Sí                  | «Tarea creada.» (crear) o «Lista actualizada.»     |
+| 404 (ya no existe)        | Sí           | Sí                  | «La tarea ya no existe.»                           |
+| Red, 500, 400 o 429       | No           | No                  | Error junto al campo, al formulario o a la tarjeta |
+
+- **Dónde queda el foco:**
+
+| Acción                              | Foco al terminar                                                    |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| Crear                               | Campo del título del formulario                                     |
+| Editar (guardar, cancelar o Escape) | Botón «Editar» de esa tarea                                         |
+| Completar o desmarcar               | Su botón; si la tarea desaparece, la tarjeta siguiente o la anterior |
+| Borrar                              | La tarjeta siguiente, la anterior o «Tareas»                        |
+
+  Si la lista queda vacía, el foco va al encabezado «Tareas». Si la persona ya había pasado a otro campo, no se le
+  quita el foco.
+
+#### Nota de capacidad
+
+- **Coste por acción.** Cada acción cuesta una escritura y una lectura de la lista al backend. Los contadores se
+  leen con Prisma (ver «Contadores y Prisma en el frontend») y no cuentan en el cupo de Express.
+- **StrictMode en desarrollo.** El modo de React que monta dos veces cada componente para detectar fallos duplica la
+  carga inicial: son dos `GET`. La cancelación de la petición anterior evita que se pinte una respuesta vieja, pero el
+  backend puede contar las dos peticiones.
+- **Demos rápidas.** Con los cupos por defecto (`RATE_LIMIT_MAX=100` peticiones generales y `RATE_LIMIT_POST_MAX=20`
+  de `POST` por IP, en ventanas de 15 minutos: `RATE_LIMIT_WINDOW_MS=900000`), una demo rápida puede recibir `429`.
+- **Cupo compartido.** Todos los usuarios cuentan como una sola IP hasta que el frontend reenvíe la IP real del cliente.
+  Para una demo con varias personas, suba `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (el segundo no puede superar al
+  primero). `.env.example` trae comentados los valores 1000 y 200. Ver «Variables del servicio».
+
+#### Comprobaciones manuales del cliente
+
+No las cubre ningún test. Las hace quien implementa y anota el resultado de cada punto.
+
+- [ ] **`isPending` en el refresco.** Comprobar que `startTransition(() => router.refresh())` expone `isPending` en
+  Next 16.4.3: añadir un `console.log` temporal del valor, ver que pasa a `true` durante el refresco y quitarlo antes de
+  hacer el commit.
+- [ ] **Formulario tras el refresco.** El formulario conserva su texto tras `router.refresh()`. Crear, completar y
+  desmarcar, editar y borrar hacen cambiar los contadores.
+- [ ] **Dos pestañas.** Borrar la misma tarea en la otra pestaña y ver «La tarea ya no existe.».
+- [ ] **Borrador al cambiar de filtro.** Con un borrador de crear y otro de editar a medias, cambiar de filtro: se
+  conservan si la tarea sigue en la lista.
+- [ ] **Diseño a 320, 768 y 1280 px.** Con un título de 100 caracteres sin espacios, una descripción de 500 caracteres
+  con saltos de línea y 1 000 tareas: sin scroll horizontal, con los saltos de línea conservados, controles de al
+  menos 44 px y formulario y acciones accesibles en móvil.
+- [ ] **Teclado.** Tab en orden lógico y con foco visible; Enter envía el formulario; Escape cancela la edición; el foco
+  llega a los destinos de la tabla anterior.
+- [ ] **Arranque conjunto.** Con el backend y el frontend en marcha: crear, completar, desmarcar, editar, borrar,
+  cambiar de filtro y ver cómo cambian los contadores.
 
 ### Rutas del servidor del frontend
 
@@ -1601,7 +1680,8 @@ cuando exista el frontend.
   comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
   caracterización: documenta lo que hace Node, no código propio.
 - Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`,
-  de la página y de las funciones puras de la interfaz, con Vitest en entorno Node (jsdom solo en las de componentes). Las reglas de ESLint propias (`react/no-danger`, las de
+  de la página, de las funciones puras de la interfaz y del cliente interactivo (componentes con Testing Library), con
+  Vitest en entorno Node (jsdom solo en las de componentes). Las reglas de ESLint propias (`react/no-danger`, las de
   `@next/next`, las de hooks y la prohibición de importar el servidor desde `src/client/`) se comprobaron una vez con
   archivos de ejemplo que deben fallar y que se borraron después.
 
