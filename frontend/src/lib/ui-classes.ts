@@ -26,6 +26,11 @@ export const BTN_ICON = `${ICON_BASE} text-slate-700 hover:bg-slate-100`;
 /** Botón solo icono destructivo (Eliminar): rojo y separado de los demás. */
 export const BTN_ICON_DANGER = `${ICON_BASE} ml-2 text-red-700 hover:bg-red-50`;
 
+/** Título de la tarjeta convertido en botón (descripción plegable): parece texto, con foco visible y 44 px. */
+export const TITLE_TOGGLE =
+  'flex min-h-11 min-w-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg text-left ' +
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600';
+
 /** Campo de texto y área de texto. */
 export const FIELD =
   'min-h-11 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-900 ' +

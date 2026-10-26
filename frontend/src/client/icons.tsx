@@ -55,6 +55,13 @@ export const RetryIcon = () => (
   </Icon>
 );
 
+/** Descripción plegable: apunta abajo; la tarjeta lo gira al expandirse. */
+export const ChevronIcon = () => (
+  <Icon>
+    <path d="M6 9l6 6 6-6" />
+  </Icon>
+);
+
 /** Eliminar. */
 export const TrashIcon = () => (
   <Icon>

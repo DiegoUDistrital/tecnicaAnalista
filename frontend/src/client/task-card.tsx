@@ -1,10 +1,10 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type { Task } from '../lib/task';
 import { formatCreatedAt } from '../lib/task-date';
 import type { Editing } from '../lib/task-ui-state';
-import { BTN_ICON, BTN_ICON_DANGER } from '../lib/ui-classes';
+import { BTN_ICON, BTN_ICON_DANGER, TITLE_TOGGLE } from '../lib/ui-classes';
 import { EditForm, type EditActions } from './edit-form';
-import { CheckIcon, PencilIcon, TrashIcon } from './icons';
+import { CheckIcon, ChevronIcon, PencilIcon, TrashIcon } from './icons';
 
 interface TaskCardProps {
   task: Task;
@@ -27,6 +27,8 @@ interface TaskCardProps {
  * Una tarea en pantalla. Todo el texto va como hijos de React, nunca como HTML: `<b>` o `<img>` se ven literales.
  * `wrap-anywhere` (se hereda por el contenido) y `min-w-0` evitan que un título sin espacios desborde la tarjeta.
  * Que no desborde en pantalla es RF-F26: se comprueba a mano.
+ * RF-V11: la descripción empieza plegada y el título (botón) la muestra; sin descripción el título es solo texto.
+ * RF-V10: mientras se edita se ocultan los tres iconos y el formulario ocupa todo el ancho de la tarjeta.
  */
 export const TaskCard = memo(function TaskCard({
   task,
@@ -39,6 +41,11 @@ export const TaskCard = memo(function TaskCard({
   editActions,
   registerToggle,
 }: TaskCardProps) {
+  const [expanded, setExpanded] = useState(false);
+  const isEditing = editing !== undefined && editActions !== undefined;
+  const titleClasses = `text-base font-semibold ${task.completed ? 'text-slate-500 line-through' : ''}`;
+  const descriptionId = `description-${task.id}`;
+
   return (
     <article
       data-task-id={task.id}
@@ -47,17 +54,34 @@ export const TaskCard = memo(function TaskCard({
       }`}
     >
       <div className="flex items-start gap-2">
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className={`flex min-w-0 flex-1 flex-col ${isEditing ? 'gap-3' : 'gap-1'}`}>
           {editing !== undefined && editActions !== undefined ? (
             <EditForm task={task} draft={editing} busy={busy} actions={editActions} />
           ) : (
             <>
-              <h3 className={`text-base font-semibold ${task.completed ? 'text-slate-500 line-through' : ''}`}>
-                {task.title}
+              <h3 className={titleClasses}>
+                {task.description === '' ? (
+                  task.title
+                ) : (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={descriptionId}
+                    onClick={() => setExpanded((open) => !open)}
+                    className={TITLE_TOGGLE}
+                  >
+                    <span className="min-w-0">{task.title}</span>
+                    <span className={`shrink-0 ${expanded ? 'rotate-180' : ''}`}>
+                      <ChevronIcon />
+                    </span>
+                  </button>
+                )}
               </h3>
-              {task.description === '' ? null : (
-                <p className="whitespace-pre-wrap text-sm text-slate-700">{task.description}</p>
-              )}
+              {expanded && task.description !== '' ? (
+                <p id={descriptionId} className="whitespace-pre-wrap text-sm text-slate-700">
+                  {task.description}
+                </p>
+              ) : null}
             </>
           )}
           <p className="text-xs text-slate-600">
@@ -72,40 +96,42 @@ export const TaskCard = memo(function TaskCard({
           </p>
         </div>
         {/* Nombre accesible fijo (no cambia con el estado); `aria-pressed` dice si está completada. */}
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-          <button
-            type="button"
-            aria-pressed={task.completed}
-            aria-disabled={busy}
-            ref={(element) => registerToggle?.(task.id, element)}
-            onClick={() => onToggle?.(task)}
-            title={`Marcar «${task.title}» como completada`}
-            className={BTN_ICON}
-          >
-            <CheckIcon />
-            <span className="sr-only">{`Marcar «${task.title}» como completada`}</span>
-          </button>
-          <button
-            type="button"
-            ref={(element) => editActions?.registerButton(task.id, element)}
-            onClick={() => editActions?.open(task)}
-            title={`Editar «${task.title}»`}
-            className={BTN_ICON}
-          >
-            <PencilIcon />
-            <span className="sr-only">{`Editar «${task.title}»`}</span>
-          </button>
-          <button
-            type="button"
-            aria-disabled={busy}
-            onClick={() => onDelete?.(task)}
-            title={`Eliminar «${task.title}»`}
-            className={BTN_ICON_DANGER}
-          >
-            <TrashIcon />
-            <span className="sr-only">{`Eliminar «${task.title}»`}</span>
-          </button>
-        </div>
+        {isEditing ? null : (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+            <button
+              type="button"
+              aria-pressed={task.completed}
+              aria-disabled={busy}
+              ref={(element) => registerToggle?.(task.id, element)}
+              onClick={() => onToggle?.(task)}
+              title={`Marcar «${task.title}» como completada`}
+              className={BTN_ICON}
+            >
+              <CheckIcon />
+              <span className="sr-only">{`Marcar «${task.title}» como completada`}</span>
+            </button>
+            <button
+              type="button"
+              ref={(element) => editActions?.registerButton(task.id, element)}
+              onClick={() => editActions?.open(task)}
+              title={`Editar «${task.title}»`}
+              className={BTN_ICON}
+            >
+              <PencilIcon />
+              <span className="sr-only">{`Editar «${task.title}»`}</span>
+            </button>
+            <button
+              type="button"
+              aria-disabled={busy}
+              onClick={() => onDelete?.(task)}
+              title={`Eliminar «${task.title}»`}
+              className={BTN_ICON_DANGER}
+            >
+              <TrashIcon />
+              <span className="sr-only">{`Eliminar «${task.title}»`}</span>
+            </button>
+          </div>
+        )}
       </div>
       {error === undefined ? null : (
         <p role="alert" className="mt-2 text-sm text-red-800">

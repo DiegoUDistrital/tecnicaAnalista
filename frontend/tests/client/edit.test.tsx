@@ -42,7 +42,6 @@ const titleField = (title: string) => formOf(title).getByLabelText<HTMLInputElem
 const descriptionField = (title: string) => formOf(title).getByLabelText<HTMLTextAreaElement>('Descripción');
 const saveButton = (title: string) => formOf(title).getByRole('button', { name: 'Guardar' });
 const puts = (api: FakeApi) => api.calls.filter((call) => call.method === 'PUT');
-const deletes = (api: FakeApi) => api.calls.filter((call) => call.method === 'DELETE');
 const lists = (api: FakeApi) => api.calls.filter((call) => call.method === 'GET');
 const type = (element: HTMLElement, value: string) => fireEvent.change(element, { target: { value } });
 const cardAround = (element: HTMLElement) => within(element.closest('article')!);
@@ -71,10 +70,7 @@ describe('Editar en la propia tarjeta', () => {
     expect(descriptionField('Tarea 1').value).toBe('Desc 1');
     expect(document.activeElement).toBe(titleField('Tarea 1'));
     expect(hasForm('Tarea 2')).toBe(false);
-    descriptionField('Tarea 1').focus();
-    fireEvent.click(editButton('Tarea 1'));
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(titleField('Tarea 1'));
   });
 
   it('RF-F12: Guardar envía PUT con SOLO los campos cambiados (una sola clave) y refresca; salir devuelve el foco a Editar', async () => {
@@ -211,27 +207,54 @@ describe('Editar en la propia tarjeta', () => {
     expect(titleField('Tarea 1').value).toBe('Tarea 1');
   });
 
-  it('RF-F12: completar mientras se edita no descarta lo escrito; borrar esa tarea sí', async () => {
-    const task = makeTask(1);
-    const { api } = await setup([task, makeTask(2)]);
+  it('RF-V10: al editar se ocultan completar, editar y eliminar y el formulario es lo único de la tarjeta', async () => {
+    await setup([makeTask(1, { description: 'Desc 1' }), makeTask(2)]);
     fireEvent.click(editButton('Tarea 1'));
-    type(titleField('Tarea 1'), 'Escrito');
-    expect(toggleButton('Tarea 1').getAttribute('aria-disabled')).toBe('false');
-    fireEvent.click(toggleButton('Tarea 1'));
-    expect(puts(api)[0]?.body).toEqual({ completed: true });
+    const card = cardAround(titleField('Tarea 1'));
+    for (const name of ['Marcar «Tarea 1» como completada', 'Editar «Tarea 1»', 'Eliminar «Tarea 1»']) {
+      expect(card.queryByRole('button', { name })).toBeNull();
+    }
+    expect(card.getAllByRole('button').map((button) => button.textContent)).toEqual(['Guardar', 'Cancelar']);
+    expect(screen.getByRole('form', { name: 'Editar «Tarea 1»' }).classList).toContain('w-full');
+    expect(screen.getByRole('form', { name: 'Editar «Tarea 1»' }).classList).toContain('gap-3');
+    expect(editButton('Tarea 2')).toBeTruthy();
+    expect(card.getByText('Pendiente')).toBeTruthy();
+  });
+
+  it.each([
+    ['Cancelar', (title: string) => fireEvent.click(formOf(title).getByRole('button', { name: 'Cancelar' }))],
+    ['Escape', (title: string) => fireEvent.keyDown(titleField(title), { key: 'Escape' })],
+    ['Guardar sin cambios', (title: string) => fireEvent.click(saveButton(title))],
+  ])('RF-V10: al salir con %s vuelven los tres iconos y el foco va a Editar', async (_name, leave) => {
+    await setup([makeTask(1)]);
+    fireEvent.click(editButton('Tarea 1'));
+    leave('Tarea 1');
+    expect(hasForm('Tarea 1')).toBe(false);
+    expect(toggleButton('Tarea 1')).toBeTruthy();
+    expect(deleteButton('Tarea 1')).toBeTruthy();
+    expect(document.activeElement).toBe(editButton('Tarea 1'));
+  });
+
+  it('RF-V10: al guardar con éxito vuelven los tres iconos', async () => {
+    const { api } = await setup([makeTask(1)]);
+    fireEvent.click(editButton('Tarea 1'));
+    type(titleField('Tarea 1'), 'Nuevo');
+    fireEvent.click(saveButton('Tarea 1'));
     await answer(puts(api)[0], jsonResponse(200, {}));
     await waitFor(() => expect(lists(api)).toHaveLength(2));
-    await answer(lists(api)[1], jsonResponse(200, [{ ...task, completed: true }, makeTask(2)]));
-    expect(screen.getByText('Completada')).toBeTruthy();
-    expect(titleField('Tarea 1').value).toBe('Escrito');
+    expect(toggleButton('Tarea 1')).toBeTruthy();
+    expect(editButton('Tarea 1')).toBeTruthy();
+    expect(deleteButton('Tarea 1')).toBeTruthy();
+  });
 
-    fireEvent.click(deleteButton('Tarea 1'));
-    await answer(deletes(api)[0], new Response(null, { status: 204 }));
-    await waitFor(() => expect(lists(api)).toHaveLength(3));
-    await answer(lists(api)[2], jsonResponse(200, [makeTask(2)]));
-    expect(hasForm('Tarea 1')).toBe(false);
-    expect(screen.queryByText('Tarea 1')).toBeNull();
-    expect(screen.getByText('Tarea 2')).toBeTruthy();
+  it('RF-V11: al salir de la edición la tarjeta conserva si estaba expandida o plegada', async () => {
+    await setup([makeTask(1, { description: 'Desc 1' })]);
+    fireEvent.click(screen.getByRole('button', { name: 'Tarea 1' }));
+    fireEvent.click(editButton('Tarea 1'));
+    expect(descriptionField('Tarea 1').value).toBe('Desc 1');
+    fireEvent.click(formOf('Tarea 1').getByRole('button', { name: 'Cancelar' }));
+    expect(screen.getByRole('button', { name: 'Tarea 1' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Desc 1')).toBeTruthy();
   });
 
   it('RF-F12: si la tarea en edición desaparece tras un refresco, la edición se descarta', async () => {
@@ -305,12 +328,11 @@ describe('Editar en la propia tarjeta', () => {
       type(titleField('Tarea 1'), 'Escrito');
       fireEvent.click(saveButton('Tarea 1'));
       await answer(puts(api)[0], failure);
-      const alerts = await cardAround(editButton('Tarea 1')).findAllByRole('alert');
+      const alerts = await cardAround(titleField('Tarea 1')).findAllByRole('alert');
       expect(alerts.map((alert) => alert.textContent)).toEqual([expected]);
       expect(cardAround(editButton('Tarea 2')).queryByRole('alert')).toBeNull();
       expect(titleField('Tarea 1').value).toBe('Escrito');
       expect(saveButton('Tarea 1').getAttribute('aria-disabled')).toBe('false');
-      expect(toggleButton('Tarea 1').getAttribute('aria-disabled')).toBe('false');
       expect(lists(api)).toHaveLength(1);
       expect(refresh).not.toHaveBeenCalled();
       fireEvent.click(saveButton('Tarea 1'));

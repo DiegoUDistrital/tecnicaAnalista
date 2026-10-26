@@ -45,7 +45,7 @@ export function EditForm({ task, draft, busy, actions }: EditFormProps) {
     <form
       aria-label={`Editar «${task.title}»`}
       noValidate
-      className="flex flex-col gap-3"
+      className="flex w-full flex-col gap-3"
       onSubmit={submit}
       onKeyDown={keyDown}
     >

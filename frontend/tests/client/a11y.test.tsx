@@ -103,6 +103,10 @@ describe('Accesibilidad del cliente', () => {
     const card = screen.getByRole('article');
     expect(card.classList).toContain('wrap-anywhere');
     expect(card.classList).toContain('min-w-0');
+    const titleButton = screen.getByRole('button', { name: 'x'.repeat(100) });
+    expect(titleButton.classList).toContain('min-h-11');
+    expect(titleButton.classList).toContain('min-w-11');
+    fireEvent.click(titleButton);
     expect(screen.getByText('a\nb', { normalizer: (text) => text }).classList).toContain('whitespace-pre-wrap');
     expect(screen.getByRole('navigation', { name: 'Filtros' }).classList).toContain('flex-wrap');
     openPanel();
