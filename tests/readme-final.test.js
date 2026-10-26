@@ -311,3 +311,96 @@ describe('README final: despliegue en Ubuntu y pruebas', () => {
     expect(section('Comprobación manual')).toContain('| Paso | Qué se comprueba | Resultado | Observación |');
   });
 });
+
+describe('README final: decisiones, riesgos y trabajo futuro', () => {
+  const decisions = section('Decisiones técnicas');
+  /** Bloques `### D<n>. título` de la sección, con el título en minúsculas. */
+  const blocks = decisions
+    .split(/^(?=### D\d+\. )/m)
+    .filter((block) => block.startsWith('### D'))
+    .map((block) => ({ title: norm(block.split(/\r?\n/)[0] ?? '').replaceAll('`', ''), body: block }));
+
+  it('RF-R4: cada decisión tiene decisión, porqué y alternativa descartada', () => {
+    const required = [
+      'monorepo',
+      'solo express',
+      'tres roles',
+      'vista de conteos',
+      'prisma',
+      'pg y pool',
+      'server actions',
+      'api key',
+      'rate limiting',
+      'cupo compartido',
+      'defensa de origen',
+      'redis',
+      'login',
+      'índice',
+      'despliegue',
+    ];
+    for (const keyword of required) {
+      expect(
+        blocks.some((b) => b.title.includes(keyword)),
+        `decisión «${keyword}»`,
+      ).toBe(true);
+    }
+    expect(blocks.length, 'decisiones numeradas').toBeGreaterThanOrEqual(required.length);
+    for (const block of blocks) {
+      for (const label of ['- **Decisión:** ', '- **Porqué:** ', '- **Alternativa descartada:** ']) {
+        expect(block.body, `${block.title}: ${label}`).toContain(label);
+      }
+    }
+  });
+
+  it('RF-R4: el despliegue recoge etiquetas, standalone, red interna, owner y el código 143', () => {
+    const deploy = norm(blocks.find((b) => b.title.includes('despliegue'))?.body ?? '');
+    for (const piece of [
+      'etiqueta',
+      'node:26.1.0-bookworm-slim',
+      'postgres:16.15',
+      'standalone',
+      'red interna',
+      'owner',
+      'cap_drop',
+      'no-new-privileges',
+      '143',
+    ]) {
+      expect(deploy, piece).toContain(piece);
+    }
+  });
+
+  it('RF-R4: una sola sección «Riesgos residuales y limitaciones» con los riesgos que el proyecto asume', () => {
+    const headings = raw.split(/\r?\n/).filter((line) => /^#{1,6} .*riesgos residuales/i.test(line));
+    expect(headings, 'un solo encabezado').toEqual(['## Riesgos residuales y limitaciones']);
+    const risks = norm(section('Riesgos residuales y limitaciones'));
+    for (const piece of [
+      'cupo compartido',
+      'sin login',
+      'ubuntu',
+      'documentados, no probados',
+      '4 cumple, 6 parcial y 10 no ejecutado',
+      '2, 5, 6, 8, 9, 12, 13, 16, 18 y 19',
+      'https',
+      'ventana fija',
+      'memoria',
+    ]) {
+      expect(risks, piece).toContain(piece);
+    }
+    expect(readme, 'sin la fórmula contradictoria').not.toContain('10 de 20 ejecutados');
+    expect(norm(section('Despliegue en Ubuntu')), 'Ubuntu enlaza la sección').toContain(
+      '«riesgos residuales y limitaciones»',
+    );
+  });
+
+  it('RF-R4: existe «Trabajo futuro» (con Redis)', () => {
+    const future = norm(section('Trabajo futuro'));
+    expect(future).toContain('redis');
+    expect(future).toContain('login');
+    expect(future).toContain('https');
+  });
+
+  it('RF-R4: las decisiones o) y p) están separadas por una línea en blanco', () => {
+    expect(raw).not.toMatch(/\n\*\*[a-z]\) [^\n]*\n\*\*[a-z]\) /);
+    expect(raw).not.toMatch(/\n(?:- )?\*\*Decisión:\*\*[^\n]*\n\*\*D\d/);
+  });
+});
