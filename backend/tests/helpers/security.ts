@@ -22,6 +22,9 @@ export function testProxies(raw: string | undefined): TrustedProxies {
 /** Origen permitido de la app de pruebas (el valor provisional de `.env.example`). */
 export const TEST_CORS_ORIGIN = 'http://localhost:3000';
 
+/** Tope de la lista de la app de pruebas: el valor por defecto de `TASKS_LIST_LIMIT`. */
+export const TEST_TASKS: AppConfig['tasks'] = { listLimit: 1000 };
+
 /**
  * Cupos de la app de pruebas: tan altos que ningún test que no trate de los límites puede recibir un 429 (los tests
  * de límites piden valores pequeños explícitos). Los intentos fallidos también: 1000, para que un test que mande

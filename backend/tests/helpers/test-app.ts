@@ -4,7 +4,7 @@ import type { AppConfig } from '../../src/config/config';
 import type { Database } from '../../src/db/pool';
 import type { Logger } from '../../src/logging/logger';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
-import { testSecurity, withTestKey } from './security';
+import { TEST_TASKS, testSecurity, withTestKey } from './security';
 
 export interface TestAppOptions {
   /** Rutas de prueba que se registran antes del 404 final y del manejador central. */
@@ -15,6 +15,8 @@ export interface TestAppOptions {
   database?: Database;
   /** Ajustes de seguridad; por defecto `testSecurity()`. */
   security?: AppConfig['security'];
+  /** Ajustes de la lista de tareas; por defecto `TEST_TASKS` (tope 1000). */
+  tasks?: AppConfig['tasks'];
 }
 
 export interface TestApp {
@@ -36,6 +38,8 @@ export interface BuildTestAppOptions {
   registerRoutes?: (app: Express) => void;
   /** Ajustes de seguridad; por defecto `testSecurity()` (key válida, sin proxies de confianza, cupos altos). */
   security?: AppConfig['security'];
+  /** Ajustes de la lista de tareas; por defecto `TEST_TASKS` (tope 1000). */
+  tasks?: AppConfig['tasks'];
 }
 
 /**
@@ -48,6 +52,7 @@ export function buildTestApp(options: BuildTestAppOptions): ShutdownApp {
       logger: options.logger,
       database: options.database,
       security: options.security ?? testSecurity(),
+      tasks: options.tasks ?? TEST_TASKS,
       ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
     }),
   );
@@ -60,6 +65,7 @@ export function createTestApp(options: TestAppOptions = {}): TestApp {
     logger: capture.logger,
     database: options.database ?? unusedDatabase(),
     ...(options.security === undefined ? {} : { security: options.security }),
+    ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
     ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
   });
   return { app, capture };

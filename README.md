@@ -384,6 +384,7 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `RATE_LIMIT_POST_MAX` | entero 1-10000, no mayor que `RATE_LIMIT_MAX` | `20` | Cupo de `POST` por IP y ventana (ver «Límite de peticiones»). |
 | `RATE_LIMIT_AUTH_FAILURES_MAX` | entero 1-1000, no mayor que `RATE_LIMIT_MAX` | `10` | Intentos fallidos de key por IP y ventana antes de bloquear la IP (ver «Bloqueo por intentos fallidos»). |
 | `CORS_ORIGIN` | un origen canónico `http(s)://host[:puerto]` | (obligatoria) | Único origen del navegador que recibe `Access-Control-Allow-Origin` (ver «CORS»). |
+| `TASKS_LIST_LIMIT` | entero 1-10000 | `1000` | Máximo de tareas que devuelve `GET /api/tasks`, las más recientes (ver «Tope de la lista»). |
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 
@@ -462,7 +463,8 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
   de la zona horaria de la sesión.
 - Hay dos consultas de lista (con y sin filtro `completed`) en lugar de una con condición opcional, para que
   PostgreSQL pueda usar el índice sobre `completed`.
-- La lista no tiene paginación: devuelve todas las tareas.
+- La lista no tiene paginación y devuelve como máximo `TASKS_LIST_LIMIT` tareas, las más recientes (ver «Tope de la
+  lista»). El tope viaja como último parámetro de un `LIMIT`.
 - Actualizar y borrar una tarea son UNA sola sentencia SQL cada una, sin consulta previa. La existencia se decide por las
   filas afectadas: un `DELETE` que borra una fila es un éxito y uno que no encuentra nada es «no existe». Por eso dos
   borrados simultáneos de la misma tarea dan un éxito y un «no existe», y una actualización concurrente con un borrado
@@ -484,8 +486,9 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 
 ### `GET /api/tasks`
 
-Devuelve `200` con un arreglo JSON de todas las tareas, de la más reciente a la más antigua (con desempate por `id`),
-o `[]` si no hay ninguna. No hay paginación. Cada tarea tiene exactamente cinco campos:
+Devuelve `200` con un arreglo JSON con las tareas más recientes (hasta `TASKS_LIST_LIMIT`, ver «Tope de la lista»), de
+la más reciente a la más antigua (con desempate por `id`), o `[]` si no hay ninguna. No hay paginación. Cada tarea
+tiene exactamente cinco campos:
 
 ```json
 {
@@ -516,6 +519,23 @@ Filtro opcional `?completed=true` (solo completadas) o `?completed=false` (solo 
   todos los parámetros, también más allá del 1 000. Alternativa descartada: usar la consulta ya interpretada (falsos
   negativos silenciosos).
 - `GET` no admite cuerpo (400 `body`) y se aplican las reglas de «Entrada de la API».
+
+#### Tope de la lista
+
+`GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (1000 por defecto; entero de 1 a 10000, validado al
+arrancar). Son las más recientes según el orden de siempre (`createdAt` descendente y `id` ascendente), y el tope se
+aplica DESPUÉS del filtro: con `?completed=false` son las N pendientes más recientes. La respuesta sigue siendo un
+arreglo de cinco campos con `200`; no hay cabeceras nuevas.
+
+- Alternativa descartada: paginación. Cambia el contrato (parámetros, respuesta con total) y obliga a rehacer el
+  frontend; el tope protege al servidor con un cambio mínimo.
+- El tope no es una medida de seguridad contra escrituras: la tabla puede seguir creciendo (el cupo de `POST` frena el
+  ritmo, no el total).
+- Limitación: el listado ya no es completo y NO avisa de que está truncado. Los contadores del frontend (que leen el
+  total real de la base de datos) pueden mostrar más tareas de las que lista la API; el frontend lo avisará.
+- Coste: ordenar y quedarse con las N más recientes cuesta O(n) sobre la tabla (PostgreSQL ordena todas las filas
+  candidatas y se queda con las N primeras: top-N). Un índice por fecha (`createdAt DESC, id`) sería la mejora si la
+  tabla creciera mucho; hoy no se añade porque el tope acota lo que se envía, no lo que se lee.
 
 ### `POST /api/tasks`
 
@@ -933,8 +953,8 @@ healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
 Aviso de seguridad: el servicio escucha solo en loopback y la API exige API key (`API_KEY` en el `.env`, ver
 «Seguridad: API key»); limita las peticiones por IP (ver «Límite de peticiones»), pero todavía NO tiene bloqueo por intentos fallidos, CORS ni
-tope de la lista. No debe exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve la lista completa, que
-crece sin cota, y quien tenga la key puede crear, modificar y borrar tareas.
+tope de la lista. No debe exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve como máximo
+`TASKS_LIST_LIMIT` tareas (ver «Tope de la lista»), y quien tenga la key puede crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -1077,7 +1097,8 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
 - Seguridad incompleta: hay API key, cabeceras de `helmet` y límite de peticiones por IP, pero todavía no hay bloqueo
   por intentos fallidos, CORS ni tope de la lista. No debe exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las
   personas.
-- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota). Los contadores de peticiones viven en la memoria
+- `GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (las más recientes, sin paginación) y no avisa de que
+  la lista está truncada; la tabla puede seguir creciendo (ver «Tope de la lista»). Los contadores de peticiones viven en la memoria
   de una sola instancia: se pierden al reiniciar y no se comparten entre instancias.
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición

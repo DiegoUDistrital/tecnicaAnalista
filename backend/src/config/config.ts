@@ -26,6 +26,10 @@ export interface AppConfig {
     /** Único origen del navegador al que se permite leer las respuestas (CORS), en su forma canónica. */
     corsOrigin: string;
   };
+  tasks: {
+    /** Máximo de tareas que devuelve `GET /api/tasks` (las más recientes, después del filtro). */
+    listLimit: number;
+  };
 }
 
 type VariableSpec =
@@ -55,6 +59,7 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'RATE_LIMIT_POST_MAX', kind: 'int', min: 1, max: 10000, fallback: 20 },
   { name: 'RATE_LIMIT_AUTH_FAILURES_MAX', kind: 'int', min: 1, max: 1000, fallback: 10 },
   { name: 'CORS_ORIGIN', kind: 'cors-origin' },
+  { name: 'TASKS_LIST_LIMIT', kind: 'int', min: 1, max: 10000, fallback: 1000 },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -223,5 +228,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       },
       corsOrigin: String(values.get('CORS_ORIGIN')),
     },
+    tasks: { listLimit: Number(values.get('TASKS_LIST_LIMIT')) },
   };
 }

@@ -16,7 +16,7 @@ function defaultDeps(): ServerDeps {
     logger: createLogger((line) => process.stdout.write(line)),
     createDatabase: (config, logger) => createPool({ connectionString: config.databaseUrl, ...config.pool }, logger),
     createServer: (logger, database, config) => {
-      const app = createApp({ logger, database, security: config.security });
+      const app = createApp({ logger, database, security: config.security, tasks: config.tasks });
       const server = http.createServer(app);
       // Al cerrar el servidor se liberan los almacenes de los cupos: sus temporizadores no deben retener el proceso.
       server.once('close', app.shutdown);

@@ -22,6 +22,8 @@ export interface CreateAppOptions {
   database: Database;
   /** Ajustes de seguridad de la configuración: la API key (toda ruta salvo `/health`), la IP real y los cupos. */
   security: AppConfig['security'];
+  /** Ajustes de la lista de tareas: el tope de filas de `GET /api/tasks`. */
+  tasks: AppConfig['tasks'];
   /** Costura SOLO para tests: registra rutas extra antes del manejador central. */
   registerRoutes?: (app: Express) => void;
 }
@@ -72,7 +74,8 @@ export function createApp(options: CreateAppOptions): ShutdownApp {
     }),
   );
   app.use(limiters.post);
-  registerTaskRoutes(app, createTaskController(createTaskService(createTaskRepository(options.database))), catalog);
+  const taskService = createTaskService(createTaskRepository(options.database), options.tasks.listLimit);
+  registerTaskRoutes(app, createTaskController(taskService), catalog);
   options.registerRoutes?.(app);
   app.use((_req, _res, next) => {
     next(new HttpError(404));

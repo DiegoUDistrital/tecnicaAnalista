@@ -163,6 +163,7 @@ describe('RF-D1: mensajes sin valores y orden', () => {
         rateLimit: { windowMs: 900000, max: 100, postMax: 20, authFailuresMax: 10 },
         corsOrigin: TEST_CORS_ORIGIN,
       },
+      tasks: { listLimit: 1000 },
     });
   });
 });
@@ -515,5 +516,30 @@ describe('RF-G15: CORS_ORIGIN', () => {
     const message = messageOf(baseEnv({ CORS_ORIGIN: '*', PORT: '0' }));
 
     expect(message).toBe(`PORT: entero inválido o fuera de rango; ${INVALIDA}`);
+  });
+});
+
+describe('RF-G12 y RF-G17: TASKS_LIST_LIMIT', () => {
+  const INVALIDA = 'TASKS_LIST_LIMIT: entero inválido o fuera de rango';
+
+  it.each(['0', '10001', '', 'abc', '-1', '1.5', '01', ' 5', '1e3'])('RF-G12: TASKS_LIST_LIMIT rechaza %j', (value) => {
+    expect(messageOf(baseEnv({ TASKS_LIST_LIMIT: value }))).toBe(INVALIDA);
+  });
+
+  it.each(['1', '1000', '10000'])(
+    'RF-G12: TASKS_LIST_LIMIT %s es válida y llega a AppConfig.tasks.listLimit',
+    (value) => {
+      expect(loadConfig(baseEnv({ TASKS_LIST_LIMIT: value })).tasks.listLimit).toBe(Number(value));
+    },
+  );
+
+  it('RF-G17: TASKS_LIST_LIMIT ausente vale 1000', () => {
+    expect(loadConfig(baseEnv()).tasks.listLimit).toBe(1000);
+  });
+
+  it('RF-G12: una TASKS_LIST_LIMIT inválida se nombra junto con las demás inválidas', () => {
+    expect(messageOf(baseEnv({ TASKS_LIST_LIMIT: '0', PORT: '0' }))).toBe(
+      `PORT: entero inválido o fuera de rango; ${INVALIDA}`,
+    );
   });
 });

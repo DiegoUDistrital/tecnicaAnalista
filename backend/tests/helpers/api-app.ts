@@ -1,4 +1,5 @@
 import type { Express } from 'express';
+import type { AppConfig } from '../../src/config/config';
 import { createPool, type Database } from '../../src/db/pool';
 import type { Logger } from '../../src/logging/logger';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
@@ -12,6 +13,8 @@ export interface ApiAppOptions {
   /** Base de datos de la app; si falta se usa un Pool real del rol writer sobre la BD de pruebas. */
   database?: Database;
   registerRoutes?: (app: Express) => void;
+  /** Ajustes de la lista de tareas (tope); por defecto el de `createTestApp`. */
+  tasks?: AppConfig['tasks'];
 }
 
 export interface ApiApp {
@@ -53,6 +56,7 @@ export async function startApiApp(options: ApiAppOptions = {}): Promise<ApiApp> 
   const { app } = createTestApp({
     capture,
     database,
+    ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
     ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
   });
   return { app, capture, database, close: () => database.close() };

@@ -122,6 +122,16 @@ describe('RF-D2: .env.example', () => {
   });
 });
 
+describe('RF-G12: TASKS_LIST_LIMIT en .env.example', () => {
+  it('RF-G12: TASKS_LIST_LIMIT figura con el defecto 1000 y un comentario sobre el tope de la lista', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('TASKS_LIST_LIMIT');
+    expect(values['TASKS_LIST_LIMIT']).toBe('1000');
+    const comment = /((?:^#.*\r?\n)+)TASKS_LIST_LIMIT=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain('10000');
+    expect(comment).toContain('recientes');
+  });
+});
+
 describe('RF-G15: CORS_ORIGIN en .env.example', () => {
   it('RF-G15: CORS_ORIGIN figura con el valor provisional, es válida y su comentario explica el formato', () => {
     expect(CONFIG_VARIABLE_NAMES).toContain('CORS_ORIGIN');

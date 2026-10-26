@@ -28,8 +28,11 @@ export interface TaskRepository {
   update(id: string, changes: TaskChanges): Promise<TaskRow | undefined>;
   /** Borra la tarea. Devuelve `true` si había una fila y `false` si no existía. */
   remove(id: string): Promise<boolean>;
-  /** Lista de la más reciente a la más antigua; con `completed` solo las completadas o solo las pendientes. */
-  list(completed?: boolean): Promise<TaskRow[]>;
+  /**
+   * Las `limit` tareas más recientes, de la más reciente a la más antigua; con `completed` solo las completadas o
+   * solo las pendientes (el tope se aplica después del filtro). El tope es obligatorio: no hay valor por defecto.
+   */
+  list(completed: boolean | undefined, limit: number): Promise<TaskRow[]>;
 }
 
 // `date_trunc` trunca (no redondea) y `AT TIME ZONE 'UTC'` hace el texto independiente de la zona de la sesión.
@@ -43,8 +46,9 @@ const COLUMNS = `id, title, description, completed,
 const ORDER = `ORDER BY tasks."createdAt" DESC, tasks.id ASC`;
 
 const INSERT_SQL = `INSERT INTO tasks (title, description) VALUES ($1, $2) RETURNING ${COLUMNS}`;
-const LIST_SQL = `SELECT ${COLUMNS} FROM tasks ${ORDER}`;
-const LIST_BY_COMPLETED_SQL = `SELECT ${COLUMNS} FROM tasks WHERE completed = $1 ${ORDER}`;
+// El tope siempre es el ÚLTIMO parámetro: `$1` sin filtro y `$2` con filtro.
+const LIST_SQL = `SELECT ${COLUMNS} FROM tasks ${ORDER} LIMIT $1`;
+const LIST_BY_COMPLETED_SQL = `SELECT ${COLUMNS} FROM tasks WHERE completed = $1 ${ORDER} LIMIT $2`;
 
 const DELETE_SQL = 'DELETE FROM tasks WHERE id = $1';
 
@@ -89,11 +93,11 @@ export function createTaskRepository(database: Pick<Database, 'query'>): TaskRep
       // `rowCount` puede ser null en pg: solo `1` cuenta como «había una fila».
       return result.rowCount === 1;
     },
-    async list(completed?: boolean): Promise<TaskRow[]> {
+    async list(completed: boolean | undefined, limit: number): Promise<TaskRow[]> {
       const result =
         completed === undefined
-          ? await database.query<TaskRow>(LIST_SQL)
-          : await database.query<TaskRow>(LIST_BY_COMPLETED_SQL, [completed]);
+          ? await database.query<TaskRow>(LIST_SQL, [limit])
+          : await database.query<TaskRow>(LIST_BY_COMPLETED_SQL, [completed, limit]);
       return result.rows;
     },
   };
