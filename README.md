@@ -128,7 +128,7 @@ Ejemplo: el usuario completa una tarea.
 - `backend/queries.sql`: consultas SQL de la prueba.
 - `scripts/`: arranque conjunto (`npm run dev`) y sus ayudantes.
 - `integration/`: pruebas con procesos reales (`npm run test:integration`).
-- `tests/`: pruebas de los scripts de la raíz y del contenido de este README y de `docs-tecnicos/`.
+- `tests/` (raíz): solo la prueba del entorno cerrado (`closed-env`). Las pruebas de integración están en `integration/`.
 - `docs-tecnicos/`: referencia técnica enlazada desde este README (ver «Documentación técnica»).
 - `.env.example`: plantilla de variables de entorno (el `.env` real no se sube).
 
@@ -196,7 +196,7 @@ carpeta indicada (`backend/`, `frontend/` o la raíz).
 | ------------------------------------------------ | --------------------------------------------- | ----------------------------------------- |
 | Unitarias, API (Supertest), base de datos y procesos del backend | `backend/tests/` | `npm test` (en `backend/`)        |
 | Servidor y componentes del frontend              | `frontend/tests/`                             | `npm test` (en `frontend/`)               |
-| Scripts del arranque conjunto                    | `tests/` (raíz)                               | `npm test` (en la raíz)                   |
+| Arranque conjunto (validación de variables)      | `integration/dev-invalid-env.integration.test.js` | `npm run test:integration` (en la raíz) |
 | Procesos reales (Express sustituto y `next start`) | `integration/` (raíz)                       | `npm run test:integration` (en la raíz)   |
 | Calidad de código                                | los tres paquetes                             | `npm run lint` y `npm run typecheck`      |
 | Compilación                                      | `backend/` y `frontend/`                      | `npm run build`                           |
