@@ -72,12 +72,12 @@ describe('documentación de la 007 (README y .env.example)', () => {
     ]);
   });
 
-  it('RF-I9: el README tiene la sección del cupo compartido por diseño con porqué, alternativas, riesgo y proxy', () => {
+  it('RF-I9: el README tiene la sección del cupo compartido (porqué, alternativas, riesgo y proxy)', () => {
     expectAll(readme, [
       '## cupo compartido por diseño (desviación declarada)',
       'alternativas descartadas',
       'riesgo aceptado',
-      'servidor propio',
+      'servidor node propio',
       'proxy de confianza',
       'rate_limit_max',
       'rate_limit_post_max',
