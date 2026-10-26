@@ -897,6 +897,16 @@ cd backend
 npm ci
 ```
 
+La raíz del repositorio tiene su propio `package.json`, solo con herramientas de desarrollo (Vitest, ESLint, Prettier,
+TypeScript y `@types/node`, todas con versión exacta). Sirve para escribir y comprobar los scripts de la raíz
+(`scripts/`) con las mismas garantías que el resto: desde la raíz se ejecutan `npm run lint`, `npm run format`, `npm run typecheck` y `npm test` (con cobertura mínima
+del 95 % sobre `scripts/`). Los comandos `npm run dev` (arranque conjunto) y `npm run test:integration` (pruebas con
+procesos reales) se añadirán a esta lista cuando existan. Se instala con `npm ci` en la raíz.
+
+Por qué un `package.json` propio: una sola forma de comprobar los scripts y ninguna herramienta extra para lanzar
+procesos (no se usa `concurrently`). Alternativa descartada: reutilizar las herramientas del frontend, porque ataría los
+scripts de la raíz a un paquete que no les pertenece.
+
 ## Arranque
 
 La función de arranque del servicio sigue siempre el mismo orden:

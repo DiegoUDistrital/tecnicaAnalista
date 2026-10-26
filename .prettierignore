@@ -1,0 +1,14 @@
+backend
+frontend
+docs
+specs
+docker
+.github
+.claude
+*.md
+*.pdf
+.env*
+package-lock.json
+coverage
+node_modules
+docker-compose*.yml
