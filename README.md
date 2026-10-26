@@ -976,10 +976,13 @@ El frontend se documenta en «Frontend (estado actual)».
 
 ## Frontend (estado actual)
 
-El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Por ahora solo
-tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad, las herramientas de
-calidad, la configuración propia (ver «Configuración del frontend») y la lectura de los contadores (ver «Contadores y
-Prisma en el frontend»). Las rutas del servidor hacia Express ya existen (ver «Rutas del servidor del frontend»); la lista interactiva de tareas aún no.
+El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Hoy ya tiene
+la página principal con el filtro en la URL (`/?filter=completed|pending`) y los contadores de tareas, leídos en el
+servidor con Prisma y el rol `reader` (ver «Contadores y Prisma en el frontend»). También tiene las rutas
+`/api/tasks` y `/api/tasks/<id>`, que reenvían las peticiones a Express con la API key solo en el servidor (ver
+«Rutas del servidor del frontend»). Aún no tiene la interfaz interactiva (lista, crear, completar, editar y borrar):
+llega en una fase posterior. La configuración propia (ver «Configuración del frontend»), las cabeceras de
+seguridad y las herramientas de calidad se describen en las secciones siguientes.
 
 ### Comandos
 
