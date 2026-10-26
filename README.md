@@ -878,7 +878,7 @@ milisegundos y en UTC, y la lista se ordena por la marca completa. Así la hora 
 guardada y el orden no depende de la zona horaria ni del redondeo. Alternativa descartada: formatear en JavaScript
 con `Date` (redondea y pierde el orden fino).
 
-**n) Orden fijo de validación.** Ocho etapas: ruta y método, tamaño, codificación y tipo, cuerpo, identificador,
+**n) Orden fijo de validación.** Ocho etapas, tras la etapa 0 de la API key (ver más abajo): ruta y método, tamaño, codificación y tipo, cuerpo, identificador,
 consulta y campos, existencia de la tarea, base de datos (ver «Orden de comprobación de una petición»): el resultado
 de una petición con varios fallos es siempre el mismo, un `400` gana a un `404` y una base de datos caída nunca tapa un
 error de validación. Solo la etapa de consulta y campos acumula problemas.
