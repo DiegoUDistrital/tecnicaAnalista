@@ -77,7 +77,7 @@ export function EditForm({ task, draft, busy, actions }: EditFormProps) {
         </button>
       </div>
       {draft.errors.general === undefined ? null : (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-red-800">
           {draft.errors.general}
         </p>
       )}

@@ -65,7 +65,7 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
     <form
       aria-label="Nueva tarea"
       noValidate
-      className="mb-6 flex flex-col gap-3"
+      className="mb-6 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
       onSubmit={(event) => {
         void submit(event);
       }}
@@ -96,7 +96,7 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
         Crear tarea
       </button>
       {errors.general === undefined ? null : (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-red-800">
           {errors.general}
         </p>
       )}

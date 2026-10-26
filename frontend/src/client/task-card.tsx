@@ -2,7 +2,7 @@ import { memo } from 'react';
 import type { Task } from '../lib/task';
 import { formatCreatedAt } from '../lib/task-date';
 import type { Editing } from '../lib/task-ui-state';
-import { BTN_DANGER, BTN_SECONDARY } from '../lib/ui-classes';
+import { BTN_ICON, BTN_ICON_DANGER } from '../lib/ui-classes';
 import { EditForm, type EditActions } from './edit-form';
 import { CheckIcon, PencilIcon, TrashIcon } from './icons';
 
@@ -40,48 +40,75 @@ export const TaskCard = memo(function TaskCard({
   registerToggle,
 }: TaskCardProps) {
   return (
-    <article data-task-id={task.id} className="wrap-anywhere min-w-0 rounded border p-3">
-      {editing !== undefined && editActions !== undefined ? (
-        <EditForm task={task} draft={editing} busy={busy} actions={editActions} />
-      ) : (
-        <>
-          <h3 className="font-semibold">{task.title}</h3>
-          {task.description === '' ? null : <p className="whitespace-pre-wrap text-sm">{task.description}</p>}
-        </>
-      )}
-      <p className="text-xs text-gray-600">
-        <time dateTime={task.createdAt}>{formatCreatedAt(task.createdAt, timeZone)}</time>
-      </p>
-      <p className="text-sm">{task.completed ? 'Completada' : 'Pendiente'}</p>
-      {/* Nombre accesible fijo (no cambia con el estado); `aria-pressed` dice si está completada. */}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          aria-pressed={task.completed}
-          aria-disabled={busy}
-          ref={(element) => registerToggle?.(task.id, element)}
-          onClick={() => onToggle?.(task)}
-          className={`${BTN_SECONDARY} text-left`}
-        >
-          <CheckIcon />
-          {`Marcar «${task.title}» como completada`}
-        </button>
-        <button
-          type="button"
-          ref={(element) => editActions?.registerButton(task.id, element)}
-          onClick={() => editActions?.open(task)}
-          className={BTN_SECONDARY}
-        >
-          <PencilIcon />
-          {`Editar «${task.title}»`}
-        </button>
-        <button type="button" aria-disabled={busy} onClick={() => onDelete?.(task)} className={BTN_DANGER}>
-          <TrashIcon />
-          {`Eliminar «${task.title}»`}
-        </button>
+    <article
+      data-task-id={task.id}
+      className={`wrap-anywhere min-w-0 rounded-xl border border-slate-200 p-4 shadow-sm ${
+        task.completed ? 'bg-slate-50' : 'bg-white'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          {editing !== undefined && editActions !== undefined ? (
+            <EditForm task={task} draft={editing} busy={busy} actions={editActions} />
+          ) : (
+            <>
+              <h3 className={`text-base font-semibold ${task.completed ? 'text-slate-500 line-through' : ''}`}>
+                {task.title}
+              </h3>
+              {task.description === '' ? null : (
+                <p className="whitespace-pre-wrap text-sm text-slate-700">{task.description}</p>
+              )}
+            </>
+          )}
+          <p className="text-xs text-slate-600">
+            <time dateTime={task.createdAt}>{formatCreatedAt(task.createdAt, timeZone)}</time>
+          </p>
+          <p
+            className={`w-fit rounded-full px-2 text-xs font-medium ${
+              task.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'
+            }`}
+          >
+            {task.completed ? 'Completada' : 'Pendiente'}
+          </p>
+        </div>
+        {/* Nombre accesible fijo (no cambia con el estado); `aria-pressed` dice si está completada. */}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          <button
+            type="button"
+            aria-pressed={task.completed}
+            aria-disabled={busy}
+            ref={(element) => registerToggle?.(task.id, element)}
+            onClick={() => onToggle?.(task)}
+            title={`Marcar «${task.title}» como completada`}
+            className={BTN_ICON}
+          >
+            <CheckIcon />
+            <span className="sr-only">{`Marcar «${task.title}» como completada`}</span>
+          </button>
+          <button
+            type="button"
+            ref={(element) => editActions?.registerButton(task.id, element)}
+            onClick={() => editActions?.open(task)}
+            title={`Editar «${task.title}»`}
+            className={BTN_ICON}
+          >
+            <PencilIcon />
+            <span className="sr-only">{`Editar «${task.title}»`}</span>
+          </button>
+          <button
+            type="button"
+            aria-disabled={busy}
+            onClick={() => onDelete?.(task)}
+            title={`Eliminar «${task.title}»`}
+            className={BTN_ICON_DANGER}
+          >
+            <TrashIcon />
+            <span className="sr-only">{`Eliminar «${task.title}»`}</span>
+          </button>
+        </div>
       </div>
       {error === undefined ? null : (
-        <p role="alert" className="mt-2 text-sm text-red-700">
+        <p role="alert" className="mt-2 text-sm text-red-800">
           {error}
         </p>
       )}

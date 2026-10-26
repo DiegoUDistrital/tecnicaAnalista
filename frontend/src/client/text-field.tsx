@@ -41,11 +41,11 @@ export function TextField({ label, value, onChange, error, max, multiline = fals
       ) : (
         <input {...common} type="text" onChange={(event) => onChange(event.target.value)} />
       )}
-      <span id={counterId} className="text-xs text-gray-600">
+      <span id={counterId} className="text-xs text-slate-600">
         {`${countCodePoints(trimText(value))}/${max}`}
       </span>
       {error === undefined ? null : (
-        <p id={errorId} role="alert" className="text-sm text-red-700">
+        <p id={errorId} role="alert" className="text-sm text-red-800">
           {error}
         </p>
       )}

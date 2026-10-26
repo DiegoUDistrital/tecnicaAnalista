@@ -15,8 +15,16 @@ export const BTN_PRIMARY = `${BTN_BASE} border-indigo-600 bg-indigo-600 text-whi
 /** Acción secundaria (Editar, Cancelar, Reintentar, Marcar). */
 export const BTN_SECONDARY = `${BTN_BASE} border-slate-300 bg-white text-slate-800 hover:bg-slate-100`;
 
-/** Acción destructiva (Eliminar): discreta, en rojo. */
-export const BTN_DANGER = `${BTN_BASE} border-red-300 bg-white text-red-700 hover:bg-red-50`;
+/** Botón solo icono de la tarjeta (el texto va en un `sr-only`): redondo, sin borde, con fondo al pasar el ratón. */
+const ICON_BASE =
+  'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full ' +
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ' +
+  'aria-disabled:cursor-not-allowed aria-disabled:opacity-60';
+
+export const BTN_ICON = `${ICON_BASE} text-slate-700 hover:bg-slate-100`;
+
+/** Botón solo icono destructivo (Eliminar): rojo y separado de los demás. */
+export const BTN_ICON_DANGER = `${ICON_BASE} ml-2 text-red-700 hover:bg-red-50`;
 
 /** Campo de texto y área de texto. */
 export const FIELD =

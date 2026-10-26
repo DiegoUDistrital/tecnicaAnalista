@@ -18,7 +18,9 @@ const EMPTY_TEXT: Record<TaskFilter, string> = {
   completed: 'No hay tareas completadas.',
   pending: 'No hay tareas pendientes.',
 };
-const ALERT_CLASS = 'mt-3 flex flex-wrap items-center gap-3 rounded border border-red-300 p-3 text-sm text-red-700';
+const ALERT_CLASS =
+  'mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800';
+const SKELETON_ROWS = [0, 1, 2];
 
 /**
  * Lista de tareas del filtro recibido. El padre no se desmonta al cambiar de filtro (lo garantiza la página), así que
@@ -85,7 +87,7 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
           Tareas
         </h2>
         <div role="status" aria-live="polite" className="text-sm">
-          {status === 'loading' ? <p>{LOADING_TEXT}</p> : null}
+          {status === 'loading' ? <p className="sr-only">{LOADING_TEXT}</p> : null}
           {ui.notice === undefined ? null : <p>{ui.notice}</p>}
           {truncated ? <p>{`Mostrando las ${tasks.length} tareas más recientes de ${total}.`}</p> : null}
         </div>
@@ -107,7 +109,18 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
             </button>
           </div>
         ) : null}
-        {status === 'ready' && tasks.length === 0 ? <p className="mt-3">{EMPTY_TEXT[filter]}</p> : null}
+        {status === 'loading' && tasks.length === 0 ? (
+          <div aria-hidden="true" className="mt-3 flex flex-col gap-3">
+            {SKELETON_ROWS.map((row) => (
+              <div key={row} className="h-24 animate-none rounded-xl bg-slate-200" />
+            ))}
+          </div>
+        ) : null}
+        {status === 'ready' && tasks.length === 0 ? (
+          <p className="mt-3 rounded-xl border border-dashed border-slate-300 p-6 text-center text-slate-600">
+            {EMPTY_TEXT[filter]}
+          </p>
+        ) : null}
         {tasks.length > 0 ? (
           <ul className="mt-3 flex flex-col gap-3">
             {tasks.map((task) => (

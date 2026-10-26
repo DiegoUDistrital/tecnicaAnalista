@@ -279,7 +279,8 @@ describe('CreateForm: crear una tarea', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(screen.getByText('Mostrando las 1000 tareas más recientes de 1200.')).toBeTruthy());
-  });
+    // Pinta 1000 tarjetas varias veces: con las tarjetas con más elementos (006c) 5 s no bastan bajo carga.
+  }, 20_000);
 
   it('RF-F9: si se desmonta durante el envío el POST no se cancela y no se pide la lista ni se refresca', async () => {
     const { api, unmount } = await setup();
