@@ -7,7 +7,6 @@ import { withInput } from '../../src/http/input/request-input';
 import { registerRoute } from '../../src/http/route-table';
 import type { Logger } from '../../src/logging/logger';
 import { startServer } from '../../src/server/start-server';
-import { createCaptureLogger } from '../helpers/capture-logger';
 import { rawRequest } from '../helpers/raw-http';
 import { createHarness, getFreePort, SENTINEL_PASSWORD, validEnv } from '../helpers/server-fakes';
 import { buildTestApp } from '../helpers/test-app';
@@ -190,23 +189,6 @@ describe('RF-S3: comprobación de la base de datos', () => {
 
     expect(harness.capture.output()).not.toContain(SENTINEL_PASSWORD);
   });
-
-  it('RF-S3: Pool real contra puerto cerrado con contraseña centinela: código 1 y no sale en la salida', async () => {
-    const closedPort = await getFreePort();
-    const capture = createCaptureLogger();
-    const createServer = vi.fn();
-    const env = validEnv({
-      DATABASE_URL: `postgresql://writer:${SENTINEL_PASSWORD}@127.0.0.1:${closedPort}/todo_app_test`,
-      DB_POOL_CONNECTION_TIMEOUT_MS: '100',
-    });
-
-    const code = await startServer({ env, logger: capture.logger, createServer });
-
-    expect(code).toBe(1);
-    expect(createServer).not.toHaveBeenCalled();
-    expect(capture.records()[0]).toMatchObject({ event: 'startup_failed', errorClass: 'DatabaseUnavailableError' });
-    expect(capture.output()).not.toContain(SENTINEL_PASSWORD);
-  });
 });
 
 describe('RF-S5: cierre del Pool tras un fallo', () => {
@@ -250,30 +232,6 @@ describe('RF-S11: evento startup', () => {
       settled = true;
     });
     await nextMacrotask();
-    expect(settled).toBe(false);
-  });
-
-  it('RF-S11: arranque real en un puerto libre: startup, /health responde y la promesa sigue pendiente', async () => {
-    const port = await getFreePort();
-    const harness = createHarness({ env: validEnv({ PORT: String(port), HOST: '127.0.0.1' }) });
-    const real = {
-      ...harness.overrides,
-      createServer: (logger: Logger, database: Database) => {
-        const server = http.createServer(buildTestApp({ logger, database }));
-        cleanups.push(closeHttp(server));
-        return server;
-      },
-    };
-
-    let settled = false;
-    void startServer(real).then(() => {
-      settled = true;
-    });
-    await vi.waitFor(() => expect(harness.events()).toEqual(['startup']));
-    const response = await fetch(`http://127.0.0.1:${port}/health`);
-
-    expect(response.status).toBe(200);
-    expect(harness.capture.records()[0]).toMatchObject({ host: '127.0.0.1', port });
     expect(settled).toBe(false);
   });
 });

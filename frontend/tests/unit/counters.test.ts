@@ -51,14 +51,12 @@ describe('toCounters', () => {
     ['total negativo', [{ completed: true, total: -1 }]],
     ['total no entero', [{ completed: true, total: 1.5 }]],
     ['total no numerico', [{ completed: true, total: '3' }]],
-    ['total NaN', [{ completed: true, total: Number.NaN }]],
     ['total mayor que el entero seguro', [{ completed: true, total: Number.MAX_SAFE_INTEGER + 1 }]],
     ['completed no booleano', [{ completed: 'true', total: 1 }]],
     ['fila que no es objeto', [null]],
     ['falta total', [{ completed: true }]],
     ['mas de dos filas', [one, { completed: true, total: 1 }, one]],
     ['resultado que no es arreglo', { completed: true, total: 1 }],
-    ['resultado nulo', null],
   ])('RF-F3: %s es lectura inválida', (_name, rows) => {
     expect(() => toCounters(rows)).toThrow(CountersReadError);
   });

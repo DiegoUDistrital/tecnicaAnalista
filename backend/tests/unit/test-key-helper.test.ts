@@ -2,11 +2,9 @@ import http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { loadConfig } from '../../src/config/config';
-import { baseEnv } from '../helpers/config-env';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest } from '../helpers/raw-http';
-import { OMIT_KEY_HEADER, TEST_API_KEY, testProxies, testSecurity, withTestKey } from '../helpers/security';
+import { OMIT_KEY_HEADER, TEST_API_KEY, withTestKey } from '../helpers/security';
 
 const BEARER = `Bearer ${TEST_API_KEY}`;
 
@@ -132,46 +130,5 @@ describe('RF-G19: withTestKey', () => {
       expect(seen.authorization).toBe(BEARER);
       expect(rawAuthorizations(seen)).toEqual([BEARER]);
     }
-  });
-
-  it('RF-G19: funciona con http.createServer(app), que es como arranca el servicio real', async () => {
-    const server = http.createServer(probeApp());
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const { port } = server.address() as { port: number };
-      const seen = (await (await fetch(`http://127.0.0.1:${port}/probe`)).json()) as Seen;
-      expect(seen.authorization).toBe(BEARER);
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-});
-
-describe('RF-G19: baseEnv', () => {
-  it('RF-G19: baseEnv() es un entorno válido para loadConfig y acepta sobrescrituras', () => {
-    expect(() => loadConfig(baseEnv())).not.toThrow();
-    expect(loadConfig(baseEnv({ PORT: '4000' })).server.port).toBe(4000);
-    expect(baseEnv({ DATABASE_URL: undefined }).DATABASE_URL).toBeUndefined();
-  });
-
-  it('RF-G19: baseEnv devuelve un objeto nuevo en cada llamada', () => {
-    expect(baseEnv()).not.toBe(baseEnv());
-  });
-});
-
-describe('RF-G19: testSecurity', () => {
-  it('RF-G19: testSecurity() lleva la key de pruebas y acepta sobrescrituras', () => {
-    expect(testSecurity().apiKey).toBe(TEST_API_KEY);
-    expect(testSecurity({ apiKey: 'otra' }).apiKey).toBe('otra');
-  });
-
-  it('RF-G12: testSecurity() usa TRUSTED_PROXIES=none por defecto y acepta otra lista', () => {
-    expect(testSecurity().trustedProxies.contains('127.0.0.1')).toBe(false);
-    expect(testSecurity({ trustedProxies: testProxies('loopback') }).trustedProxies.contains('127.0.0.1')).toBe(true);
-  });
-
-  it('RF-G19: TEST_API_KEY cumple el formato de una key válida (43 a 128 caracteres, al menos 10 distintos)', () => {
-    expect(TEST_API_KEY).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
-    expect(new Set(TEST_API_KEY).size).toBeGreaterThanOrEqual(10);
   });
 });

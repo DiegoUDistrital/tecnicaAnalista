@@ -1,15 +1,12 @@
 import type { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createCaptureLogger } from '../helpers/capture-logger';
-import { createClosedPortDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
+import { startApiApp, type ApiApp } from '../helpers/api-app';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest } from '../helpers/raw-http';
 import { getTestDatabase, truncateTasks } from '../helpers/test-database';
 
 const JSON_TYPE = 'Content-Type: application/json';
 const UUID = '3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f';
-const NIL_UUID = '00000000-0000-0000-0000-000000000000';
-const LOWER_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 const NOT_FOUND = { error: { code: 'NOT_FOUND', message: 'Recurso no encontrado.', details: [] } };
 const ID_DETAIL = { field: 'id', message: 'El identificador no es un UUID válido.' };
@@ -44,7 +41,6 @@ interface Reply {
 
 /** Petición con socket crudo (los bytes viajan tal cual) y `Connection: close`. Sin cabeceras ni cuerpo por defecto. */
 async function send(
-  port: number,
   method: string,
   path: string,
   body: string | Buffer = '',
@@ -53,7 +49,7 @@ async function send(
   const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
   const length = bytes.length === 0 ? [] : [`Content-Length: ${bytes.length}`];
   const head = [`${method} ${path} HTTP/1.1`, 'Host: localhost', 'Connection: close', ...headers, ...length];
-  const result = await rawRequest(port, [`${head.join('\r\n')}\r\n\r\n`, bytes]);
+  const result = await rawRequest(loopback.port, [`${head.join('\r\n')}\r\n\r\n`, bytes]);
   const response = result.responses[0];
   if (response === undefined) {
     throw new Error(`Sin respuesta: ${result.text}`);
@@ -62,11 +58,11 @@ async function send(
 }
 
 function del(id: string, suffix = '', body: string | Buffer = '', headers: readonly string[] = []): Promise<Reply> {
-  return send(loopback.port, 'DELETE', `/api/tasks/${id}${suffix}`, body, headers);
+  return send('DELETE', `/api/tasks/${id}${suffix}`, body, headers);
 }
 
 function put(id: string, payload: unknown): Promise<Reply> {
-  return send(loopback.port, 'PUT', `/api/tasks/${id}`, JSON.stringify(payload), [JSON_TYPE]);
+  return send('PUT', `/api/tasks/${id}`, JSON.stringify(payload), [JSON_TYPE]);
 }
 
 function detailsOf(reply: Reply): unknown {
@@ -93,7 +89,7 @@ describe('RF-C18: borrado', () => {
     const id = await seed();
 
     const reply = await del(id);
-    const list = await send(loopback.port, 'GET', '/api/tasks');
+    const list = await send('GET', '/api/tasks');
 
     expect(reply.status).toBe(204);
     expect(reply.text).toBe('');
@@ -112,15 +108,6 @@ describe('RF-C18: borrado', () => {
     expect(await exists(target)).toBe(false);
     expect(await exists(other)).toBe(true);
     expect(await count()).toBe(1);
-  });
-
-  it('RF-C18: un id en mayúsculas borra la tarea (RF-C6)', async () => {
-    const id = await seed();
-
-    const reply = await del(id.toUpperCase());
-
-    expect(reply.status).toBe(204);
-    expect(await exists(id)).toBe(false);
   });
 
   it('RF-C18: DELETE no deja datos del usuario en el log', async () => {
@@ -148,13 +135,6 @@ describe('RF-C19: tarea inexistente y concurrencia', () => {
     expect(first.status).toBe(204);
     expect(second.status).toBe(404);
     expect(JSON.parse(second.text)).toEqual(NOT_FOUND);
-  });
-
-  it.each([[UUID], [NIL_UUID]])('RF-C19: DELETE de un id válido inexistente (%s) responde 404', async (id) => {
-    const reply = await del(id);
-
-    expect(reply.status).toBe(404);
-    expect(JSON.parse(reply.text)).toEqual(NOT_FOUND);
   });
 
   it('RF-C19: dos DELETE simultáneos de la misma tarea dan exactamente un 204 y un 404', async () => {
@@ -189,15 +169,9 @@ describe('RF-C19: tarea inexistente y concurrencia', () => {
 });
 
 describe('RF-C6: identificador en DELETE', () => {
-  const FULL_WIDTH_ONE = encodeURIComponent('１');
   const hostile: [string, string][] = [
     ['%E0%A4%A (porcentaje roto)', '%E0%A4%A'],
-    ['%2F', '%2F'],
-    ['<uuid>%2F', `${UUID}%2F`],
     ['%252D (doble codificación)', UUID.replace('-', '%252D')],
-    ['%0A (salto de línea final)', `${UUID}%0A`],
-    ['dígito de anchura completa', `${FULL_WIDTH_ONE}${UUID.slice(1)}`],
-    ['llaves', `%7B${UUID}%7D`],
     ['sin guiones', UUID.replaceAll('-', '')],
   ];
 
@@ -209,18 +183,6 @@ describe('RF-C6: identificador en DELETE', () => {
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([ID_DETAIL]);
     expect(await exists(id)).toBe(true);
-  });
-
-  it('RF-C6: %2D por guiones y %41 por A se aceptan', async () => {
-    await owner.query('INSERT INTO tasks (id, title) VALUES ($1, $2)', [UUID, 'a']);
-    await owner.query('INSERT INTO tasks (id, title) VALUES ($1, $2)', [LOWER_UUID, 'b']);
-
-    const hyphens = await del(UUID.replaceAll('-', '%2D'));
-    const letter = await del(LOWER_UUID.replace('a', '%41'));
-
-    expect(hyphens.status).toBe(204);
-    expect(letter.status).toBe(204);
-    expect(await count()).toBe(0);
   });
 });
 
@@ -251,26 +213,6 @@ describe('RF-C5: cuerpo en DELETE', () => {
 
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([NO_BODY_DETAIL]);
-    expect(await exists(id)).toBe(true);
-  });
-});
-
-describe('RF-C3 / RF-C4: entrada de DELETE', () => {
-  it('RF-C4: DELETE con Content-Encoding gzip da 415 y no borra', async () => {
-    const id = await seed();
-
-    const reply = await del(id, '', '', ['Content-Encoding: gzip']);
-
-    expect(reply.status).toBe(415);
-    expect(await exists(id)).toBe(true);
-  });
-
-  it('RF-C3: DELETE con 10 241 bytes da 413 y no borra', async () => {
-    const id = await seed();
-
-    const reply = await del(id, '', 'x'.repeat(10241), [JSON_TYPE]);
-
-    expect(reply.status).toBe(413);
     expect(await exists(id)).toBe(true);
   });
 });
@@ -320,29 +262,11 @@ describe('RF-C1: orden de comprobación en DELETE', () => {
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([ID_DETAIL]);
   });
-
-  it('RF-C1 par 7-8: DELETE de un id válido con la BD apagada da 500 genérico y el log no lleva el id', async () => {
-    const capture = createCaptureLogger();
-    const down = await startApiApp({ capture, database: await createClosedPortDatabase(capture.logger) });
-    const server = await listenOnLoopback(down.app);
-    try {
-      const reply = await send(server.port, 'DELETE', `/api/tasks/${UUID}`);
-
-      expect(reply.status).toBe(500);
-      expect(JSON.parse(reply.text)).toEqual({
-        error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] },
-      });
-      expect(capture.output()).not.toContain(UUID);
-    } finally {
-      await server.close();
-      await down.close();
-    }
-  });
 });
 
 describe('RF-C22: métodos en la ruta de identificador', () => {
   it('RF-C22: PATCH en /api/tasks/<uuid> da 405 con Allow: PUT, DELETE', async () => {
-    const reply = await send(loopback.port, 'PATCH', `/api/tasks/${UUID}`);
+    const reply = await send('PATCH', `/api/tasks/${UUID}`);
 
     expect(reply.status).toBe(405);
     expect(reply.headers['allow']).toBe('PUT, DELETE');

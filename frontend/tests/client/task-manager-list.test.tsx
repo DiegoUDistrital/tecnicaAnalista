@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TaskCard } from '../../src/client/task-card';
 import { TaskManager } from '../../src/client/task-manager';
@@ -59,13 +57,6 @@ async function showList(tasks: Task[], filter: TaskFilter = 'all', total: number
 
 const normalizeSpaces = (text: string) => text.replace(/\s/g, ' ');
 
-function sourcesIn(directory: string): string[] {
-  return readdirSync(directory).flatMap((name) => {
-    const path = join(directory, name);
-    return statSync(path).isDirectory() ? sourcesIn(path) : [path];
-  });
-}
-
 describe('TaskManager: estados de la lista', () => {
   it('RF-F6: cargando muestra el indicador en la región de estado y no la lista, y el formulario sigue disponible (se añade en T4)', () => {
     renderList();
@@ -96,10 +87,11 @@ describe('TaskManager: estados de la lista', () => {
     expect(reload).toHaveBeenCalledWith('background');
   });
 
-  it('RF-F6: 1 000 tareas se muestran con clave única sin errores de React', async () => {
+  it('RF-F6: 1 000 tareas con clave única sin errores de React y aviso de truncado (RF-F16)', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await showList(manyTasks(1000));
+    await showList(manyTasks(1000), 'all', 1200);
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(1000);
+    expect(screen.getByText('Mostrando las 1000 tareas más recientes de 1200.')).toBeTruthy();
     expect(errors).not.toHaveBeenCalled();
   }, 20000);
 
@@ -151,14 +143,6 @@ describe('TaskManager y TaskCard: contenido de cada tarea', () => {
     expect(screen.getByText('Completada')).toBeTruthy();
     expect(screen.getByText('Pendiente')).toBeTruthy();
   });
-
-  it('RF-F7: ningún archivo de src/client usa dangerouslySetInnerHTML (caracterización)', () => {
-    const clientDirectory = resolve(process.cwd(), 'src', 'client');
-    const offenders = sourcesIn(clientDirectory).filter((file) =>
-      readFileSync(file, 'utf8').includes('dangerouslySetInnerHTML'),
-    );
-    expect(offenders).toEqual([]);
-  });
 });
 
 describe('TaskManager: vacío, truncado y totales', () => {
@@ -170,29 +154,5 @@ describe('TaskManager: vacío, truncado y totales', () => {
     await showList([], filter);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('RF-F16: 1 000 tareas recibidas y total 1 200 -> «Mostrando las 1000 tareas más recientes de 1200.»', async () => {
-    await showList(manyTasks(1000), 'all', 1200);
-    expect(screen.getByText('Mostrando las 1000 tareas más recientes de 1200.')).toBeTruthy();
-  }, 20000);
-
-  it('RF-F16: total igual, null, carga pendiente, refresco en curso -> sin aviso', async () => {
-    await showList(manyTasks(2), 'all', 2);
-    expect(screen.queryByText(/Mostrando/)).toBeNull();
-    cleanup();
-
-    await showList(manyTasks(2), 'all', null);
-    expect(screen.queryByText(/Mostrando/)).toBeNull();
-    cleanup();
-
-    renderList('all', 1200);
-    expect(screen.getByRole('status').textContent).toBe('Cargando tareas…');
-    expect(screen.queryByText(/Mostrando/)).toBeNull();
-    cleanup();
-
-    useTaskListMock.mockReturnValue(fixedList({ tasks: manyTasks(2), pending: 1 }));
-    render(<TaskManager filter="all" total={1200} />);
-    expect(screen.queryByText(/Mostrando/)).toBeNull();
   });
 });

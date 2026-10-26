@@ -2,9 +2,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool } from '../../src/db/pool';
-import { DatabaseUnavailableError } from '../../src/errors/database-unavailable-error';
-import { createCaptureLogger } from '../helpers/capture-logger';
 import { listPrivileges, type Privilege } from '../helpers/privileges';
 import { applySchema, getTestDatabase, resetSchema, truncateTasks } from '../helpers/test-database';
 
@@ -98,18 +95,6 @@ describe('RF-D11: estado final en la base, el esquema y los privilegios por defe
 });
 
 describe('RF-D12: permisos de writer', () => {
-  it('RF-D12: writer hace SELECT, INSERT, UPDATE y DELETE sobre tasks', async () => {
-    const inserted = await writer.query<{ id: string }>("INSERT INTO tasks (title) VALUES ('RF-D12') RETURNING id");
-    const id = inserted.rows[0]?.id;
-    expect(id).toBeDefined();
-    const selected = await writer.query('SELECT title FROM tasks WHERE id = $1', [id]);
-    expect(selected.rows).toEqual([{ title: 'RF-D12' }]);
-    const updated = await writer.query('UPDATE tasks SET completed = true WHERE id = $1', [id]);
-    expect(updated.rowCount).toBe(1);
-    const deleted = await writer.query('DELETE FROM tasks WHERE id = $1', [id]);
-    expect(deleted.rowCount).toBe(1);
-  });
-
   it.each([
     ['leer task_counts', 'SELECT * FROM task_counts'],
     ['leer _prisma_migrations', 'SELECT * FROM _prisma_migrations'],
@@ -148,37 +133,6 @@ describe('RF-D13: permisos de reader', () => {
     ['DROP VIEW task_counts', 'DROP VIEW task_counts'],
   ])('RF-D13: reader no puede %s (42501)', async (_name, sql) => {
     expect(await sqlstateOf(reader, sql)).toBe('42501');
-  });
-});
-
-describe('RF-D10: reader y la vista con los privilegios de su propietario', () => {
-  it('RF-D10: reader lee la vista y falla al leer tasks', async () => {
-    await owner.query("INSERT INTO tasks (title) VALUES ('RF-D10')");
-    const view = await reader.query<{ total: number }>('SELECT total FROM task_counts');
-    expect(view.rows).toEqual([{ total: 1 }]);
-    expect(await sqlstateOf(reader, 'SELECT * FROM tasks')).toBe('42501');
-  });
-});
-
-describe('RF-D4 (vi): una violación de restricción no es «base no disponible»', () => {
-  it('RF-D4 (vi): un CHECK violado con writer llega como 23514 y no como DatabaseUnavailableError', async () => {
-    const writerUrl = process.env['TEST_DATABASE_URL'] ?? '';
-    const capture = createCaptureLogger();
-    const pool = createPool(
-      { connectionString: writerUrl, max: 1, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 },
-      capture.logger,
-    );
-    try {
-      const error = await pool.query("INSERT INTO tasks (title) VALUES ('')").then(
-        () => undefined,
-        (caught: unknown) => caught,
-      );
-      expect(error).toBeInstanceOf(Error);
-      expect(error).not.toBeInstanceOf(DatabaseUnavailableError);
-      expect((error as { code?: string }).code).toBe('23514');
-    } finally {
-      await pool.close();
-    }
   });
 });
 

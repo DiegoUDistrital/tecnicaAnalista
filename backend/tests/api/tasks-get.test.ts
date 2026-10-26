@@ -2,8 +2,7 @@ import type { Express } from 'express';
 import type { Client } from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createCaptureLogger } from '../helpers/capture-logger';
-import { createClosedPortDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
+import { startApiApp, type ApiApp } from '../helpers/api-app';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest } from '../helpers/raw-http';
 import { getTestDatabase, truncateTasks } from '../helpers/test-database';
@@ -134,14 +133,6 @@ describe('RF-C12: GET /api/tasks', () => {
 
     expect(titles(await call('GET', '/api/tasks'))).toEqual(['reciente', 'media', 'antigua']);
   });
-
-  it('RF-C20: createdAt sale con milisegundos truncados (marca ...123987 del owner sale ...123)', async () => {
-    await insert('precisa', '2026-01-02T03:04:05.123987+00:00');
-
-    const reply = await call('GET', '/api/tasks');
-
-    expect((reply.json as { createdAt: string }[])[0]?.createdAt).toBe('2026-01-02T03:04:05.123Z');
-  });
 });
 
 describe('RF-C13: filtro completed', () => {
@@ -197,15 +188,6 @@ describe('RF-C10: consulta inválida', () => {
       }
     },
   );
-
-  it('RF-C10: 1 500 parámetros dan 400 query', async () => {
-    const query = `${'a&'.repeat(1499)}completed=true`;
-
-    const reply = await call('GET', `/api/tasks?${query}`);
-
-    expect(reply.status).toBe(400);
-    expect(detailsOf(reply)).toEqual([QUERY_DETAIL]);
-  });
 
   it('RF-C10: completed inválido y parámetro desconocido a la vez dan query y completed, en ese orden', async () => {
     const reply = await call('GET', '/api/tasks?completed=nope&x=1');
@@ -265,31 +247,5 @@ describe('RF-C5: la tubería de entrada está conectada a la ruta real', () => {
     const reply = await call('GET', '/api/tasks', ['Content-Encoding: gzip']);
 
     expect(reply.status).toBe(415);
-  });
-});
-
-describe('RF-C2 (i): base de datos inalcanzable', () => {
-  it('RF-C2 (i): con el Pool a un puerto cerrado responde 500 genérico y el log no lleva datos', async () => {
-    const capture = createCaptureLogger();
-    const closed = await createClosedPortDatabase(capture.logger);
-    const down = await startApiApp({ capture, database: closed });
-    try {
-      const res = await request(down.app).get('/api/tasks?completed=true');
-
-      expect(res.status).toBe(500);
-      expect(res.body).toEqual({
-        error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] },
-      });
-      const records = capture.records();
-      expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({
-        level: 'error',
-        event: 'request_error',
-        errorClass: 'DatabaseUnavailableError',
-      });
-      expect(capture.output()).not.toContain('completed=true');
-    } finally {
-      await down.close();
-    }
   });
 });

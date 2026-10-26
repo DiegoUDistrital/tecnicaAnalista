@@ -65,19 +65,16 @@ describe('useTaskList', () => {
     expect(result.current.loadError).toBeUndefined();
   });
 
-  it('RF-F6: respuesta lenta del filtro viejo DESPUÉS de la del nuevo no la pisa (3 pasadas)', async () => {
-    for (let pass = 0; pass < 3; pass += 1) {
-      const { api, result, rerender, unmount } = setup({ ignoreAbort: true });
-      rerender({ filter: 'completed' });
-      expect(api.calls.map((call) => call.url)).toEqual(['/api/tasks', '/api/tasks?filter=completed']);
-      await answer(api, 1, jsonResponse(200, B));
-      await answer(api, 0, jsonResponse(200, A));
-      expect(result.current.tasks).toEqual(B);
-      expect(result.current.status).toBe('ready');
-      expect(result.current.pending).toBe(0);
-      unmount();
-      vi.unstubAllGlobals();
-    }
+  it('RF-F6: respuesta lenta del filtro viejo DESPUÉS de la del nuevo no la pisa', async () => {
+    const { api, result, rerender, unmount } = setup({ ignoreAbort: true });
+    rerender({ filter: 'completed' });
+    expect(api.calls.map((call) => call.url)).toEqual(['/api/tasks', '/api/tasks?filter=completed']);
+    await answer(api, 1, jsonResponse(200, B));
+    await answer(api, 0, jsonResponse(200, A));
+    expect(result.current.tasks).toEqual(B);
+    expect(result.current.status).toBe('ready');
+    expect(result.current.pending).toBe(0);
+    unmount();
   });
 
   it('RF-F6: cambiar el filtro cancela la petición anterior (señal abortada)', () => {

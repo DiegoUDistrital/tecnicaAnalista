@@ -56,7 +56,8 @@ function childScript(): string {
     '  statuses.push(await get({ Authorization: WRONG }));',
     "  fake.emit('SIGTERM');",
     '  const code = await running;',
-    `  process.stdout.write('${RESULT_PREFIX}' + JSON.stringify({ statuses, code }) + '\\n');`,
+    "  const afterClose = await get({}).then(() => 'answered', () => 'refused');",
+    `  process.stdout.write('${RESULT_PREFIX}' + JSON.stringify({ statuses, code, afterClose }) + '\\n');`,
     '})().catch((error) => {',
     "  process.stdout.write('ERROR ' + String(error) + '\\n');",
     '  process.exitCode = 1;',
@@ -105,7 +106,11 @@ describe('cierre ordenado en un proceso hijo sobre el código compilado', () => 
     expect(status, output).toBe(0);
     const resultLine = output.split('\n').find((line) => line.startsWith(RESULT_PREFIX));
     expect(resultLine, output).toBeDefined();
-    expect(JSON.parse((resultLine ?? '').slice(RESULT_PREFIX.length))).toEqual({ statuses: [401, 401, 429], code: 0 });
+    expect(JSON.parse((resultLine ?? '').slice(RESULT_PREFIX.length))).toEqual({
+      statuses: [401, 401, 429],
+      code: 0,
+      afterClose: 'refused',
+    });
     expect(output).toContain('"event":"startup"');
     expect(output).toContain('"event":"shutdown_started"');
     expect(output).toContain('"event":"shutdown_completed","time"');

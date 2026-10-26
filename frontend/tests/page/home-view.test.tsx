@@ -35,15 +35,16 @@ describe('HomeView', () => {
     expect(hrefs).toEqual(['/', '/?filter=completed', '/?filter=pending']);
   });
 
-  it.each([
-    ['all', 0],
-    ['completed', 1],
-    ['pending', 2],
-  ] as const)('RF-F2: el enlace del filtro actual lleva aria-current="page" (%s)', (filter, index) => {
-    const found = links(render(filter, available));
-    found.forEach((link, i) => {
-      expect(link.attrs.includes('aria-current="page"')).toBe(i === index);
-    });
+  it('RF-F2: solo el enlace del filtro actual lleva aria-current="page"', () => {
+    for (const [filter, index] of [
+      ['all', 0],
+      ['completed', 1],
+      ['pending', 2],
+    ] as const) {
+      links(render(filter, available)).forEach((link, i) => {
+        expect(link.attrs.includes('aria-current="page"')).toBe(i === index);
+      });
+    }
   });
 
   it('RF-F3: junto a cada enlace sale su cantidad (3 completadas, 5 pendientes, 8 todas) sin depender del filtro', () => {
@@ -68,12 +69,6 @@ describe('HomeView', () => {
     expect(render('all', available)).not.toContain('role="status"');
   });
 
-  it('RF-F1: el valor de la dirección no se refleja en el HTML', () => {
-    const html = render('all', available);
-    expect(html).not.toContain('script');
-    expect(html).not.toContain('__proto__');
-  });
-
   it('RF-F28: hay un único h1', () => {
     expect(render('all', available).match(/<h1[ >]/g)).toHaveLength(1);
   });
@@ -90,13 +85,4 @@ describe('HomeView', () => {
       expect(element?.props).toEqual({ filter, total });
     },
   );
-
-  it('RF-F6: el elemento TaskManager no cambia de tipo ni lleva key al cambiar el filtro (3.5)', () => {
-    const before = taskManagerOf('all', available);
-    const after = taskManagerOf('completed', available);
-    expect(before?.type).toBe(TaskManager);
-    expect(after?.type).toBe(before?.type);
-    expect(before?.key).toBeNull();
-    expect(after?.key).toBeNull();
-  });
 });

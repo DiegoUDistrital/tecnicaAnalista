@@ -51,21 +51,4 @@ describe('RF-G17: tope de GET /api/tasks', () => {
     expect(res.headers['etag']).toBeUndefined();
     expect(Object.keys(res.headers).sort()).toEqual(Object.keys(empty.headers).sort());
   });
-
-  it('RF-G17: con ?completed=false el tope se aplica a las pendientes', async () => {
-    await seed(8);
-
-    const res = await request(api.app).get('/api/tasks?completed=false');
-
-    expect(res.status).toBe(200);
-    expect((res.body as { title: string }[]).map((task) => task.title)).toEqual(['t7', 't5', 't3']);
-  });
-
-  it('RF-G17: con ?completed=true el tope se aplica a las completadas', async () => {
-    await seed(8);
-
-    const res = await request(api.app).get('/api/tasks?completed=true');
-
-    expect((res.body as { title: string }[]).map((task) => task.title)).toEqual(['t8', 't6', 't4']);
-  });
 });

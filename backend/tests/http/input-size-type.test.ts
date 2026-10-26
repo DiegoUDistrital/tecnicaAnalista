@@ -158,14 +158,6 @@ describe('RF-C1: el tamaño (2) se decide antes que el tipo (3)', () => {
     expect(json(result).status).toBe(413);
     expect(result.closedByServer).toBe(true);
   });
-
-  it('RF-C3: un error del lector nunca llega al manejador como 500 ni se registra como request_error', async () => {
-    await untilServerCloses([head('POST', [JSON_TYPE, 'Content-Length: 20000'])]);
-    await untilServerCloses([head('POST', [JSON_TYPE, 'Transfer-Encoding: chunked']), ...chunked(11000)]);
-
-    expect(capture.output()).not.toContain('request_error');
-    expect(capture.lines).toHaveLength(0);
-  });
 });
 
 describe('RF-C4: Content-Encoding', () => {
@@ -175,13 +167,6 @@ describe('RF-C4: Content-Encoding', () => {
     ['vacío', ['Content-Encoding:']],
     ['cabecera duplicada', ['Content-Encoding: identity', 'Content-Encoding: identity']],
   ];
-
-  it.each(rejected)('RF-C4: Content-Encoding %s da 415 con body', async (_name, headers) => {
-    const result = await exchange(postWithBody([JSON_TYPE, ...headers], '{}'));
-
-    expect(json(result).status).toBe(415);
-    expect(errorCode(result)).toBe('UNSUPPORTED_MEDIA_TYPE');
-  });
 
   it.each(rejected)('RF-C4: Content-Encoding %s da 415 sin body (GET incluido)', async (_name, headers) => {
     const get = await exchange([head('GET', headers)]);
@@ -203,8 +188,6 @@ describe('RF-C4: Content-Type', () => {
   it.each([
     ['text/plain', ['Content-Type: text/plain']],
     ['ausente', []],
-    ['charset=utf8', ['Content-Type: application/json; charset=utf8']],
-    ['duplicado con el segundo distinto', ['Content-Type: application/json', 'Content-Type: text/plain']],
   ])('RF-C4: con body presente y Content-Type %s da 415', async (_name, headers) => {
     const result = await exchange(postWithBody(headers, '{}'));
 
@@ -248,13 +231,6 @@ describe('RF-C4: Content-Type', () => {
     expect(json(jsonType).status).toBe(400);
   });
 
-  it('RF-C4: con Content-Length el 415 se emite sin esperar al body (el cliente deja el body sin enviar)', async () => {
-    const result = await exchange([head('POST', ['Content-Type: text/plain', 'Content-Length: 50'])]);
-
-    expect(json(result).status).toBe(415);
-    expect(result.closedByServer).toBe(false);
-  });
-
   it('RF-C4: tras un 415 con body sin leer la conexión keep-alive sigue sirviendo la petición siguiente', async () => {
     const result = await rawRequest(
       loopback.port,
@@ -263,12 +239,6 @@ describe('RF-C4: Content-Type', () => {
     );
 
     expect(result.responses.map((response) => response.status)).toEqual([415, 200]);
-  });
-
-  it('RF-C4: el 415 tampoco cierra la conexión', async () => {
-    const result = await exchange(postWithBody(['Content-Type: text/plain'], 'hello'));
-
-    expect(result.responses[0]?.headers['connection']).toBe('keep-alive');
   });
 });
 

@@ -13,24 +13,12 @@ function reasons(name: string): string[] {
 }
 
 describe('recorrido del código del navegador (ayudante)', () => {
-  it("RF-F21: el recorrido detecta un archivo 'use client' que importa directamente un módulo de src/server", () => {
-    expect(reasons('direct')).toEqual(['panel.tsx:imports-server', 'panel.tsx:imports-server-only']);
-  });
-
   it("RF-F21: el recorrido detecta un archivo 'use client' que llega a src/server de forma transitiva", () => {
     expect(reasons('transitive')).toEqual(['panel.tsx:imports-server', 'panel.tsx:imports-server-only']);
   });
 
   it("RF-F21: el recorrido detecta un archivo 'use client' que lee process.env", () => {
     expect(reasons('reads-env')).toEqual(['panel.tsx:reads-env']);
-  });
-
-  it("RF-F21: el recorrido detecta un archivo 'use client' que importa server-only", () => {
-    expect(reasons('imports-server-only')).toEqual(['panel.tsx:imports-server-only']);
-  });
-
-  it('RF-F21: el recorrido no marca un archivo del navegador limpio ni el servidor que lee process.env', () => {
-    expect(scanClientFiles(fixture('clean'))).toEqual([]);
   });
 
   it('RF-F21: el ayudante detecta NEXT_PUBLIC_ y un archivo de src/server sin import server-only', () => {

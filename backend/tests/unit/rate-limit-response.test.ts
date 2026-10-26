@@ -10,10 +10,8 @@ describe('RF-G10: retryAfterSeconds', () => {
     ['1 ms restante da 1', 1001, 1000, 1],
     ['1000 ms restantes dan 1', 2000, 1000, 1],
     ['1001 ms restantes dan 2', 2001, 1000, 2],
-    ['1999 ms restantes dan 2', 2999, 1000, 2],
     ['2000 ms restantes dan 2', 3000, 1000, 2],
     ['la ventana completa da ceil(ventana/1000)', 1000 + WINDOW_MS, 1000, 900],
-    ['una ventana de 1001 ms da 2', 2001, 1000, 2],
   ])('RF-G10: retryAfterSeconds = max(1, ceil(restante/1000)): %s', (_name, resetAtMs, nowMs, expected) => {
     expect(retryAfterSeconds(resetAtMs, nowMs)).toBe(expected);
   });

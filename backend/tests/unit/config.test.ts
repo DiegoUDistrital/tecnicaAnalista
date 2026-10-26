@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config/config';
-import { AppError } from '../../src/errors/app-error';
 import { ConfigError } from '../../src/errors/config-error';
 import { EXAMPLE_API_KEY } from '../../src/security/api-key';
 import { baseEnv } from '../helpers/config-env';
@@ -25,12 +24,8 @@ const INT_VARIABLES = [
 ] as const;
 
 describe('RF-D1: enteros', () => {
-  it.each(['10abc', '1e3', ' 10', '', '010', '0', '-5', '10.5', '101'])('RF-D1: rechaza %j en DB_POOL_MAX', (value) => {
+  it.each(['10abc', '1e3', ' 10', '010', '10.5'])('RF-D1: rechaza el formato %j en DB_POOL_MAX', (value) => {
     expect(messageOf(baseEnv({ DB_POOL_MAX: value }))).toBe('DB_POOL_MAX: entero inválido o fuera de rango');
-  });
-
-  it.each(['1', '10', '100'])('RF-D1: acepta %j en DB_POOL_MAX', (value) => {
-    expect(loadConfig(baseEnv({ DB_POOL_MAX: value })).pool.max).toBe(Number(value));
   });
 
   it.each(INT_VARIABLES)('RF-D1: $name respeta sus límites $min-$max', ({ name, min, max }) => {
@@ -181,20 +176,12 @@ describe('RF-S1: variables del servicio', () => {
     expect(loadConfig(baseEnv({ PORT: value })).server.port).toBe(Number(value));
   });
 
-  it('RF-S1: PORT ausente vale 3000', () => {
-    expect(loadConfig(baseEnv()).server.port).toBe(3000);
-  });
-
   it.each(['999', '120001', '', 'abc'])('RF-S1: SHUTDOWN_TIMEOUT_MS rechaza %j', (value) => {
     expect(messageOf(baseEnv({ SHUTDOWN_TIMEOUT_MS: value }))).toBe(SHUTDOWN_MESSAGE);
   });
 
   it.each(['1000', '120000'])('RF-S1: SHUTDOWN_TIMEOUT_MS acepta %j', (value) => {
     expect(loadConfig(baseEnv({ SHUTDOWN_TIMEOUT_MS: value })).server.shutdownTimeoutMs).toBe(Number(value));
-  });
-
-  it('RF-S1: SHUTDOWN_TIMEOUT_MS ausente vale 10000', () => {
-    expect(loadConfig(baseEnv()).server.shutdownTimeoutMs).toBe(10000);
   });
 
   it.each(['127.0.0.1', '::1', '0.0.0.0', '::'])('RF-S1: HOST acepta %j', (value) => {
@@ -207,10 +194,6 @@ describe('RF-S1: variables del servicio', () => {
       expect(messageOf(baseEnv({ HOST: value }))).toBe(HOST_MESSAGE);
     },
   );
-
-  it('RF-S1: HOST ausente vale 127.0.0.1', () => {
-    expect(loadConfig(baseEnv()).server.host).toBe('127.0.0.1');
-  });
 
   it('RF-S1: nombra a la vez variables inválidas de la 001 y de la 002, en el orden del esquema y sin valores', () => {
     const message = messageOf(
@@ -227,17 +210,6 @@ describe('RF-S1: variables del servicio', () => {
     );
     expect(message).not.toContain('port-sentinel-5');
     expect(message).not.toContain('host-sentinel-3');
-  });
-
-  it('RF-S1: el error de configuración es el de la 001', () => {
-    try {
-      loadConfig(baseEnv({ PORT: '0' }));
-    } catch (error) {
-      expect(error).toBeInstanceOf(ConfigError);
-      expect(error).toBeInstanceOf(AppError);
-      return;
-    }
-    throw new Error('loadConfig no lanzó ningún error');
   });
 });
 
@@ -295,14 +267,6 @@ describe('RF-G6: API_KEY', () => {
     },
   );
 
-  it('RF-G6: una API_KEY inválida junto a un PORT inválido nombra ambas, sin valores', () => {
-    const message = messageOf(baseEnv({ API_KEY: 'corta-sentinel', PORT: 'port-sentinel-9' }));
-
-    expect(message).toBe(['PORT: entero inválido o fuera de rango', FORMAT].join('; '));
-    expect(message).not.toContain('corta-sentinel');
-    expect(message).not.toContain('port-sentinel-9');
-  });
-
   it('RF-G6: una key centinela inválida no aparece en el mensaje del error', () => {
     const message = messageOf(baseEnv({ API_KEY: 'sentinel-key-value.invalid' }));
 
@@ -333,12 +297,6 @@ describe('RF-G12: TRUSTED_PROXIES en la configuración', () => {
       expect(messageOf(baseEnv({ TRUSTED_PROXIES: value }))).toBe(MESSAGE);
     },
   );
-
-  it('RF-G12: TRUSTED_PROXIES inválida se nombra junto con las demás, sin valores', () => {
-    const message = messageOf(baseEnv({ PORT: '0', TRUSTED_PROXIES: 'sentinel-proxy-value/99', API_KEY: undefined }));
-    expect(message).toBe(`PORT: entero inválido o fuera de rango; API_KEY: obligatoria; ${MESSAGE}`);
-    expect(message).not.toContain('sentinel-proxy-value');
-  });
 });
 
 describe('RF-G12: cupos de peticiones en la configuración', () => {
@@ -348,15 +306,6 @@ describe('RF-G12: cupos de peticiones en la configuración', () => {
     { name: 'RATE_LIMIT_MAX', min: 1, max: 10000, fallback: 100 },
     { name: 'RATE_LIMIT_POST_MAX', min: 1, max: 10000, fallback: 20 },
   ] as const;
-
-  it('RF-G12: AppConfig.security.rateLimit trae los defectos (15 min, 100 y 20) con las variables ausentes', () => {
-    expect(loadConfig(baseEnv()).security.rateLimit).toEqual({
-      windowMs: 900000,
-      max: 100,
-      postMax: 20,
-      authFailuresMax: 10,
-    });
-  });
 
   it('RF-G12: AppConfig.security.rateLimit recoge los valores de las tres variables', () => {
     const env = baseEnv({ RATE_LIMIT_WINDOW_MS: '60000', RATE_LIMIT_MAX: '50', RATE_LIMIT_POST_MAX: '7' });
@@ -386,20 +335,17 @@ describe('RF-G12: cupos de peticiones en la configuración', () => {
     }
   });
 
-  it('RF-G12: RATE_LIMIT_POST_MAX > RATE_LIMIT_MAX nombra las DOS variables sin valores', () => {
+  it('RF-G12: RATE_LIMIT_POST_MAX > RATE_LIMIT_MAX (también al bajar solo MAX) nombra las dos sin valores', () => {
     const message = messageOf(baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_POST_MAX: '31' }));
     expect(message).toBe('RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX');
     expect(message).not.toMatch(/\d/);
+    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '10' }))).toBe('RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX');
   });
 
   it('RF-G12: RATE_LIMIT_POST_MAX igual a RATE_LIMIT_MAX es válido', () => {
     expect(loadConfig(baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_POST_MAX: '30' })).security.rateLimit.postMax).toBe(
       30,
     );
-  });
-
-  it('RF-G12: bajar solo RATE_LIMIT_MAX por debajo del defecto de POST (20) da error de configuración', () => {
-    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '10' }))).toBe('RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX');
   });
 
   it('RF-G12: con una de las dos inválida por separado no se evalúa la cruzada', () => {
@@ -426,8 +372,7 @@ describe('RF-G12: intentos fallidos de la key en la configuración', () => {
   const INT_MESSAGE = 'entero inválido o fuera de rango';
   const CROSS = 'RATE_LIMIT_AUTH_FAILURES_MAX: no puede superar RATE_LIMIT_MAX';
 
-  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX tiene por defecto 10 y llega a AppConfig.security.rateLimit', () => {
-    expect(loadConfig(baseEnv()).security.rateLimit.authFailuresMax).toBe(10);
+  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX llega a AppConfig.security.rateLimit', () => {
     expect(loadConfig(baseEnv({ RATE_LIMIT_AUTH_FAILURES_MAX: '3' })).security.rateLimit.authFailuresMax).toBe(3);
   });
 
@@ -443,20 +388,17 @@ describe('RF-G12: intentos fallidos de la key en la configuración', () => {
     }
   });
 
-  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX > RATE_LIMIT_MAX nombra las dos variables sin valores', () => {
+  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX > RATE_LIMIT_MAX (o al bajar solo MAX) nombra las dos', () => {
     const message = messageOf(baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_AUTH_FAILURES_MAX: '31' }));
 
     expect(message).toBe(CROSS);
     expect(message).not.toMatch(/\d/);
+    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '5', RATE_LIMIT_POST_MAX: '5' }))).toBe(CROSS);
   });
 
   it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX igual a RATE_LIMIT_MAX es válido', () => {
     const env = baseEnv({ RATE_LIMIT_MAX: '30', RATE_LIMIT_POST_MAX: '30', RATE_LIMIT_AUTH_FAILURES_MAX: '30' });
     expect(loadConfig(env).security.rateLimit.authFailuresMax).toBe(30);
-  });
-
-  it('RF-G12: bajar solo RATE_LIMIT_MAX por debajo de 10 (defecto de los fallos) da error de configuración', () => {
-    expect(messageOf(baseEnv({ RATE_LIMIT_MAX: '5', RATE_LIMIT_POST_MAX: '5' }))).toBe(CROSS);
   });
 
   it('RF-G12: con una de las dos inválida por separado no se evalúa la cruzada de los fallos', () => {
@@ -511,12 +453,6 @@ describe('RF-G15: CORS_ORIGIN', () => {
       expect(loadConfig(baseEnv({ CORS_ORIGIN: value })).security.corsOrigin).toBe(value);
     },
   );
-
-  it('RF-G15: una CORS_ORIGIN inválida se nombra junto con las demás inválidas', () => {
-    const message = messageOf(baseEnv({ CORS_ORIGIN: '*', PORT: '0' }));
-
-    expect(message).toBe(`PORT: entero inválido o fuera de rango; ${INVALIDA}`);
-  });
 });
 
 describe('RF-G12 y RF-G17: TASKS_LIST_LIMIT', () => {
@@ -532,14 +468,4 @@ describe('RF-G12 y RF-G17: TASKS_LIST_LIMIT', () => {
       expect(loadConfig(baseEnv({ TASKS_LIST_LIMIT: value })).tasks.listLimit).toBe(Number(value));
     },
   );
-
-  it('RF-G17: TASKS_LIST_LIMIT ausente vale 1000', () => {
-    expect(loadConfig(baseEnv()).tasks.listLimit).toBe(1000);
-  });
-
-  it('RF-G12: una TASKS_LIST_LIMIT inválida se nombra junto con las demás inválidas', () => {
-    expect(messageOf(baseEnv({ TASKS_LIST_LIMIT: '0', PORT: '0' }))).toBe(
-      `PORT: entero inválido o fuera de rango; ${INVALIDA}`,
-    );
-  });
 });

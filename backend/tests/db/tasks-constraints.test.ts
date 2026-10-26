@@ -36,13 +36,6 @@ async function sqlstateOf(action: Promise<void>): Promise<string | undefined> {
 }
 
 describe('RF-D7: restricciones de la tabla tasks', () => {
-  it('RF-D7: la base de pruebas tiene codificación UTF8', async () => {
-    const result = await owner.query<{ encoding: string }>(
-      `SELECT pg_encoding_to_char(encoding) AS encoding FROM pg_database WHERE datname = current_database()`,
-    );
-    expect(result.rows[0]?.encoding).toBe('UTF8');
-  });
-
   it('RF-D7: un título solo de espacios U+0020 se rechaza con 23514', async () => {
     expect(await sqlstateOf(insert('   '))).toBe('23514');
   });

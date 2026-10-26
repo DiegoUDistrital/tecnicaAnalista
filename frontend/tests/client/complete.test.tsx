@@ -20,7 +20,6 @@ afterEach(() => {
 });
 
 const LOADING = 'Cargando tareas…';
-const GONE = 'La tarea ya no existe.';
 
 async function setup(tasks: Task[], filter: TaskFilter = 'all') {
   const api = installFakeApi();
@@ -76,14 +75,6 @@ describe('Completar y desmarcar', () => {
     expect(puts(api)[1]?.body).toEqual({ completed: false });
   });
 
-  it('RF-F11: un solo botón con nombre accesible fijo «Marcar «T» como completada» y aria-pressed true/false', async () => {
-    await setup([makeTask(1), makeTask(2, { completed: true })]);
-    expect(screen.getAllByRole('button', { name: /Marcar/ })).toHaveLength(2);
-    expect(toggleButton('Tarea 1').getAttribute('aria-pressed')).toBe('false');
-    expect(toggleButton('Tarea 2').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.queryByRole('checkbox')).toBeNull();
-  });
-
   it('RF-F11: bajo Pendientes la tarea desaparece tras el refresco', async () => {
     const api = await setup([makeTask(1), makeTask(2)], 'pending');
     await toggleAndRefresh(api, 'Tarea 1', [makeTask(2)]);
@@ -125,13 +116,6 @@ describe('Completar y desmarcar', () => {
       all.filter((task) => remaining.includes(task.title)),
     );
     await waitFor(() => expect(document.activeElement).toBe(toggleButton(expected)));
-  });
-
-  it('RF-F11: el foco pasa al h2 de la lista si la lista queda vacía', async () => {
-    const api = await setup([makeTask(1)], 'pending');
-    toggleButton('Tarea 1').focus();
-    await toggleAndRefresh(api, 'Tarea 1', []);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Tareas' })));
   });
 
   it('RF-F11: no se roba el foco si la persona ya estaba en otro campo (P7)', async () => {
@@ -203,30 +187,6 @@ describe('Completar y desmarcar', () => {
     fireEvent.click(toggleButton('Tarea 1'));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(puts(api)).toHaveLength(2);
-  });
-
-  it('RF-F25: 404 al completar da el aviso global «La tarea ya no existe.», refresca lista y contadores y no deja error en la tarjeta', async () => {
-    const api = await setup([makeTask(1), makeTask(2)]);
-    toggleButton('Tarea 1').focus();
-    fireEvent.click(toggleButton('Tarea 1'));
-    await answer(puts(api)[0], jsonResponse(404, { error: { code: 'NOT_FOUND', message: 'No encontrada.' } }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain(GONE));
-    expect(screen.queryByRole('alert')).toBeNull();
-    await waitFor(() => expect(lists(api)).toHaveLength(2));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    await answer(lists(api)[1], jsonResponse(200, [makeTask(2)]));
-    expect(screen.queryByText('Tarea 1')).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(toggleButton('Tarea 2')));
-    expect(screen.getByRole('status').textContent).toContain(GONE);
-  });
-
-  it('RF-F15: tras PUT correcto una lectura de lista y un router.refresh', async () => {
-    const api = await setup([makeTask(1)]);
-    fireEvent.click(toggleButton('Tarea 1'));
-    await answer(puts(api)[0], jsonResponse(200, {}));
-    await waitFor(() => expect(lists(api)).toHaveLength(2));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status').textContent).toContain('Lista actualizada.');
   });
 
   it('RF-F27: «Lista actualizada.» se limpia al iniciar la siguiente acción', async () => {

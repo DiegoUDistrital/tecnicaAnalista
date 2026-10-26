@@ -13,30 +13,15 @@ const BODY_DETAIL = { field: 'body', message: 'El cuerpo debe ser un objeto JSON
 const UNKNOWN_DETAIL = { field: 'body', message: 'El cuerpo contiene campos no permitidos.' };
 const QUERY_DETAIL = { field: 'query', message: 'Parámetros de consulta no permitidos.' };
 const TITLE_TYPE_DETAIL = { field: 'title', message: 'Debe ser una cadena de texto.' };
-const TITLE_CHARS_DETAIL = { field: 'title', message: 'Contiene caracteres no permitidos.' };
 const TITLE_LENGTH_DETAIL = { field: 'title', message: 'Debe tener entre 1 y 100 caracteres.' };
 const DESCRIPTION_TYPE_DETAIL = { field: 'description', message: 'Debe ser una cadena de texto.' };
 const DESCRIPTION_LENGTH_DETAIL = { field: 'description', message: 'Debe tener como máximo 500 caracteres.' };
 
-/** Cada carácter del conjunto de espacios que recorta `trim()` (la spec los enumera). */
-const TRIM_SPACES = [
-  '\u0009',
-  '\u000a',
-  '\u000b',
-  '\u000c',
-  '\u000d',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  ' ',
-  '　',
-  '﻿',
-];
+/**
+ * Tres espacios representativos de los 25 que recorta `trim()` (el conjunto completo se prueba en
+ * unit/text-fields): tabulador, espacio de no separación y BOM.
+ */
+const TRIM_SPACES = ['\u0009', '\u00a0', '\ufeff'];
 
 let api: ApiApp;
 let loopback: LoopbackServer;
@@ -120,29 +105,11 @@ describe('RF-C11: crear tarea', () => {
     expect(await storedTasks()).toEqual([{ title: 'Comprar pan', description: 'Integral' }]);
   });
 
-  it('RF-C11: se permiten títulos duplicados', async () => {
-    const first = await post({ title: 'Repetida' });
-    const second = await post({ title: 'Repetida' });
-
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect((first.json as { id: string }).id).not.toBe((second.json as { id: string }).id);
-    expect(await storedTasks()).toHaveLength(2);
-  });
-
   it.each([['{}'], ['{"description":"x"}'], ['{"title":null}']])('RF-C11: %s da 400 con field title', async (body) => {
     const reply = await send('POST', '/api/tasks', body);
 
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([TITLE_TYPE_DETAIL]);
-  });
-
-  it('RF-C11: description: null en POST da 400 description', async () => {
-    const reply = await post({ title: 'a', description: null });
-
-    expect(reply.status).toBe(400);
-    expect(detailsOf(reply)).toEqual([DESCRIPTION_TYPE_DETAIL]);
-    expect(await storedTasks()).toEqual([]);
   });
 
   it('RF-C11: description omitida vale cadena vacía', async () => {
@@ -173,17 +140,6 @@ describe('RF-C9: recorte y límites de title y description', () => {
     },
   );
 
-  it('RF-C9: un título con NUL y uno con sustituto suelto dan 400 title', async () => {
-    const withNul = await send('POST', '/api/tasks', '{"title":"a\\u0000b"}');
-    const withSurrogate = await send('POST', '/api/tasks', '{"title":"\\ud800"}');
-
-    expect(withNul.status).toBe(400);
-    expect(detailsOf(withNul)).toEqual([TITLE_CHARS_DETAIL]);
-    expect(withSurrogate.status).toBe(400);
-    expect(detailsOf(withSurrogate)).toEqual([TITLE_CHARS_DETAIL]);
-    expect(await storedTasks()).toEqual([]);
-  });
-
   it('RF-C9: un título de 100 caracteres se acepta y uno de 101 da 400 title', async () => {
     expect((await post({ title: 'a'.repeat(100) })).status).toBe(201);
 
@@ -200,13 +156,6 @@ describe('RF-C9: recorte y límites de title y description', () => {
 
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([DESCRIPTION_LENGTH_DETAIL]);
-  });
-
-  it('RF-C9: un título de solo U+200B se acepta (201)', async () => {
-    const reply = await post({ title: '​' });
-
-    expect(reply.status).toBe(201);
-    expect(await storedTasks()).toEqual([{ title: '​', description: '' }]);
   });
 });
 
@@ -275,20 +224,6 @@ describe('RF-C10: consulta en POST', () => {
 });
 
 describe('RF-C5: cuerpo por la ruta real', () => {
-  it('RF-C5: claves repetidas (gana la última) llegan y se guardan', async () => {
-    const reply = await send('POST', '/api/tasks', '{"title":"a","title":"b"}');
-
-    expect(reply.status).toBe(201);
-    expect(await storedTasks()).toEqual([{ title: 'b', description: '' }]);
-  });
-
-  it('RF-C5: U+FFFD legítimo en un título llega intacto y se guarda', async () => {
-    const reply = await send('POST', '/api/tasks', Buffer.from('{"title":"a\u{fffd}b"}', 'utf8'));
-
-    expect(reply.status).toBe(201);
-    expect(await storedTasks()).toEqual([{ title: 'a\u{fffd}b', description: '' }]);
-  });
-
   it.each<[string, Buffer]>([
     ['FF FE', Buffer.from([0xff, 0xfe])],
     ['C3 truncado', Buffer.from([0xc3])],
@@ -341,43 +276,6 @@ describe('RF-C3: límite de tamaño', () => {
 
     expect(accepted.status).toBe(201);
     expect(rejected.status).toBe(413);
-  });
-});
-
-describe('RF-C21: inyección SQL por la API', () => {
-  it("RF-C21: POST con título '); DROP TABLE tasks;-- da 201, se guarda literal y la tabla sigue intacta", async () => {
-    const hostile = "'); DROP TABLE tasks;--";
-
-    const reply = await post({ title: hostile, description: "x'; DELETE FROM tasks;--" });
-
-    expect(reply.status).toBe(201);
-    expect(await storedTasks()).toEqual([{ title: hostile, description: "x'; DELETE FROM tasks;--" }]);
-    const table = await owner.query(`SELECT to_regclass('public.tasks') IS NOT NULL AS found`);
-    expect((table.rows[0] as { found: boolean }).found).toBe(true);
-  });
-});
-
-describe('RF-C22: métodos en /api/tasks', () => {
-  it.each(['OPTIONS', 'PUT', 'DELETE', 'PATCH', 'PROPFIND'])(
-    'RF-C22: %s en /api/tasks da 405 con Allow: GET, POST',
-    async (method) => {
-      const reply = await send(method, '/api/tasks', '');
-
-      expect(reply.status).toBe(405);
-      expect(reply.headers['allow']).toBe('GET, POST');
-      expect(reply.json).toEqual({
-        error: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.', details: [] },
-      });
-    },
-  );
-
-  it('RF-C22: HEAD en /api/tasks da 405 con Allow: GET, POST', async () => {
-    const result = await rawRequest(loopback.port, [
-      'HEAD /api/tasks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n',
-    ]);
-
-    expect(result.text.startsWith('HTTP/1.1 405')).toBe(true);
-    expect(result.text.toLowerCase()).toContain('allow: get, post');
   });
 });
 

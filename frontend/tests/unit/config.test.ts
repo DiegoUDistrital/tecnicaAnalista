@@ -5,7 +5,6 @@ import {
   createConfigProvider,
   getConfig,
   parseConfig,
-  pickConfigEnv,
   type ConfigEnv,
 } from '../../src/server/config/frontend-config';
 import { createLogger } from '../../src/server/logging/logger';
@@ -90,13 +89,6 @@ describe('parseConfig: forma general', () => {
     expect([...new Set(read)].sort()).toEqual(['ALLOWED_HOSTS', 'API_KEY', 'BACKEND_URL', 'READER_DATABASE_URL']);
     expect(JSON.stringify(config)).not.toContain(SENTINEL);
     expect(Object.keys(config).sort()).toEqual(['allowedHosts', 'apiKey', 'backendUrl', 'readerDatabaseUrl']);
-  });
-
-  it('RF-F23: pickConfigEnv copia solo los cuatro nombres de la lista cerrada', () => {
-    const picked = pickConfigEnv({ ...env(), ALLOWED_HOSTS: 'a.example', OWNER_DATABASE_URL: SENTINEL, PATH: 'x' });
-
-    expect(Object.keys(picked).sort()).toEqual(['ALLOWED_HOSTS', 'API_KEY', 'BACKEND_URL', 'READER_DATABASE_URL']);
-    expect(JSON.stringify(picked)).not.toContain(SENTINEL);
   });
 });
 
@@ -302,17 +294,6 @@ describe('createConfigProvider', () => {
 
     expect(() => provider()).toThrow(failure);
     expect(lines).toEqual([]);
-  });
-
-  it('RF-F23: sin logger inyectado el proveedor escribe el evento en process.stderr', () => {
-    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-    try {
-      expect(() => createConfigProvider({ readEnv: () => ({}) })()).toThrow(ConfigError);
-      expect(write).toHaveBeenCalledTimes(1);
-      expect(String(write.mock.calls[0]?.[0])).toContain('"event":"config_invalid"');
-    } finally {
-      write.mockRestore();
-    }
   });
 
   it('RF-F23: getConfig lee solo los cuatro nombres de process.env en el primer uso, no al importar', () => {

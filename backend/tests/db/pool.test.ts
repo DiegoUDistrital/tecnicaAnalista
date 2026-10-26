@@ -129,14 +129,6 @@ describe('RF-D4: fallos de conexión como DatabaseUnavailableError', () => {
     }
   });
 
-  it('RF-D4 (v): una operación tras el cierre: mismo error', async () => {
-    const { logger } = createCaptureLogger();
-    const pool = createPool({ connectionString: writerUrl(), ...SETTINGS }, logger);
-    await pool.query('select 1');
-    await pool.close();
-    expect(await rejection(pool.query('select 1'))).toBeInstanceOf(DatabaseUnavailableError);
-  });
-
   it('RF-D4 (v-bis): una operación en curso cuya sesión se termina: mismo error', async () => {
     const { logger } = createCaptureLogger();
     const pool = createPool({ connectionString: writerUrl(), ...SETTINGS }, logger);

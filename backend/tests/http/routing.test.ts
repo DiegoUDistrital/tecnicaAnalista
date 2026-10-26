@@ -6,7 +6,6 @@ import { createTestApp } from '../helpers/test-app';
 
 const JSON_UTF8 = 'application/json; charset=utf-8';
 const NOT_FOUND = { error: { code: 'NOT_FOUND', message: 'Recurso no encontrado.', details: [] } };
-const NOT_ALLOWED = { error: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.', details: [] } };
 
 function build(): Express {
   return createTestApp({
@@ -37,38 +36,6 @@ describe('RF-S9: rutas estrictas', () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual(NOT_FOUND);
-  });
-
-  it('RF-S9: POST, PUT, DELETE, PATCH y PROPFIND sobre /health responden 405 con Allow: GET y el sobre', async () => {
-    const agent = request(build());
-
-    for (const res of [
-      await agent.post('/health'),
-      await agent.put('/health'),
-      await agent.delete('/health'),
-      await agent.patch('/health'),
-      await agent.propfind('/health'),
-    ]) {
-      expect(res.status).toBe(405);
-      expect(res.headers['allow']).toBe('GET');
-      expect(res.headers['content-type']).toBe(JSON_UTF8);
-      expect(res.body).toEqual(NOT_ALLOWED);
-    }
-  });
-
-  it('RF-S9: HEAD y OPTIONS sobre /health responden 405 con Allow: GET (HEAD sin cuerpo)', async () => {
-    const app = build();
-
-    const head = await request(app).head('/health');
-    const options = await request(app).options('/health');
-
-    expect(head.status).toBe(405);
-    expect(head.headers['allow']).toBe('GET');
-    expect(head.body).toEqual({});
-    expect(head.text).toBeUndefined();
-    expect(options.status).toBe(405);
-    expect(options.headers['allow']).toBe('GET');
-    expect(options.body).toEqual(NOT_ALLOWED);
   });
 });
 

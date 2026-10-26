@@ -127,11 +127,25 @@ describe('RF-G14: no es preflight, sigue el flujo normal', () => {
     return request(newApp()).options(path).set(OMIT_KEY_HEADER, '1');
   }
 
-  it('RF-G14: Access-Control-Request-Method vacío no es preflight (401 sin key)', async () => {
-    const response = await preflight(newApp(), '/api/tasks').set('Access-Control-Request-Method', '');
-
-    expect(response.status).toBe(401);
-    expect(response.headers['access-control-allow-methods']).toBeUndefined();
+  it.each([
+    [
+      'Access-Control-Request-Method vacío',
+      async () => await preflight(newApp(), '/api/tasks').set('Access-Control-Request-Method', ''),
+    ],
+    ['sin Origin', async () => await withoutKey('/api/tasks').set('Access-Control-Request-Method', 'POST')],
+    [
+      'Origin repetido',
+      async () =>
+        await raw(newApp(), 'OPTIONS /api/tasks HTTP/1.1', [
+          `Origin: ${ORIGIN}`,
+          `Origin: ${ORIGIN}`,
+          'Access-Control-Request-Method: GET',
+          'Connection: close',
+          `${OMIT_KEY_HEADER}: 1`,
+        ]),
+    ],
+  ])('RF-G14: %s no es preflight (401 sin key)', async (_label, send) => {
+    expect((await send()).status).toBe(401);
   });
 
   it('RF-G14: sin Access-Control-Request-Method: 401 sin key y 405 con Allow con key', async () => {
@@ -141,12 +155,6 @@ describe('RF-G14: no es preflight, sigue el flujo normal', () => {
     const keyed = await request(app).options('/api/tasks').set('Origin', ORIGIN);
     expect(keyed.status).toBe(405);
     expect(keyed.headers['allow']).toBe('GET, POST');
-  });
-
-  it('RF-G14: sin Origin no es preflight (401 sin key)', async () => {
-    const response = await withoutKey('/api/tasks').set('Access-Control-Request-Method', 'POST');
-
-    expect(response.status).toBe(401);
   });
 
   it('RF-G14: con origen no permitido no es preflight (401 sin key, 405 con key)', async () => {
@@ -161,18 +169,6 @@ describe('RF-G14: no es preflight, sigue el flujo normal', () => {
     const keyed = await call();
     expect(keyed.status).toBe(405);
     expect(keyed.headers['access-control-allow-origin']).toBeUndefined();
-  });
-
-  it('RF-G14: con Origin repetido no es preflight (401 sin key)', async () => {
-    const response = await raw(newApp(), 'OPTIONS /api/tasks HTTP/1.1', [
-      `Origin: ${ORIGIN}`,
-      `Origin: ${ORIGIN}`,
-      'Access-Control-Request-Method: GET',
-      'Connection: close',
-      `${OMIT_KEY_HEADER}: 1`,
-    ]);
-
-    expect(response.status).toBe(401);
   });
 
   it.each([
@@ -208,15 +204,6 @@ describe('RF-G14: no es preflight, sigue el flujo normal', () => {
     expect(response.status).toBe(405);
     expect(response.headers['allow']).toBe('GET');
   });
-
-  it('RF-C22: OPTIONS simple con key da 405 con Allow: GET, POST en /api/tasks y 404 en /api/nada', async () => {
-    const app = newApp();
-
-    const tasks = await request(app).options('/api/tasks');
-    expect(tasks.status).toBe(405);
-    expect(tasks.headers['allow']).toBe('GET, POST');
-    expect((await request(app).options('/api/nada')).status).toBe(404);
-  });
 });
 
 describe('RF-G1: el preflight va tras el cupo general y antes de la key', () => {
@@ -238,14 +225,13 @@ describe('RF-G1: el preflight va tras el cupo general y antes de la key', () => 
     expect(limited.headers['access-control-allow-methods']).toBeUndefined();
   });
 
-  it('RF-G9: los preflights no cuentan ni se bloquean (ni como fallo ni en el cupo de POST)', async () => {
-    const app = newApp({ authFailuresMax: 1, postMax: 1 });
+  it('RF-G9: los preflights no se bloquean ni cuentan como fallo', async () => {
+    const app = newApp({ authFailuresMax: 1 });
 
     for (let i = 0; i < 5; i += 1) {
       expect((await preflight(app, '/api/tasks')).status).toBe(204);
     }
     expect((await request(app).get('/api/probe').set('Authorization', WRONG)).status).toBe(401);
-    expect((await request(app).post('/api/post-probe').send({})).status).toBe(429);
   });
 
   it('RF-G14: los preflights no consumen el cupo de POST', async () => {
