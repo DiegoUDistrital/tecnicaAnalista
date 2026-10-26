@@ -2,7 +2,7 @@ import 'server-only';
 import { describeError, errorCode } from './error-fields';
 
 /** Eventos cerrados del registro. Añadir uno exige hacerlo aquí y en su test. */
-export type LogEvent = 'config_invalid' | 'route_failed';
+export type LogEvent = 'config_invalid' | 'route_failed' | 'counters_failed';
 
 /** Contexto de entrada: puede traer cualquier clave, pero solo las de la lista cerrada llegan a la salida. */
 export type LogContext = Readonly<Record<string, unknown>>;

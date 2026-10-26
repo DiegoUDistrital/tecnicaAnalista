@@ -210,3 +210,20 @@ describe('errorCode', () => {
     expect(errorCode(hostile)).toBeUndefined();
   });
 });
+
+describe('createLogger: eventos de los contadores', () => {
+  it('RF-F31: counters_failed es un evento de la lista cerrada y solo deja errorName y errorCode', () => {
+    const error = Object.assign(new Error(`password=${SECRET} postgresql://reader:${SECRET}@db/x`), {
+      code: 'ECONNREFUSED',
+    });
+    const raw = logRaw('counters_failed', { error });
+    expect(raw).not.toContain(SECRET);
+    expect(parse(raw)).toEqual({
+      time: FIXED_ISO,
+      level: 'error',
+      event: 'counters_failed',
+      errorName: 'Error',
+      errorCode: 'ECONNREFUSED',
+    });
+  });
+});

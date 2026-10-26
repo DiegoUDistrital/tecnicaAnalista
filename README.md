@@ -20,7 +20,7 @@ Las versiones se fijan al crear cada proyecto.
 - express-rate-limit 8.7.1 (límite de peticiones por IP)
 - PostgreSQL
 - Next.js 16.4.3 (App Router) con React 19.3.1 (frontend)
-- Prisma
+- Prisma 7.10.1 (en el backend y, solo lectura, en el frontend con `@prisma/adapter-pg`)
 - TypeScript 6.0.3
 - Tailwind CSS 4.3.3 (con `@tailwindcss/postcss` y PostCSS 8.5.31)
 - Vitest 5.0.5
@@ -978,8 +978,8 @@ El frontend se documenta en «Frontend (estado actual)».
 
 El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Por ahora solo
 tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad, las herramientas de
-calidad y la configuración propia (ver «Configuración del frontend»). Todavía no hay acceso a datos, rutas del servidor
-ni lista de tareas.
+calidad, la configuración propia (ver «Configuración del frontend») y la lectura de los contadores (ver «Contadores y
+Prisma en el frontend»). Todavía no hay rutas del servidor ni lista de tareas, y la página aún no muestra los contadores.
 
 ### Comandos
 
@@ -1009,12 +1009,15 @@ editar `package.json`.
 - `components/`: componentes de servidor puros que reciben datos por props.
 - `lib/`: funciones puras sin secretos que puede importar cualquiera, incluida `next.config.ts`.
 - `server/`: todo lo que toca secretos, base de datos o Express; nunca llega al navegador (`server/config/` valida la
-  configuración y `server/logging/` es el registro de errores). Cada archivo empieza con `import 'server-only'`, que
+  configuración, `server/logging/` es el registro de errores y `server/counters/` lee los contadores con Prisma). Cada
+  archivo empieza con `import 'server-only'`, que
   hace fallar la compilación si algo del navegador lo importa.
 - `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
+- `generated/`: cliente de Prisma generado (no se sube a git; lo crea `npm install`).
 - `client/`: reservada para el código que corre en el navegador (aún no existe).
 
-Solo `app/`, `lib/` y `server/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
+Fuera de `src`, `prisma/` y `prisma.config.ts` tienen el esquema y la configuración del CLI de Prisma. Solo `app/`,
+`lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
 hay un alias menos que mantener entre `tsconfig` y Vitest.
 
 ### Cabeceras de seguridad
@@ -1028,9 +1031,11 @@ con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el
 
 El servidor del frontend registra sus errores con un registro propio (`src/server/logging/`). Escribe una línea JSON
 por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Hoy lo usa la
-configuración (`config_invalid`); las rutas lo usarán en tareas posteriores.
+configuración (`config_invalid`) y la lectura de contadores (`counters_failed`); las rutas lo usarán en tareas
+posteriores.
 
-- **Eventos cerrados.** `config_invalid` (configuración inválida) y `route_failed` (fallo inesperado de una ruta).
+- **Eventos cerrados.** `config_invalid` (configuración inválida), `counters_failed` (no se pudieron leer los
+  contadores) y `route_failed` (fallo inesperado de una ruta).
 - **Campos cerrados.** Solo estos, en este orden:
   - `method`: `GET`, `POST`, `PUT` o `DELETE`. Otro valor se descarta.
   - `route`: la plantilla `/api/tasks` o `/api/tasks/:id`, nunca la URL real. Cualquier otra ruta se descarta.
@@ -1110,6 +1115,50 @@ mismo archivo trae comentados unos cupos más altos (`RATE_LIMIT_MAX=1000` y `RA
 interfaz hace una lectura de la lista tras cada acción y con los cupos por defecto se agotarían pronto. Todos los
 usuarios comparten un único cupo, porque el backend ve siempre la IP del servidor del frontend.
 
+### Contadores y Prisma en el frontend
+
+El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.1 (`prisma`, `@prisma/client` y
+`@prisma/adapter-pg`, versiones exactas). Lo hace en el servidor, con el rol `reader` y **solo sobre la vista
+`task_counts`**. Todavía no hay página que los muestre.
+
+- **Mínimo privilegio.** `reader` tiene SELECT únicamente sobre la vista y ningún permiso sobre `tasks`; aun con la
+  credencial filtrada, lo único que se vería son tres números. Se comprobó contra la base de desarrollo: con
+  `READER_DATABASE_URL`, `SELECT ... FROM task_counts` funciona y `SELECT 1 FROM tasks` falla con `42501` (permiso
+  denegado). Alternativa descartada: leer los contadores con el rol `writer` o con un `COUNT(*)` sobre `tasks`, que
+  daría al frontend acceso a todas las tareas.
+- **La vista no se modela.** `prisma/schema.prisma` se obtuvo con `prisma db pull` conectando como `reader`. Como
+  `reader` no ve columnas de `tasks` ni la vista, Prisma no genera ningún modelo y deja `tasks` y `_prisma_migrations`
+  como comentarios vacíos (no son modelos). El esquema solo declara el generador (`prisma-client`, salida en
+  `src/generated/prisma`) y la fuente de datos. Por eso la lectura es una consulta cruda de texto fijo
+  (`SELECT completed, total FROM task_counts`, plantilla etiquetada de `$queryRaw`, sin parámetros), y un test comprueba
+  que su texto solo menciona `task_counts`. Alternativa descartada: editar el esquema a mano para añadir un modelo de la
+  vista, que dejaría de ser «lo que devuelve `db pull`».
+- **Filas validadas.** La vista devuelve una fila por estado que tenga tareas (puede haber 0, 1 o 2). Se exige que cada
+  fila tenga `completed` booleano y `total` entero no negativo, sin estados repetidos; el estado que falta cuenta 0.
+  Cualquier otra forma es una lectura inválida.
+- **Plazo de 2 s y fallo sin datos.** `readCounters` nunca lanza: si la base no responde en 2 segundos, si falla la
+  conexión, si las filas no tienen la forma esperada o si la configuración es inválida, registra el evento
+  `counters_failed` (solo nombre de la clase y código del error, nunca el mensaje ni la URL) y devuelve «no disponibles».
+  La página (siguiente tarea) mostrará entonces «—» con un aviso. La consulta que pierde la carrera sigue en curso sin
+  bloquear la respuesta.
+- **Un solo cliente.** `src/server/counters/reader-database.ts` crea el cliente la primera vez que se lee (nunca al
+  importar ni en `npm run build`, que no abre ninguna conexión) con `READER_DATABASE_URL`, `log: []` (Prisma no escribe
+  consultas ni errores) y lo guarda en `globalThis` para que `npm run dev` no abra un pool nuevo en cada recarga.
+- **El cliente generado no se sube.** `src/generated/` está en `.gitignore` y `npm install` ejecuta `prisma generate`
+  (`postinstall`), que no necesita ninguna variable de entorno. Alternativa descartada: versionar el código generado,
+  que ensucia las revisiones y se desfasa.
+- **Sin migraciones.** El dueño del esquema es el backend; el frontend no migra. Tras cada migración nueva hay que
+  regenerar el esquema y el cliente a mano (`prisma db pull` y `prisma generate`).
+- **Cómo pasar `READER_DATABASE_URL` al CLI.** El CLI de Prisma no lee ningún `.env`. Desde `frontend/`:
+  `node --env-file=.env node_modules/prisma/build/index.js db pull` (o, en PowerShell,
+  `$env:READER_DATABASE_URL = '...'` y luego `npx prisma db pull`). Si hay que repetir el `db pull`, la base de
+  desarrollo debe estar arriba (`docker compose -f docker-compose.dev.yml up -d --wait`). `prisma.config.ts` lee la
+  variable directamente de `process.env` y no con el ayudante `env()`, que lanza si falta y rompería `generate` en un
+  clon limpio.
+- **Riesgo residual.** Hay dos caminos de lectura (los contadores por Prisma y la lista por Express) y dos credenciales
+  de base de datos (`writer` en el backend y `reader` en el frontend). Los contadores pueden diferir un instante de la
+  lista tras una escritura.
+
 ### Por qué el proyecto se creó a mano
 
 No se usó `create-next-app`: instala versiones con `^`, añade archivos de demostración y fuentes que se descargan en
@@ -1141,6 +1190,7 @@ mismas herramientas que el backend. Next.js exige Node 20.9 o superior; el `engi
 
 `next-env.d.ts` (lo escribe Next y apunta a `.next`) está en `.gitignore`: `npm run typecheck` funciona en un clon limpio
 sin él. `npm run dev` puede crear un `AGENTS.md` si detecta un asistente de código; también se ignora.
+`src/generated/` (el cliente de Prisma) tampoco se sube: `npm install` lo regenera con `prisma generate`.
 
 ## Cómo ejecutar
 
