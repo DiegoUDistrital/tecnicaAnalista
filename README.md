@@ -181,6 +181,48 @@ lleva las cabeceras de [`helmet`](https://helmetjs.github.io/) 8.3.0 con sus val
 - **Limitación.** Las respuestas que Node genera antes de que la petición llegue a Express (por ejemplo `431` por
   cabeceras demasiado grandes o una petición mal formada) no pasan por la aplicación y no llevan estas cabeceras.
 
+## IP real del cliente y proxies de confianza
+
+El servicio calcula una «clave de cliente» a partir de la IP de quien llama. Todavía no la usa para limitar
+peticiones (eso llega después); este apartado explica cómo se obtiene y cómo se configura.
+
+- **Por qué hace falta.** El navegador no llama a Express: lo hace el servidor del frontend. Para Express, todas las
+  peticiones vienen de ese servidor. Si el límite contara su IP, un solo usuario agotaría el cupo de todos. Por eso el
+  frontend debe pasar la IP del usuario en `X-Forwarded-For` y Express debe leerla, pero solo cuando se puede creer.
+- **Cuándo se cree `X-Forwarded-For`.** Solo si la conexión TCP viene de una dirección de la lista
+  `TRUSTED_PROXIES`. Si viene de otra, la cabecera se ignora y cuenta la dirección de la conexión: quien falsifique
+  la cabecera desde fuera no evade nada. `Forwarded` y `X-Real-IP` no se leen nunca.
+- **Por qué una lista de direcciones.** Alternativas descartadas: `true` (creer a cualquiera: cualquiera falsifica su
+  IP) y un número de saltos (depende de cuántos proxies haya y de que ninguno falle). Una lista dice exactamente de
+  quién se fía el servicio. Tampoco se usa `req.ip` de Express, que devuelve la última entrada no confiable aunque sea
+  basura; el servicio tiene su propio cálculo, con reglas escritas y probadas.
+- **Regla de la última entrada no confiable.** Con la conexión de confianza se recorre `X-Forwarded-For` de derecha a
+  izquierda, se saltan las direcciones de confianza y decide la primera que no lo es: `X, A` cuenta `A` (cambiar `X`
+  no sirve para evadir). Si esa entrada no es una IP válida (`A, basura`), o todas son de confianza
+  (`127.0.0.1, 127.0.0.1`), cuenta la dirección de la conexión: falla del lado estricto (un cupo compartido) y nunca
+  del permisivo. Una cabecera de más de 512 caracteres se trata como basura.
+- **Qué es una IP válida.** Una IP literal en forma canónica: sin zona (`fe80::1%eth0`), sin ceros a la izquierda
+  (`010.0.0.1`), sin puerto ni corchetes. Las IPv6 se escriben abreviadas y en minúsculas (la forma larga y la corta
+  son la misma) y una IPv4-mapeada (`::ffff:203.0.113.7`) cuenta como la IPv4 (`203.0.113.7`). Un valor mal formado no
+  crea claves nuevas: cae en la dirección de la conexión.
+- **IPv6 por /64.** Las direcciones IPv6 se agrupan por sus 4 primeros grupos (el /64): quien tiene una red IPv6
+  dispone de millones de direcciones y, si cada una contara aparte, evadiría el límite cambiando de dirección.
+- **`TRUSTED_PROXIES`.** Lista separada por comas, con espacios opcionales alrededor de cada entrada. Cada entrada es
+  un nombre, una IP o una `IP/prefijo`:
+  - `loopback`: `127.0.0.0/8` y `::1`.
+  - `linklocal`: `169.254.0.0/16` y `fe80::/10`.
+  - `uniquelocal`: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` y `fc00::/7`.
+  - Prefijo mínimo `/8` en IPv4 y `/7` en IPv6 (así una lista no puede confiar en medio Internet); la máscara larga
+    (`10.0.0.0/255.0.0.0`) no se admite. Los nombres distinguen mayúsculas.
+  - `none` (solo, en minúsculas) significa que nadie es de confianza: ninguna cabecera influye y cuenta siempre la
+    dirección de la conexión.
+  - Ausente equivale a `loopback`. Vacía, con entradas vacías (`a,,b`), `true`, `/0`, `None`, `NONE` o cualquier otro
+    texto es inválida y el servicio no arranca (el error nombra la variable, nunca su valor).
+- **Contrato para el frontend.** Su servidor debe enviar UNA sola IP en `X-Forwarded-For`, la de quien le llama, y
+  SOBRESCRIBIR la cabecera (no copiar ni anteponer lo que traiga el navegador).
+- **Riesgo.** Si el frontend no envía la cabecera, o `TRUSTED_PROXIES` no incluye la red desde la que se conecta, todos
+  los usuarios comparten una misma clave y un solo usuario podría agotar el cupo de todos.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
@@ -220,6 +262,7 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `HOST` | dirección IP literal | `127.0.0.1` | Dirección en la que escuchará el servicio. |
 | `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
 | `API_KEY` | 43 a 128 caracteres de `A-Za-z0-9_-`, al menos 10 distintos | (obligatoria) | Clave de la API (secreta). |
+| `TRUSTED_PROXIES` | lista de `loopback`, `linklocal`, `uniquelocal`, IP o `IP/prefijo`; o `none` | `loopback` | Direcciones de las que se cree `X-Forwarded-For` (ver «IP real del cliente y proxies de confianza»). |
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 

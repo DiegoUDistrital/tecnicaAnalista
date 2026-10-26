@@ -157,7 +157,7 @@ describe('RF-D1: mensajes sin valores y orden', () => {
       databaseUrl: VALID_URL,
       pool: { max: 20, idleTimeoutMillis: 1000, connectionTimeoutMillis: 60000 },
       server: { port: 3000, host: '127.0.0.1', shutdownTimeoutMs: 10000 },
-      security: { apiKey: TEST_API_KEY },
+      security: { apiKey: TEST_API_KEY, trustedProxies: expect.any(Object) as unknown },
     });
   });
 });
@@ -241,7 +241,7 @@ describe('RF-G6: API_KEY', () => {
   const EXAMPLE = 'API_KEY: no puede ser el valor de ejemplo';
 
   it('RF-G6: una key válida llega a security.apiKey', () => {
-    expect(loadConfig(baseEnv()).security).toEqual({ apiKey: TEST_API_KEY });
+    expect(loadConfig(baseEnv()).security.apiKey).toBe(TEST_API_KEY);
   });
 
   it(
@@ -302,5 +302,35 @@ describe('RF-G6: API_KEY', () => {
 
     expect(message).toContain('API_KEY');
     expect(message).not.toContain('sentinel-key-value');
+  });
+});
+
+describe('RF-G12: TRUSTED_PROXIES en la configuración', () => {
+  const MESSAGE = 'TRUSTED_PROXIES: lista inválida';
+
+  it('RF-G12: AppConfig.security.trustedProxies por defecto (variable ausente) cubre loopback', () => {
+    const { trustedProxies } = loadConfig(baseEnv({ TRUSTED_PROXIES: undefined })).security;
+    expect(trustedProxies.contains('127.0.0.1')).toBe(true);
+    expect(trustedProxies.contains('::1')).toBe(true);
+    expect(trustedProxies.contains('203.0.113.7')).toBe(false);
+  });
+
+  it('RF-G12: una lista válida llega a AppConfig.security.trustedProxies', () => {
+    const { trustedProxies } = loadConfig(baseEnv({ TRUSTED_PROXIES: 'loopback, 10.0.0.0/8' })).security;
+    expect(trustedProxies.contains('10.1.2.3')).toBe(true);
+    expect(loadConfig(baseEnv({ TRUSTED_PROXIES: 'none' })).security.trustedProxies.contains('127.0.0.1')).toBe(false);
+  });
+
+  it.each(['', 'None', 'true', '0.0.0.0/0', 'loopback,,10.0.0.1'])(
+    'RF-G12: TRUSTED_PROXIES %j es inválida',
+    (value) => {
+      expect(messageOf(baseEnv({ TRUSTED_PROXIES: value }))).toBe(MESSAGE);
+    },
+  );
+
+  it('RF-G12: TRUSTED_PROXIES inválida se nombra junto con las demás, sin valores', () => {
+    const message = messageOf(baseEnv({ PORT: '0', TRUSTED_PROXIES: 'sentinel-proxy-value/99', API_KEY: undefined }));
+    expect(message).toBe(`PORT: entero inválido o fuera de rango; API_KEY: obligatoria; ${MESSAGE}`);
+    expect(message).not.toContain('sentinel-proxy-value');
   });
 });

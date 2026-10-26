@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { ConfigError } from '../errors/config-error';
 import { checkApiKey } from '../security/api-key';
+import { parseTrustedProxies, type TrustedProxies } from '../security/trusted-proxies';
 
 /** Configuración validada que usa el resto del backend. */
 export interface AppConfig {
@@ -17,12 +18,15 @@ export interface AppConfig {
   };
   security: {
     apiKey: string;
+    /** Direcciones de las que se cree `X-Forwarded-For`. */
+    trustedProxies: TrustedProxies;
   };
 }
 
 type VariableSpec =
   | { name: string; kind: 'writer-url' }
   | { name: string; kind: 'api-key' }
+  | { name: string; kind: 'trusted-proxies' }
   | { name: string; kind: 'host'; fallback: string }
   | { name: string; kind: 'int'; min: number; max: number; fallback: number };
 
@@ -39,6 +43,7 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'HOST', kind: 'host', fallback: '127.0.0.1' },
   { name: 'SHUTDOWN_TIMEOUT_MS', kind: 'int', min: 1000, max: 120000, fallback: 10000 },
   { name: 'API_KEY', kind: 'api-key' },
+  { name: 'TRUSTED_PROXIES', kind: 'trusted-proxies' },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -104,6 +109,7 @@ function checkWriterUrl(raw: string): string | undefined {
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): AppConfig {
   const messages: string[] = [];
   const values = new Map<string, string | number>();
+  let trustedProxies: TrustedProxies | undefined;
 
   for (const variable of VARIABLES) {
     const raw = env[variable.name];
@@ -122,6 +128,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
         messages.push(message);
       } else if (raw !== undefined) {
         values.set(variable.name, raw);
+      }
+      continue;
+    }
+    if (variable.kind === 'trusted-proxies') {
+      trustedProxies = parseTrustedProxies(raw);
+      if (trustedProxies === undefined) {
+        messages.push(`${variable.name}: lista inválida`);
       }
       continue;
     }
@@ -158,6 +171,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       host: String(values.get('HOST')),
       shutdownTimeoutMs: Number(values.get('SHUTDOWN_TIMEOUT_MS')),
     },
-    security: { apiKey: String(values.get('API_KEY')) },
+    // Sin mensajes de error, `trustedProxies` está definida (se asigna en cada vuelta de la variable).
+    security: { apiKey: String(values.get('API_KEY')), trustedProxies: trustedProxies as TrustedProxies },
   };
 }

@@ -73,6 +73,15 @@ describe('RF-D2: .env.example', () => {
     expect(comment).toContain('rechaza');
   });
 
+  it('RF-G12: TRUSTED_PROXIES figura en .env.example con su valor por defecto y un comentario explicativo', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('TRUSTED_PROXIES');
+    expect(values['TRUSTED_PROXIES']).toBe('loopback');
+    const comment = /((?:^#.*\r?\n)+)TRUSTED_PROXIES=/m.exec(raw)?.[1] ?? '';
+    for (const word of ['loopback', 'linklocal', 'uniquelocal', 'none', 'X-Forwarded-For']) {
+      expect(comment, word).toContain(word);
+    }
+  });
+
   it('RF-D2 (v): DB_NAME y DB_NAME_TEST cumplen [a-z0-9_]{1,63} y DB_NAME_TEST termina en _test', () => {
     expect(values['DB_NAME']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/^[a-z0-9_]{1,63}$/);

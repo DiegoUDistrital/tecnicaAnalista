@@ -1,4 +1,6 @@
 import type { Express, RequestHandler } from 'express';
+import type { AppConfig } from '../../src/config/config';
+import { parseTrustedProxies, type TrustedProxies } from '../../src/security/trusted-proxies';
 
 // `Express` no declara `handle` en sus tipos (sí existe en tiempo de ejecución, con la forma de un manejador).
 
@@ -8,12 +10,22 @@ export const TEST_API_KEY = 'Tk3st-Ap1-K3y_0123456789-abcdefghijklmnopqr';
 /** Cabecera que pide una petición SIN key: `withTestKey` no inyecta nada y la retira antes de que la vea la app. */
 export const OMIT_KEY_HEADER = 'X-Test-Omit-Key';
 
+/** Lista de proxies de confianza a partir del texto de `TRUSTED_PROXIES`; falla si el texto es inválido. */
+export function testProxies(raw: string | undefined): TrustedProxies {
+  const parsed = parseTrustedProxies(raw);
+  if (parsed === undefined) {
+    throw new Error(`TRUSTED_PROXIES de prueba inválida: ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
 /**
- * Ajustes de seguridad de la app de pruebas: por ahora solo la key válida. `overrides` los modifica (por ejemplo,
- * para probar la app con otra key).
+ * Ajustes de seguridad de la app de pruebas: la key válida y `TRUSTED_PROXIES=none` (ninguna cabecera de proxy
+ * influye, así que la IP que cuenta es siempre la de la conexión). `overrides` los modifica (por ejemplo, para
+ * probar la app con otra key o con otra lista de proxies).
  */
-export function testSecurity(overrides: { apiKey?: string } = {}): { apiKey: string } {
-  return { apiKey: TEST_API_KEY, ...overrides };
+export function testSecurity(overrides: Partial<AppConfig['security']> = {}): AppConfig['security'] {
+  return { apiKey: TEST_API_KEY, trustedProxies: testProxies('none'), ...overrides };
 }
 
 /**
