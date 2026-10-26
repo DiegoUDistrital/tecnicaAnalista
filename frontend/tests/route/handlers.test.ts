@@ -74,7 +74,7 @@ describe('rutas: las cuatro operaciones', () => {
 });
 
 describe('rutas: cabeceras hacia Express', () => {
-  it('RF-F18: ninguna cabecera del navegador llega a Express; solo Authorization y Content-Type', async () => {
+  it('RF-F18, RF-I1: ninguna cabecera del navegador llega a Express; solo Authorization y Content-Type', async () => {
     const h = createHarness();
     const hostile = {
       cookie: 'sid=abc',
@@ -93,6 +93,51 @@ describe('rutas: cabeceras hacia Express', () => {
     expect(Object.keys(postHeaders ?? {}).sort()).toEqual(['Authorization', 'Content-Type']);
     expect(Object.keys(deleteHeaders ?? {})).toEqual(['Authorization']);
     expect(postHeaders?.Authorization).toBe(`Bearer ${SENTINEL_KEY}`);
+  });
+
+  it('RF-I1: ninguna cabecera de IP sale hacia Express aunque Express responda 400, 404, 429 o 500', async () => {
+    const forbidden = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'];
+    const hostile = { 'x-forwarded-for': '203.0.113.99', forwarded: 'for=203.0.113.99', 'x-real-ip': '203.0.113.99' };
+    for (const status of [400, 404, 429, 500]) {
+      const h = createHarness({ express: () => fakeResponse({ status, body: '{"error":{"code":"X"}}' }) });
+      await h.collection(json(`${BASE}/api/tasks`, 'POST', hostile, OK_BODY));
+      await h.collection(new Request(`${BASE}/api/tasks`, { headers: { host: 'localhost:3001', ...hostile } }));
+      await h.item(json(ITEM_URL, 'PUT', hostile, OK_BODY), itemContext());
+      await h.item(json(ITEM_URL, 'DELETE', hostile), itemContext());
+      expect(h.calls).toHaveLength(4);
+      for (const call of h.calls) {
+        const names = Object.keys(call.init.headers as Record<string, string>).map((name) => name.toLowerCase());
+        expect(names.filter((name) => forbidden.includes(name))).toEqual([]);
+      }
+    }
+  });
+
+  it('RF-I3: un X-Forwarded-For centinela no aparece en el cuerpo, las cabeceras ni lo registrado', async () => {
+    const sentinel = '203.0.113.99';
+    const out: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => out.push(String(chunk)) > 0);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => out.push(String(chunk)) > 0);
+    try {
+      const hostile = { 'x-forwarded-for': sentinel, forwarded: `for=${sentinel}`, 'x-real-ip': sentinel };
+      const seen: string[] = [];
+      for (const status of [200, 400, 429, 500]) {
+        const h = createHarness({ express: () => fakeResponse({ status, body: '{"error":{"code":"X"}}' }) });
+        const responses = [
+          await h.collection(json(`${BASE}/api/tasks`, 'POST', hostile, OK_BODY)),
+          await h.collection(new Request(`${BASE}/api/tasks`, { headers: { host: 'localhost:3001', ...hostile } })),
+          await h.item(json(ITEM_URL, 'DELETE', hostile), itemContext()),
+        ];
+        for (const response of responses) {
+          seen.push(JSON.stringify([...response.headers.entries()]), await response.text());
+        }
+        seen.push(...h.logs, JSON.stringify(h.calls));
+      }
+      expect(seen.length).toBeGreaterThan(0);
+      expect([...seen, ...out].join('\n')).not.toContain(sentinel);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
   });
 });
 
