@@ -15,7 +15,8 @@ function defaultDeps(): ServerDeps {
     env: process.env,
     logger: createLogger((line) => process.stdout.write(line)),
     createDatabase: (config, logger) => createPool({ connectionString: config.databaseUrl, ...config.pool }, logger),
-    createServer: (logger, database) => http.createServer(createApp({ logger, database })),
+    createServer: (logger, database, config) =>
+      http.createServer(createApp({ logger, database, security: config.security })),
     process,
     timers: {
       setTimer: (callback, ms) => {
@@ -169,12 +170,13 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
     }
 
     /** Crea el servidor y escucha. Tras cada espera comprueba si se pidió el aborto. */
-    async function listenIfNotAborted(db: Database, port: number, host: string): Promise<void> {
+    async function listenIfNotAborted(db: Database, config: AppConfig): Promise<void> {
+      const { port, host } = config.server;
       if (!(await pendingCheck) || abortRequested) {
         return;
       }
       try {
-        server = deps.createServer(deps.logger, db);
+        server = deps.createServer(deps.logger, db, config);
         attachClientErrorHandler(server);
         tracker.attach(server);
         listenCalled = true;
@@ -254,6 +256,6 @@ export function startServer(overrides: Partial<ServerDeps> = {}): Promise<number
       return;
     }
     pendingCheck = checkDatabase(database);
-    void listenIfNotAborted(database, config.server.port, config.server.host);
+    void listenIfNotAborted(database, config);
   });
 }

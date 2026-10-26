@@ -2,7 +2,6 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Express } from 'express';
-import { createApp } from '../../src/app';
 import type { Database } from '../../src/db/pool';
 import { withInput } from '../../src/http/input/request-input';
 import { registerRoute } from '../../src/http/route-table';
@@ -11,6 +10,7 @@ import { startServer } from '../../src/server/start-server';
 import { createCaptureLogger } from '../helpers/capture-logger';
 import { rawRequest } from '../helpers/raw-http';
 import { createHarness, getFreePort, SENTINEL_PASSWORD, validEnv } from '../helpers/server-fakes';
+import { buildTestApp } from '../helpers/test-app';
 
 const PROCESS_EVENTS = ['SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
 
@@ -259,7 +259,7 @@ describe('RF-S11: evento startup', () => {
     const real = {
       ...harness.overrides,
       createServer: (logger: Logger, database: Database) => {
-        const server = http.createServer(createApp({ logger, database }));
+        const server = http.createServer(buildTestApp({ logger, database }));
         cleanups.push(closeHttp(server));
         return server;
       },
@@ -321,7 +321,7 @@ describe('RF-C24: manejador de clientError registrado por startServer', () => {
     const running = startServer({
       ...harness.overrides,
       createServer: (logger: Logger, database: Database) => {
-        const server = http.createServer(createApp({ logger, database, registerRoutes }));
+        const server = http.createServer(buildTestApp({ logger, database, registerRoutes }));
         cleanups.push(closeHttp(server));
         return server;
       },

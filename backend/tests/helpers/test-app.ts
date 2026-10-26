@@ -1,7 +1,9 @@
 import type { Express } from 'express';
 import { createApp } from '../../src/app';
 import type { Database } from '../../src/db/pool';
+import type { Logger } from '../../src/logging/logger';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
+import { testSecurity, withTestKey } from './security';
 
 export interface TestAppOptions {
   /** Rutas de prueba que se registran antes del 404 final y del manejador central. */
@@ -25,10 +27,31 @@ export function unusedDatabase(): Database {
   };
 }
 
-/** Único punto de los tests que llama a `createApp`: construye la app real con un logger de captura. */
+export interface BuildTestAppOptions {
+  logger: Logger;
+  database: Database;
+  registerRoutes?: (app: Express) => void;
+}
+
+/**
+ * Único punto de los tests que llama a `createApp`: construye la app real y hace que toda petición lleve la API key
+ * de pruebas (`withTestKey`); para una petición sin key se envía el marcador `X-Test-Omit-Key`.
+ */
+export function buildTestApp(options: BuildTestAppOptions): Express {
+  return withTestKey(
+    createApp({
+      logger: options.logger,
+      database: options.database,
+      security: testSecurity(),
+      ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
+    }),
+  );
+}
+
+/** App real con un logger de captura y, por defecto, una base de datos que falla al usarse. */
 export function createTestApp(options: TestAppOptions = {}): TestApp {
   const capture = options.capture ?? createCaptureLogger();
-  const app = createApp({
+  const app = buildTestApp({
     logger: capture.logger,
     database: options.database ?? unusedDatabase(),
     ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),

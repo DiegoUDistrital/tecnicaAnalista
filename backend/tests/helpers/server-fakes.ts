@@ -4,6 +4,7 @@ import type { QueryResult } from 'pg';
 import type { Database } from '../../src/db/pool';
 import type { ProcessLike, ServerDeps, ServerLike, Timers } from '../../src/server/server.types';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
+import { baseEnv } from './config-env';
 
 export interface Deferred<T = void> {
   readonly promise: Promise<T>;
@@ -39,10 +40,10 @@ export const SENTINEL_PASSWORD = 'sentinel-pw-7f3a9c';
 
 /** Entorno mínimo válido (el resto toma sus valores por defecto); `overrides` lo modifica. */
 export function validEnv(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
-  return {
+  return baseEnv({
     DATABASE_URL: `postgresql://writer:${SENTINEL_PASSWORD}@127.0.0.1:5433/todo_app_test`,
     ...overrides,
-  };
+  });
 }
 
 export interface FakeTimers extends Timers {

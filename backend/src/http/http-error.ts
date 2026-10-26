@@ -3,6 +3,7 @@ import { AppError } from '../errors/app-error';
 /** Tabla de estados del contrato de errores: cada estado tiene un `code` y un mensaje fijo en español. */
 const STATUS_TABLE = {
   400: { code: 'VALIDATION_ERROR', message: 'Datos inválidos.' },
+  401: { code: 'UNAUTHORIZED', message: 'No autorizado.' },
   404: { code: 'NOT_FOUND', message: 'Recurso no encontrado.' },
   405: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.' },
   413: { code: 'PAYLOAD_TOO_LARGE', message: 'El cuerpo de la petición supera el tamaño máximo.' },

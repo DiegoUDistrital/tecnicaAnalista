@@ -1,7 +1,6 @@
 import http from 'node:http';
 import net from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app';
 import type { Database } from '../../src/db/pool';
 import { health } from '../../src/http/health';
 import { registerRoute } from '../../src/http/route-table';
@@ -15,6 +14,7 @@ import {
   type HarnessOptions,
   validEnv,
 } from '../helpers/server-fakes';
+import { buildTestApp } from '../helpers/test-app';
 
 const PROCESS_EVENTS = ['SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
 
@@ -120,7 +120,7 @@ async function startReal(options: HarnessOptions = {}): Promise<Running> {
   const entered = deferred();
   const gate = deferred();
   const createServer = (logger: Logger, database: Database): http.Server => {
-    const app = createApp({
+    const app = buildTestApp({
       logger,
       database,
       registerRoutes: (target) => {

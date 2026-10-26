@@ -24,6 +24,15 @@ function declaredLength(req: Request): number | undefined {
   return header === undefined ? undefined : Number(header);
 }
 
+/**
+ * Hay cuerpo «presente» solo según las cabeceras (`Content-Length` mayor que 0 o `Transfer-Encoding`), nunca según los
+ * bytes. Lo usa también la guarda de la API key para decidir si cierra la conexión tras un 401.
+ */
+export function isBodyPresent(req: Request): boolean {
+  const declared = declaredLength(req);
+  return (declared !== undefined && declared > 0) || req.headers['transfer-encoding'] !== undefined;
+}
+
 function checkEncoding(req: Request): void {
   if (!isIdentityEncoding(collectHeader(req.rawHeaders, 'content-encoding'))) {
     throw new HttpError(415);
@@ -37,11 +46,10 @@ function checkType(req: Request): void {
 }
 
 /**
- * Etapas 2, 3 y 4 de la entrada. Hay cuerpo «presente» solo según las cabeceras (`Content-Length` mayor que 0 o
- * `Transfer-Encoding`), nunca según los bytes. Con `Content-Length` conocido el tamaño y el 415 se deciden sin leer;
- * con fragmentos se lee hasta el final o hasta superar el límite y DESPUÉS se aplican las reglas de 415. Así el 413
- * siempre gana al 415. `Content-Encoding` se comprueba siempre; `Content-Type` solo si hay cuerpo. Con los bytes ya
- * leídos, la etapa 4 los convierte en un objeto JSON (o rechaza según `bodyMode`).
+ * Etapas 2, 3 y 4 de la entrada. Hay cuerpo «presente» según {@link isBodyPresent}. Con `Content-Length` conocido el
+ * tamaño y el 415 se deciden sin leer; con fragmentos se lee hasta el final o hasta superar el límite y DESPUÉS se
+ * aplican las reglas de 415. Así el 413 siempre gana al 415. `Content-Encoding` se comprueba siempre; `Content-Type`
+ * solo si hay cuerpo. Con los bytes ya leídos, la etapa 4 los convierte en un objeto JSON (o rechaza según `bodyMode`).
  */
 async function readRequestInput(req: Request, res: Response, bodyMode: BodyMode): Promise<RequestInput> {
   const rawQuery = rawQueryOf(req);
@@ -50,7 +58,7 @@ async function readRequestInput(req: Request, res: Response, bodyMode: BodyMode)
     closeConnectionAfterResponse(res);
     throw new HttpError(413);
   }
-  const present = (declared !== undefined && declared > 0) || req.headers['transfer-encoding'] !== undefined;
+  const present = isBodyPresent(req);
   let bytes: Buffer = Buffer.alloc(0);
   if (!present) {
     checkEncoding(req);

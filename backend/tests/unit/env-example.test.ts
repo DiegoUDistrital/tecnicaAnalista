@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_VARIABLE_NAMES, loadConfig } from '../../src/config/config';
+import { EXAMPLE_API_KEY } from '../../src/security/api-key';
+import { TEST_API_KEY } from '../helpers/security';
 
 // Vitest se ejecuta desde backend/: el .env.example está en la raíz del repositorio.
 const raw = readFileSync(resolve(process.cwd(), '..', '.env.example'), 'utf8');
@@ -53,8 +55,22 @@ describe('RF-D2: .env.example', () => {
     }
   });
 
-  it('RF-D2 (iv): cargar los valores de .env.example con loadConfig no produce errores', () => {
-    expect(() => loadConfig(values)).not.toThrow();
+  it('RF-D2 (iv): cargar .env.example (con API_KEY sustituida por una válida) no produce errores', () => {
+    expect(() => loadConfig({ ...values, API_KEY: TEST_API_KEY })).not.toThrow();
+  });
+
+  it('RF-G6: el valor de ejemplo de API_KEY de .env.example, tal cual, lo rechaza loadConfig', () => {
+    expect(values['API_KEY']).toBe(EXAMPLE_API_KEY);
+    expect(() => loadConfig(values)).toThrow('API_KEY: no puede ser el valor de ejemplo');
+  });
+
+  it('RF-G20: API_KEY figura en .env.example con comentario y comando de generación', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('API_KEY');
+    expect(Object.keys(values)).toContain('API_KEY');
+    const comment = /((?:^#.*\r?\n)+)API_KEY=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain("randomBytes(32).toString('base64url')");
+    expect(comment).toContain('node -e');
+    expect(comment).toContain('rechaza');
   });
 
   it('RF-D2 (v): DB_NAME y DB_NAME_TEST cumplen [a-z0-9_]{1,63} y DB_NAME_TEST termina en _test', () => {

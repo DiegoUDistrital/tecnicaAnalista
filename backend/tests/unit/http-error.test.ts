@@ -6,6 +6,7 @@ import { ThrownValue } from '../../src/http/guard';
 
 const TABLE = [
   { status: 400, code: 'VALIDATION_ERROR', message: 'Datos inválidos.' },
+  { status: 401, code: 'UNAUTHORIZED', message: 'No autorizado.' },
   { status: 404, code: 'NOT_FOUND', message: 'Recurso no encontrado.' },
   { status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.' },
   { status: 413, code: 'PAYLOAD_TOO_LARGE', message: 'El cuerpo de la petición supera el tamaño máximo.' },
@@ -40,6 +41,13 @@ describe('RF-S7: HttpError', () => {
       });
     },
   );
+
+  it('RF-S7: 401 UNAUTHORIZED «No autorizado.» con details []', () => {
+    expect(new HttpError(401).toBody()).toEqual({
+      error: { code: 'UNAUTHORIZED', message: 'No autorizado.', details: [] },
+    });
+    expect(() => new HttpError(401, [ENTRY])).toThrow(TypeError);
+  });
 
   it('RF-S7: ejemplo del contrato del 400', () => {
     expect(new HttpError(400, [{ field: 'title', message: 'Es obligatorio.' }]).toBody()).toEqual({

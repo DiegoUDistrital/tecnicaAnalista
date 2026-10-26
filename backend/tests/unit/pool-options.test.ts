@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config/config';
 import { buildPoolOptions } from '../../src/db/pool';
+import { baseEnv } from '../helpers/config-env';
 
 describe('RF-D3: buildPoolOptions', () => {
   it('RF-D3: traduce los valores conocidos a las opciones de pg', () => {
@@ -19,7 +20,7 @@ describe('RF-D3: buildPoolOptions', () => {
   });
 
   it('RF-D3: con los defectos de loadConfig usa 10, 30000 y 5000', () => {
-    const config = loadConfig({ DATABASE_URL: 'postgresql://writer:pw@127.0.0.1:5433/todo_app' });
+    const config = loadConfig(baseEnv({ DATABASE_URL: 'postgresql://writer:pw@127.0.0.1:5433/todo_app' }));
     const options = buildPoolOptions({ connectionString: config.databaseUrl, ...config.pool });
     expect(options.max).toBe(10);
     expect(options.idleTimeoutMillis).toBe(30000);
