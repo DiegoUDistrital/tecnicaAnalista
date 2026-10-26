@@ -44,7 +44,7 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
     reload('background');
     startTransition(() => router.refresh());
   }, [reload, router]);
-  const { toggle, registerToggle, headingRef } = useTaskActions({ tasks, status, dispatch, afterWrite });
+  const { toggle, remove, registerToggle, headingRef } = useTaskActions({ tasks, status, dispatch, afterWrite });
 
   const clearNotice = useCallback(() => dispatch({ type: 'noticeCleared' }), []);
   const created = useCallback(() => {
@@ -107,6 +107,7 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
                   busy={ui.busy.includes(task.id)}
                   error={ui.taskErrors[task.id]}
                   onToggle={toggle}
+                  onDelete={remove}
                   registerToggle={registerToggle}
                 />
               </li>

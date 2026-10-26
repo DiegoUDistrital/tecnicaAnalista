@@ -1203,7 +1203,7 @@ La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista 
 acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
 recargaría la página entera).
 
-En esta versión la pantalla muestra la lista y permite crear, completar y desmarcar tareas. Editar y borrar se añaden en pasos siguientes.
+En esta versión la pantalla muestra la lista y permite crear, completar, desmarcar y borrar tareas. Editar se añade en un paso siguiente.
 
 **Estados de la lista:**
 
@@ -1283,6 +1283,22 @@ Cada tarjeta tiene un botón de completar (`client/task-card.tsx`; la lógica co
 - **Estado por tarea:** los errores, las tareas ocupadas y los avisos viven en un reductor puro (`lib/task-ui-state.ts`)
   en lugar de varios `useState`: un 404 cambia varias cosas a la vez y así no se descuadran. Al llegar una lista nueva
   se olvidan los errores de las tareas que ya no están.
+
+### Borrar
+
+Cada tarjeta tiene un botón «Eliminar «título»». Reutiliza el mismo mecanismo de completar (guardia contra el doble
+clic, error junto a la tarjeta, aviso de 404 y foco).
+
+- **Confirmación con `window.confirm`:** borrar no se puede deshacer, así que se pregunta antes de enviar nada; si se
+  cancela, no hay petición. **Por qué:** es una línea, es accesible de serie y se simula fácil en los tests.
+  Alternativa descartada: un diálogo propio (habría que gestionar a mano el foco y la tecla Escape).
+- **Qué se envía:** `DELETE /api/tasks/<id>`. Con éxito (204) se vuelve a pedir la lista y a renderizar los contadores,
+  y el foco pasa a la tarea que ocupa su lugar o al encabezado «Tareas». Dos clics seguidos hacen una sola pregunta y
+  una sola petición.
+- **Borrado no idempotente:** el backend responde 204 la primera vez y 404 si la tarea ya no existe. Si se borra desde
+  dos pestañas, la segunda ve el aviso «La tarea ya no existe.» (no un error en una tarjeta que va a desaparecer) y su
+  lista se refresca. Si la tarea estaba en edición, la edición se descarta al llegar la lista nueva.
+- **Si falla** (red, 500, 400 o 429): el mensaje sale junto a la tarjeta, la tarea se queda y los botones se reactivan.
 
 ### Rutas del servidor del frontend
 

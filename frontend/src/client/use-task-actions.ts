@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, type Dispatch } from '
 import type { Task } from '../lib/task';
 import type { UiAction } from '../lib/task-ui-state';
 import type { TaskList } from './use-task-list';
-import { updateTask } from './tasks-api';
+import { deleteTask, updateTask, type WriteResult } from './tasks-api';
 
 export const GONE_NOTICE = 'La tarea ya no existe.';
 export const UPDATED_NOTICE = 'Lista actualizada.';
@@ -53,12 +53,9 @@ export function useTaskActions({ tasks, status, dispatch, afterWrite }: Params) 
     }
   }, []);
 
-  const runToggle = useCallback(
-    async (task: Task) => {
-      const { id } = task;
-      if (inFlight.current.has(id)) {
-        return;
-      }
+  // El guardia (`inFlight.has`) lo comprueba quien llama, antes de cualquier pregunta al usuario.
+  const run = useCallback(
+    async (id: string, request: () => Promise<WriteResult>) => {
       inFlight.current.add(id);
       const index = tasksRef.current.findIndex((candidate) => candidate.id === id);
       focusIntent.current = {
@@ -70,7 +67,7 @@ export function useTaskActions({ tasks, status, dispatch, afterWrite }: Params) 
       dispatch({ type: 'noticeCleared' });
       dispatch({ type: 'taskErrorCleared', id });
       dispatch({ type: 'busyAdd', id });
-      const result = await updateTask(id, { completed: !task.completed });
+      const result = await request();
       inFlight.current.delete(id);
       dispatch({ type: 'busyRemove', id });
       const mine = focusIntent.current?.id === id ? focusIntent.current : undefined;
@@ -97,9 +94,21 @@ export function useTaskActions({ tasks, status, dispatch, afterWrite }: Params) 
 
   const toggle = useCallback(
     (task: Task) => {
-      void runToggle(task);
+      if (!inFlight.current.has(task.id)) {
+        void run(task.id, () => updateTask(task.id, { completed: !task.completed }));
+      }
     },
-    [runToggle],
+    [run],
+  );
+
+  // El guardia va antes del `confirm`: un segundo clic con la petición en curso no vuelve a preguntar.
+  const remove = useCallback(
+    (task: Task) => {
+      if (!inFlight.current.has(task.id) && window.confirm(`¿Eliminar «${task.title}»? No se puede deshacer.`)) {
+        void run(task.id, () => deleteTask(task.id));
+      }
+    },
+    [run],
   );
 
   // Tras pintar la lista nueva: el foco va a la tarjeta que ocupa el lugar de la que desapareció (o se queda).
@@ -120,5 +129,5 @@ export function useTaskActions({ tasks, status, dispatch, afterWrite }: Params) 
     (target === undefined ? headingRef.current : toggleButtons.current.get(target))?.focus();
   }, [tasks, status]);
 
-  return { toggle, registerToggle, headingRef };
+  return { toggle, remove, registerToggle, headingRef };
 }

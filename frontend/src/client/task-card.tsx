@@ -11,6 +11,7 @@ interface TaskCardProps {
   /** Error de la última acción sobre esta tarea. */
   error?: string;
   onToggle?: (task: Task) => void;
+  onDelete?: (task: Task) => void;
   /** El padre guarda el botón de completar de cada tarea para llevarle el foco. */
   registerToggle?: (id: string, element: HTMLButtonElement | null) => void;
 }
@@ -26,6 +27,7 @@ export const TaskCard = memo(function TaskCard({
   busy = false,
   error,
   onToggle,
+  onDelete,
   registerToggle,
 }: TaskCardProps) {
   return (
@@ -46,6 +48,14 @@ export const TaskCard = memo(function TaskCard({
         className="mt-2 min-h-11 min-w-11 rounded border px-3 py-1 text-left aria-disabled:opacity-60"
       >
         {`Marcar «${task.title}» como completada`}
+      </button>
+      <button
+        type="button"
+        aria-disabled={busy}
+        onClick={() => onDelete?.(task)}
+        className="mt-2 ml-2 min-h-11 min-w-11 rounded border px-3 py-1 aria-disabled:opacity-60"
+      >
+        {`Eliminar «${task.title}»`}
       </button>
       {error === undefined ? null : (
         <p role="alert" className="mt-2 text-sm text-red-700">
