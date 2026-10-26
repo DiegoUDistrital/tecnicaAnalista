@@ -1931,6 +1931,92 @@ Las mismas pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) cubre
 etiqueta de Node común con el backend, ausencia de variables de ejecución en la construcción, `.dockerignore`,
 `output: 'standalone'` y el comando de arranque.
 
+### Base de datos de despliegue: roles y bases
+
+El script `docker/postgres/init/01-roles-and-databases.sh` crea los tres roles (`owner`, `writer` y `reader`) y la base
+de datos (`DB_NAME`). PostgreSQL lo ejecuta solo la primera vez, cuando el volumen de datos está vacío. En un arranque
+posterior el volumen ya tiene datos y el script no se repite.
+
+- **Base de pruebas opcional.** La base de pruebas (`DB_NAME_TEST`) se crea solo si la variable está definida y no
+  vacía. En desarrollo sí, porque su `.env` la define. En el despliegue no se define, así que no hay base de pruebas
+  junto a los datos de la aplicación. Alternativa descartada: crear siempre la base de pruebas (datos de prueba junto a
+  los de despliegue) o mantener un script distinto para el despliegue (dos scripts que mantener).
+- **Contraseñas fuera de la migración.** Las contraseñas de los roles llegan como variables de entorno y nunca se
+  escriben en una migración ni en un archivo versionado. Solo se aceptan caracteres `A-Za-z0-9._~-`, que no rompen las
+  URL de conexión; el script nombra la variable que falla, nunca su valor.
+- **Cambiar una contraseña en el `.env` no cambia el rol.** Como el script corre solo con el volumen vacío, editar la
+  contraseña después no la modifica en PostgreSQL. Para rotarla hay dos caminos: ejecutar `ALTER ROLE` dentro de la base
+  o recrear el volumen de despliegue (lo que borra sus datos).
+- **Aviso de orden.** Si `DB_NAME_TEST` está definida pero no es válida, el script falla después de crear los roles y la
+  base principal. Como el volumen ya no está vacío, un nuevo arranque no repite el script: hay que corregir la variable
+  y recrear el volumen de la base afectada.
+- **Finales de línea LF.** El archivo `.gitattributes` obliga a guardar los `.sh` con finales de línea LF. Con CRLF (lo
+  que Windows puede introducir por su configuración de Git), el script no se ejecuta dentro del contenedor Linux.
+
+### Variables del despliegue
+
+El `.env` de la raíz sirve al desarrollo y al despliegue: es un único archivo, copiado de `.env.example`. La
+composición no le pasa a cada servicio el archivo entero: cada servicio recibe solo sus variables, declaradas una a
+una en `environment` (sin `env_file`).
+
+| Servicio   | Variables que recibe                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `postgres` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD`, `READER_PASSWORD` y `DB_NAME`.                  |
+| `migrate`  | `OWNER_DATABASE_URL`, construida con el rol `owner` y el host `postgres`.                                                  |
+| `backend`  | `DATABASE_URL` (rol `writer`), `API_KEY`, `CORS_ORIGIN`, `HOST`, `PORT`, `TRUSTED_PROXIES`, `SHUTDOWN_TIMEOUT_MS` y los cuatro `RATE_LIMIT_*`. |
+| `frontend` | `BACKEND_URL` (`http://backend:3000`), `API_KEY`, `READER_DATABASE_URL` (rol `reader`), `ALLOWED_HOSTS`, `PORT` y `HOSTNAME`. |
+
+Las URL de conexión de la composición apuntan a `postgres:5432`, dentro de la red interna. Por eso las URL de
+desarrollo del `.env` (`DATABASE_URL`, `OWNER_DATABASE_URL`, `READER_DATABASE_URL` y las `TEST_*`, que apuntan a
+`127.0.0.1:5433`) no se usan en el despliegue, y `DB_NAME_TEST` no se pasa (así el script de inicio no crea la base de
+pruebas). `HOST`, `PORT`, `TRUSTED_PROXIES` y `SHUTDOWN_TIMEOUT_MS` tampoco se pasan desde el `.env`: la composición los
+fija. Las cuatro variables del backend que no aparecen en la tabla (`TASKS_LIST_LIMIT` y las tres `DB_POOL_*`) toman el
+valor por defecto del esquema de configuración.
+
+Decisiones y su porqué:
+
+- **Cada servicio ve solo lo suyo.** El frontend no conoce la contraseña de `owner` ni la de `writer`, y el backend no
+  conoce la de `owner`. Alternativa descartada: un `env_file` con el `.env` completo para todos los servicios (el
+  frontend vería la contraseña de `owner`).
+- **URL construidas en la composición.** Dentro de un contenedor, `127.0.0.1` es el propio contenedor, no el
+  anfitrión; por eso la composición arma sus URL contra el servicio `postgres`. Alternativa descartada: reutilizar las
+  URL de desarrollo del `.env` (no conectarían con la base del despliegue).
+- **Un solo `.env` y un solo `.env.example`.** Alternativa descartada: un `.env` por servicio (más archivos que
+  mantener y riesgo de que la `API_KEY` del backend y la del frontend difieran) o un `.env.example` de despliegue aparte
+  (dos plantillas con las mismas contraseñas y riesgo de que difieran).
+
+Hosts y origen (son independientes y cada uno tiene su función):
+
+- `ALLOWED_HOSTS` (por defecto `localhost:3001,127.0.0.1:3001`) lo usa el frontend para aceptar escrituras solo si el
+  `Host` de la petición está en la lista. Si la aplicación se publica con otro nombre, hay que añadirlo aquí.
+- `CORS_ORIGIN` (por defecto `http://localhost:3001`) lo usa el backend. El navegador solo habla con el frontend, que
+  llama a la API desde el servidor; por eso el CORS del backend solo cierra el acceso directo de un navegador a la API.
+  Si el nombre de publicación cambia, se cambian también `ALLOWED_HOSTS` y `CORS_ORIGIN`.
+
+Cupos de demostración: la composición usa 1000 peticiones generales y 200 de escritura por cada 15 minutos
+(`RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX`), para que una demostración no se agote pronto. Esos valores solo se aplican
+si el `.env` no define las dos variables. Una copia literal de `.env.example` las define en 100 y 20 (los cupos de
+desarrollo), y esos valores ganan: hay que borrar esas dos líneas o ponerlas en 1000 y 200. Todos los usuarios
+comparten un único cupo (cupo único compartido por diseño): el frontend no envía la IP del usuario al backend, así que
+el backend cuenta a todos como un solo cliente.
+
+Límites de recursos: `BACKEND_MEM_LIMIT` (512m), `BACKEND_CPUS` (1.0), `BACKEND_PIDS_LIMIT` (200), `FRONTEND_MEM_LIMIT`
+(768m), `FRONTEND_CPUS` (1.0) y `FRONTEND_PIDS_LIMIT` (300). Evitan que un proceso agote la máquina. Son valores
+generosos para que una demostración no falle; si se descomentan en el `.env`, sustituyen a los de la composición.
+
+Generación de valores propios (en la terminal; el resultado se pega solo en el `.env`, nunca en un archivo que se
+versione):
+
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+La primera línea sirve para cada contraseña (`POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD`, `READER_PASSWORD`)
+y la segunda para `API_KEY`. Las contraseñas solo pueden tener los caracteres `[A-Za-z0-9._~-]`, que es lo que produce
+`base64url`; con otros caracteres (`@ : / ' %` y espacios) la URL de conexión o el script de inicio fallan. Los valores
+`change-me` de `.env.example` son de ejemplo, no son secretos, y los servicios rechazan la `API_KEY` de ejemplo.
+
 ## Despliegue en Ubuntu
 
 Pendiente.
