@@ -974,9 +974,16 @@ cuando exista el frontend.
   seguridad no la escriben. Para probar una petición sin key se usa el marcador `X-Test-Omit-Key`, que el ayudante
   retira antes de que la vea la aplicación. Los cupos de peticiones de la aplicación de pruebas son altos (10000) y
   `TRUSTED_PROXIES` vale `none`, así que ningún test que no trate de los límites puede recibir un `429`; los que sí
-  tratan de ellos (`backend/tests/http/rate-limits.test.ts`) piden cupos pequeños explícitos. Los tests de la protección (401, sin registro en el log e inyección SQL con
-  la pila completa) están en `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
-  `backend/tests/api/sql-injection-stack.test.ts`.
+  tratan de ellos (`backend/tests/http/rate-limits.test.ts`) piden cupos pequeños explícitos. Los tests de la
+  protección (401, sin registro en el log e inyección SQL con la pila completa) están en
+  `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
+  `backend/tests/api/sql-injection-stack.test.ts`. El orden de las etapas
+  de seguridad con todos los mecanismos activos a la vez (cada par de etapas contiguas) está en
+  `backend/tests/http/security-order.test.ts`.
+- Cierre ordenado: `backend/tests/process/graceful-exit.test.ts` arranca el servicio compilado en un proceso hijo con un
+  proceso falso (un emisor de eventos en lugar del proceso real). El hijo recibe dos `401` y un `429` (el segundo fallo bloquea la IP), emite la señal a
+  mano y debe terminar solo, con código 0, sin llamar a `process.exit`. Si quedara un temporizador vivo, el hijo no
+  acabaría y el test fallaría por el plazo de 20 segundos.
 - Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
   haber un éxito y nueve «no existe»), y `backend/tests/api/tasks-delete.test.ts` y `tasks-put.test.ts` lanzan dos
   `DELETE` a la vez, dos `PUT` de campos distintos y 50 iteraciones de `PUT` y `DELETE` simultáneos con un Pool de 2
