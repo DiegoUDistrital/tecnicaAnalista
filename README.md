@@ -1024,6 +1024,27 @@ Fuera de `src`, `prisma/` y `prisma.config.ts` tienen el esquema y la configurac
 `lib/`, `server/` y `generated/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
 hay un alias menos que mantener entre `tsconfig` y Vitest.
 
+### Pruebas de componentes y validación de texto del cliente
+
+Para probar componentes React se instalan Testing Library (`@testing-library/react` 16.3.3 y `@testing-library/dom`
+10.4.2) y `jsdom` 30.1.3, todos con versión exacta. `jsdom` simula un navegador dentro de Node y Testing Library
+permite buscar los elementos como los vería una persona (por rol y nombre accesible). Solo se usan en los archivos de
+componentes, que empiezan con `// @vitest-environment jsdom`; el resto de las pruebas sigue en entorno `node`, que es
+más rápido. Alternativa descartada: usar jsdom en todo el proyecto (haría más lentas las pruebas que no necesitan DOM).
+Tampoco se instalan `user-event` ni `jest-dom`: `fireEvent` y las aserciones de Vitest bastan. Testing Library no
+limpia el DOM por sí sola (no se usan `globals`), así que `tests/helpers/dom-cleanup.ts` lo hace tras cada prueba.
+
+Las funciones puras de la interfaz viven en `src/lib/` y se prueban sin DOM:
+
+- **Validación de título y descripción** (`task-text.ts`): recorta con `trim()`, rechaza NUL y sustitutos sueltos, y
+  cuenta la longitud en puntos de código (título de 1 a 100, descripción de hasta 500), con las mismas reglas y el mismo
+  orden que Express. Es solo una comodidad para avisar antes de enviar: la autoridad es Express, que vuelve a validar
+  todo. **Limitación:** un emoji compuesto (por ejemplo una familia, unida con ZWJ) cuenta varios puntos de código, igual
+  que en Express, así que el contador puede marcar más de lo que parece.
+- **Fecha** (`task-date.ts`): locale fijo `es-CO` con la zona del navegador, para que no dependa del idioma del equipo.
+- **Errores del servidor** (`api-error.ts`): el mensaje que envía el servidor solo se muestra si su `code` está en una
+  lista cerrada y mide de 1 a 200 caracteres; si no (por ejemplo una página HTML de un proxy), se usa un mensaje propio.
+
 ### Cabeceras de seguridad
 
 `next.config.ts` desactiva `X-Powered-By` y añade a todas las rutas `X-Content-Type-Options: nosniff`,
@@ -1443,8 +1464,8 @@ cuando exista el frontend.
   un método desconocido, una petición mal formada, `Content-Length` junto a `Transfer-Encoding` y una ráfaga de 413, y
   comprueba que Node los rechaza (o cierra la conexión) y que el servicio sigue respondiendo después. Es una prueba de
   caracterización: documenta lo que hace Node, no código propio.
-- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`
-  y de la página provisional, con Vitest en entorno Node. Las reglas de ESLint propias (`react/no-danger`, las de
+- Frontend (`npm test` dentro de `frontend/`): pruebas de las cabeceras de seguridad, de los scripts de `package.json`,
+  de la página y de las funciones puras de la interfaz, con Vitest en entorno Node (jsdom solo en las de componentes). Las reglas de ESLint propias (`react/no-danger`, las de
   `@next/next`, las de hooks y la prohibición de importar el servidor desde `src/client/`) se comprobaron una vez con
   archivos de ejemplo que deben fallar y que se borraron después.
 
