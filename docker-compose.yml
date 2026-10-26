@@ -24,6 +24,11 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    # Margen para que PostgreSQL termine y vacíe sus escrituras antes de que Docker fuerce la parada.
+    stop_grace_period: 30s
     networks:
       - internal
 
@@ -37,6 +42,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # No se reinicia: si falla, debe verse el fallo y no repetirse en bucle.
+    restart: "no"
     networks:
       - internal
 
@@ -72,6 +79,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: ${BACKEND_MEM_LIMIT:-512m}
+    cpus: ${BACKEND_CPUS:-1.0}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-200}
+    restart: unless-stopped
+    # Mayor que SHUTDOWN_TIMEOUT_MS (10 s) con margen: Express cierra solo antes de que Docker fuerce la parada.
+    stop_grace_period: 20s
     networks:
       - internal
 
@@ -105,6 +125,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      # Caché de Next: el único otro directorio donde el servidor escribe.
+      - /app/.next/cache:uid=10001,gid=10001,mode=0755
+    mem_limit: ${FRONTEND_MEM_LIMIT:-768m}
+    cpus: ${FRONTEND_CPUS:-1.0}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-300}
+    restart: unless-stopped
+    stop_grace_period: 15s
     networks:
       - internal
       - publish

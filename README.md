@@ -33,7 +33,7 @@ Las versiones se fijan al crear cada proyecto.
 - `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
   contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend (estado actual)»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
-- `docker-compose.yml`: orquestación de los servicios (próximamente).
+- `docker-compose.yml`: despliegue completo con Docker Compose (ver «Despliegue con Docker Compose»).
 - `backend/queries.sql`: consultas SQL de la prueba.
 
 ## Backend (estado actual)
@@ -2003,8 +2003,8 @@ el backend cuenta a todos como un solo cliente.
 
 Límites de recursos: `BACKEND_MEM_LIMIT` (512m), `BACKEND_CPUS` (1.0), `BACKEND_PIDS_LIMIT` (200), `FRONTEND_MEM_LIMIT`
 (768m), `FRONTEND_CPUS` (1.0) y `FRONTEND_PIDS_LIMIT` (300). Evitan que un proceso agote la máquina. Son valores
-generosos para que una demostración no falle. La composición todavía no los aplica: se incorporan en el paso de
-endurecimiento, y desde entonces los valores descomentados en el `.env` sustituyen a los de la composición.
+generosos para que una demostración no falle. La composición los aplica al backend y al frontend (ver «Endurecimiento y
+cierre ordenado»), y los valores descomentados en el `.env` sustituyen a los de la composición.
 
 Generación de valores propios (en la terminal; el resultado se pega solo en el `.env`, nunca en un archivo que se
 versione):
@@ -2074,6 +2074,61 @@ docker compose -f docker-compose.yml up -d --build --wait
 
 `--wait` espera a que los servicios estén sanos; `migrate` es de un solo uso y termina con salida 0. Versión de Compose
 comprobada: v5.3.1 (Docker 29.6.2). La primera vez crea el volumen de datos; `down` sin `-v` lo conserva.
+
+### Endurecimiento y cierre ordenado
+
+El backend y el frontend (los dos servicios que ejecutan código de la aplicación) llevan estas opciones:
+
+| Opción                                   | Qué hace y por qué                                                                                                                                                                  | Alternativa descartada                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `cap_drop: [ALL]`                        | Quita al proceso todas las capacidades especiales de Linux (cambiar propietarios, abrir puertos bajos, etc.). Ninguno las necesita: escuchan en puertos altos y corren como 10001. | Dejar las capacidades por defecto de Docker (más superficie sin necesidad).      |
+| `no-new-privileges:true`                 | Impide que un proceso gane privilegios con un binario especial (`setuid`). Si alguien entra al contenedor, no puede escalar.                                                        | No ponerlo.                                                                      |
+| `read_only: true` y `tmpfs`              | El sistema de archivos del contenedor es de solo lectura: un atacante no puede dejar archivos. Solo se escribe en `/tmp` y, en el frontend, en la caché de Next (`/app/.next/cache`), ambos en memoria y con el usuario 10001. | Dejar el disco escribible (más fácil, pero cualquier fallo permite persistir código). |
+| `mem_limit`, `cpus`, `pids_limit`        | Tope de memoria, CPU y procesos por servicio: un servicio fuera de control no se come toda la máquina.                                                                              | Sin límites (un error podría tumbar el equipo).                                  |
+| `restart: unless-stopped`                | Si el proceso cae, Docker lo levanta de nuevo; solo se queda parado si alguien lo detuvo a mano.                                                                                    | `always` (reinicia también tras una parada manual al reiniciar Docker) o ningún reinicio. |
+
+Valores por defecto de los límites: backend 512m, 1.0 CPU y 200 procesos; frontend 768m, 1.0 CPU y 300 procesos. Para
+cambiarlos, se descomenta la variable correspondiente en el `.env` (`BACKEND_MEM_LIMIT`, `BACKEND_CPUS`,
+`BACKEND_PIDS_LIMIT`, `FRONTEND_MEM_LIMIT`, `FRONTEND_CPUS`, `FRONTEND_PIDS_LIMIT`) y se ejecuta de nuevo
+`docker compose -f docker-compose.yml up -d`. Con la aplicación en reposo, el backend usa unos 25 MiB y el frontend
+unos 85 MiB, así que los valores dejan mucho margen.
+
+**Qué queda fuera.** `postgres` y `migrate` no llevan `cap_drop` ni `read_only`: la imagen oficial de PostgreSQL cambia
+de propietario y escribe en su directorio de datos al arrancar, y `migrate` es una tarea que termina sola. `postgres`
+sí lleva `no-new-privileges:true` (arrancó y quedó sano con ella) y `restart: unless-stopped`. `migrate` lleva
+`restart: "no"`: si la migración falla, debe verse el fallo y no repetirse en bucle. Excepciones aplicadas por fallo
+de arranque: ninguna (`no-new-privileges` en `postgres` y `read_only` en el frontend funcionaron en Docker Desktop).
+
+**Plazos de cierre.** Al parar un servicio, Docker envía `SIGTERM` y, pasado `stop_grace_period`, fuerza la parada con
+`SIGKILL`. El backend cierra de forma ordenada en `SHUTDOWN_TIMEOUT_MS`, que en la composición es el literal `10000`
+(10 s); su `stop_grace_period` es de 20 s, es decir, al menos 5 s más que el cierre, para que Express termine solo antes
+de que Docker lo fuerce. El frontend tiene 15 s y `postgres` 30 s. `SHUTDOWN_TIMEOUT_MS` y los plazos no se pueden
+sobrescribir desde el `.env`: la relación entre ellos debe mantenerse y un test estático la comprueba. No se cambia
+`stop_signal`: cada imagen usa el suyo (la de PostgreSQL envía `SIGINT`, que provoca su cierre rápido y seguro).
+Observado al parar uno a uno: el backend y `postgres` terminan con código 0; el frontend termina con 143 (128 + 15,
+es decir, `SIGTERM` sin salida propia de Next.js). Es una limitación conocida del servidor de Next y no pierde datos:
+el frontend no escribe en la base.
+
+**Datos y volumen.** Los datos viven en el volumen `todo_app_deploy_pgdata`, distinto del de desarrollo.
+`docker compose -f docker-compose.yml down` conserva los datos. `down -v` los **BORRA**. Para reiniciar solo el
+despliegue, y nunca el proyecto de desarrollo, el comando de borrado se escribe siempre con el archivo y el proyecto
+explícitos, tras comprobar con `docker compose ls` cuál es cuál:
+
+```powershell
+docker compose -f docker-compose.yml -p todo-app-deploy down -v
+```
+
+**Rotación y mantenimiento.**
+
+- Contraseñas de roles: cambiarlas en el `.env` no cambia la del rol dentro de la base (el script de inicio solo corre
+  con el volumen vacío); se rota con `ALTER ROLE` o recreando el volumen de despliegue, y después se recrean los
+  servicios afectados.
+- `API_KEY`: se cambia en el `.env` y se recrean el backend y el frontend a la vez
+  (`docker compose -f docker-compose.yml up -d --force-recreate backend frontend`); si solo se recrea uno, la
+  aplicación recibe 401.
+- Base que cae con la aplicación en marcha: `postgres` se reinicia solo; el frontend pasa a «no sano» mientras tanto y
+  las peticiones a la API devuelven un error genérico 500; al volver la base se recuperan sin reiniciar nada.
+- Reconstrucción tras cambiar código: `docker compose -f docker-compose.yml up -d --build`.
 
 ## Despliegue en Ubuntu
 
