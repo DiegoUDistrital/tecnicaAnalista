@@ -38,7 +38,9 @@ Las versiones se fijan al crear cada proyecto.
 Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
-`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»); la API todavía no tiene seguridad.
+`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API exige API key (ver «Seguridad: API key»); todavía NO
+tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista: no debe exponerse hasta completar la
+seguridad.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -113,11 +115,39 @@ que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Conte
 `Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
 ni `X-Powered-By`, y nunca responde `304`.
 
-Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y dan `404 NOT_FOUND`, igual que cualquier ruta
-desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también es 404, no
-400). Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
+`/health` es la única ruta que no pide API key (ver «Seguridad: API key»); todas las demás, existan o no, dan `401`
+si la petición no trae la key.
+
+Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y, con key válida, dan `404 NOT_FOUND`, igual que
+cualquier ruta desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también
+es 404, no 400); sin key dan `401`. Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
 ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta. Los 404 y
 405 usan el mismo sobre JSON del contrato de errores y no se registran en el log.
+
+## Seguridad: API key
+
+Toda petición, salvo `GET /health`, debe traer `Authorization: Bearer <key>` con la key configurada en `API_KEY`
+(ver «Variables del servicio»). Si falta, está mal formada o no coincide, la respuesta es siempre la misma:
+`401 {"error":{"code":"UNAUTHORIZED","message":"No autorizado.","details":[]}}` con `WWW-Authenticate: Bearer`. El
+texto es idéntico para todas las causas, para no dar pistas a quien prueba claves.
+
+- **Formato estricto.** La cabecera debe aparecer una sola vez, con el esquema `Bearer` (sin distinguir mayúsculas), un
+  único espacio y una key de 1 a 128 caracteres de `A-Za-z0-9_-`. Dos cabeceras `Authorization` (aunque sean iguales),
+  otros esquemas, dos espacios, un tabulador o la key en la URL o en una cookie dan `401`. `Proxy-Authorization` se
+  ignora. Node ya recorta los espacios al principio y al final del valor de una cabecera.
+- **Denegar por defecto.** `/health` se registra antes de la guarda y la guarda se aplica a todo lo que se registra
+  después, sin comparar rutas: la exención la decide el mismo enrutador que despacha `/health`. Así `/health;x`,
+  `//health`, `/%68ealth`, `/Health` y `/health/` no están exentas (dan `401` sin key y `404` con ella) y una ruta nueva
+  nace protegida. `/health` sigue su tabla de métodos: `HEAD /health` da `405` con `Allow: GET`, no `401`.
+- **Antes de todo lo demás.** La guarda es la etapa 0 de la tubería (ver «Orden de comprobación de una petición»): sin
+  key, un `PATCH /api/tasks` da `401` (no `405`), una ruta inexistente da `401` (no `404`), y no se lee el cuerpo ni se
+  consulta la base de datos. Así quien no está autorizado no averigua qué rutas ni métodos existen ni gasta recursos
+  del servicio. Si la petición trae cuerpo (aunque sea de 20 KB, que con key daría `413`), el `401` lleva
+  `Connection: close` y la conexión se cierra al responder; sin cuerpo la conexión se conserva.
+- **Sin registro.** Un `401` no escribe nada en el log (no es un fallo del servicio) y la key, buena o mala, nunca
+  aparece en los logs ni en las respuestas.
+- **Comparación.** Se compara el resumen SHA-256 de la key recibida con el de la configurada, ambos de 32 bytes, con
+  `crypto.timingSafeEqual`: ninguna longitud distinta lanza error y el tiempo no depende del contenido.
 
 ## Contrato de errores
 
@@ -127,6 +157,7 @@ Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type:
 | Estado | `code`                   | `message`                                         |
 | ------ | ------------------------ | ------------------------------------------------- |
 | 400    | `VALIDATION_ERROR`       | Datos inválidos.                                  |
+| 401    | `UNAUTHORIZED`           | No autorizado.                                    |
 | 404    | `NOT_FOUND`              | Recurso no encontrado.                            |
 | 405    | `METHOD_NOT_ALLOWED`     | Método no permitido.                              |
 | 413    | `PAYLOAD_TOO_LARGE`      | El cuerpo de la petición supera el tamaño máximo. |
@@ -167,8 +198,8 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'
 El servicio comprueba el formato y que la clave no sea trivial (una letra repetida, por ejemplo), pero NO verifica su
 entropía: la garantía real viene de generarla con el comando anterior. El valor de ejemplo de `.env.example`
 (`change-me-use-randomBytes-32`) no es un secreto y el servicio lo rechaza al arrancar, para que nadie deje la clave
-sin cambiar. El `.env` necesita `API_KEY` antes de `npm start`. La clave se valida al arrancar; la protección de las
-rutas llega en el siguiente paso.
+sin cambiar. El `.env` necesita `API_KEY` antes de `npm start`. La clave se valida al arrancar y la API la exige en
+cada petición (ver «Seguridad: API key»).
 
 `0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No
 se admiten nombres de host, corchetes ni zonas como `%eth0`. El servicio valida estas variables junto con las de la
@@ -248,11 +279,12 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 
 ## API de tareas
 
-> **Aviso de seguridad.** La API NO tiene seguridad (ni API key, ni límite de peticiones, ni CORS, ni cabeceras de
-> seguridad) y escucha por defecto solo en 127.0.0.1: no debe exponerse a ninguna red hasta que llegue la seguridad en
-> un PR posterior. La lista no tiene límite de tamaño y cualquiera con acceso puede crear y modificar tareas sin
-> límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la actualización (`PUT` en
-> `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`): cualquiera con acceso puede borrar tareas.
+> **Aviso de seguridad.** La API exige API key (cabecera `Authorization: Bearer`, ver «Seguridad: API key»); todavía NO
+> tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista, y escucha por defecto solo en
+> 127.0.0.1: no debe exponerse a ninguna red hasta completar la seguridad. Quien tenga la key puede crear, modificar y
+> borrar tareas sin límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la actualización (`PUT` en
+> `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`). Los ejemplos de esta sección omiten la cabecera
+> `Authorization` por brevedad: sin ella, todas las rutas dan `401`.
 
 ### `GET /api/tasks`
 
@@ -405,6 +437,7 @@ cuerpo, identificador) devuelven un único error.
 
 ### Orden de comprobación de una petición
 
+0. API key (`401`), salvo en `/health`. Va antes que todo lo demás, también que el `404` y el `405`.
 1. Ruta y método (`404` si la ruta no existe, `405` con `Allow` si el método no está permitido).
 2. Tamaño del cuerpo (`413`).
 3. Codificación y tipo de contenido (`415`).
@@ -414,7 +447,8 @@ cuerpo, identificador) devuelven un único error.
 7. Existencia de la tarea, solo en `/api/tasks/:id` (`404`).
 8. Base de datos (`500` genérico si falla).
 
-Un error de una etapa anterior gana siempre a los posteriores: un `PATCH` con 20 KB da `405` (no `413`), 20 KB con
+Un error de una etapa anterior gana siempre a los posteriores (los ejemplos siguientes suponen una key válida): un
+`PATCH` con 20 KB da `405` (no `413`), 20 KB con
 `text/plain` dan `413` (no `415`), `text/plain` con JSON roto da `415`, un `PUT` con identificador inválido y JSON roto
 da `body` (no `id`), con identificador inválido y campos inválidos da solo `id`, con identificador inexistente y campos
 inválidos da `400` (no `404`), y un cuerpo con campos inválidos con la base de datos caída da `400` (no `500`, porque
@@ -432,7 +466,7 @@ SQLSTATE, nunca datos de la petición (ni título, ni descripción, ni cuerpo, n
 
 Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio (`services`) → repositorio
 (`repositories`), con SQL parametrizado de `pg`. La aplicación recibe la base de datos al construirse
-(`createApp({ logger, database })`), así que no existe una aplicación sin base de datos.
+(`createApp({ logger, database, security })`), así que no existe una aplicación sin base de datos ni sin key.
 
 ## Validación de título y descripción
 
@@ -695,10 +729,10 @@ código 0).
 `/health` solo indica que el proceso responde: no consulta la base de datos, así que no detecta una BD caída. Un
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
-Aviso de seguridad: el servicio escucha solo en loopback y la API NO tiene seguridad (ni API key, ni límite de
-peticiones, ni CORS, ni cabeceras de seguridad): la seguridad llega en un PR posterior. No debe exponerse a ninguna
-red hasta entonces. `GET /api/tasks` devuelve la lista completa, que crece sin cota, y cualquiera con acceso puede
-crear, modificar y borrar tareas.
+Aviso de seguridad: el servicio escucha solo en loopback y la API exige API key (`API_KEY` en el `.env`, ver
+«Seguridad: API key»); todavía NO tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista. No debe
+exponerse a ninguna red hasta completar la seguridad. `GET /api/tasks` devuelve la lista completa, que crece sin cota,
+y quien tenga la key puede crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -767,7 +801,13 @@ conceptos que explicar y el recorrido de cada petición es explícito. Alternati
 32 bytes o más, enviada en la cabecera `Authorization: Bearer`, comparada con `crypto.timingSafeEqual` y con
 respuesta `401` genérica. Es solo de servidor (nunca llega al navegador) y se rota cambiando la variable de
 entorno. Limitación: autentica a la aplicación, no a las personas. Es una segunda barrera tras el aislamiento de
-red.
+red. Se usa `Authorization: Bearer` y no una cabecera propia porque es el estándar para
+enviar credenciales y no la URL, que queda en historiales y registros de proxies.
+Se compara el SHA-256 de la key y no la key directa porque `timingSafeEqual` exige longitudes iguales: con el resumen
+siempre son 32 bytes, sin lanzar errores ni revelar la longitud. Alternativas descartadas: comparar con `===` (el
+tiempo depende de dónde falla) y comprobar la longitud antes (la revela). La guarda se aplica con `app.use` tras
+registrar `/health`, y no con una comparación de rutas, porque dos lógicas distintas podrían discrepar (`/health;x`,
+`//health`) y dejar una ruta sin proteger.
 
 **g) Rate limiting.** Con `express-rate-limit` y valores configurables por variables de entorno, protege frente a
 abuso y a intentos repetidos con una API key inválida. El contador está en memoria, por lo que solo es válido para
@@ -822,8 +862,8 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
 
 **Limitaciones conocidas de la API actual.**
 
-- Sin seguridad: ni API key, ni límite de peticiones, ni CORS, ni cabeceras de seguridad. No debe exponerse a ninguna
-  red hasta que se añadan.
+- Seguridad incompleta: hay API key, pero todavía no hay límite de peticiones, CORS ni cabeceras de seguridad. No debe
+  exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las personas.
 - `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST`, `PUT` y `DELETE` no tienen límite de uso.
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición

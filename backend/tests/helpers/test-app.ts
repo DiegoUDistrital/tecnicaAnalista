@@ -3,7 +3,7 @@ import { createApp } from '../../src/app';
 import type { Database } from '../../src/db/pool';
 import type { Logger } from '../../src/logging/logger';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
-import { withTestKey } from './security';
+import { testSecurity, withTestKey } from './security';
 
 export interface TestAppOptions {
   /** Rutas de prueba que se registran antes del 404 final y del manejador central. */
@@ -42,6 +42,7 @@ export function buildTestApp(options: BuildTestAppOptions): Express {
     createApp({
       logger: options.logger,
       database: options.database,
+      security: testSecurity(),
       ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
     }),
   );
