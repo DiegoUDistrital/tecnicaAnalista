@@ -1,9 +1,9 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { validateDescription, validateTitle } from '../lib/task-text';
 import { fromInvalid, type FormErrors } from './form-errors';
-import { BTN_PRIMARY } from '../lib/ui-classes';
+import { BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui-classes';
 import { PlusIcon } from './icons';
 import { createTask } from './tasks-api';
 import { TextField } from './text-field';
@@ -13,11 +13,13 @@ interface CreateFormProps {
   onStart: () => void;
   /** Se llama cuando el servidor confirma la creación (el padre avisa y refresca lista y contadores). */
   onCreated: () => void;
+  /** Se llama al pulsar «Cancelar» (el padre cierra el panel sin enviar nada). */
+  onCancel: () => void;
 }
 
 type Field = HTMLInputElement | HTMLTextAreaElement | null;
 
-export function CreateForm({ onStart, onCreated }: CreateFormProps) {
+export function CreateForm({ onStart, onCreated, onCancel }: CreateFormProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [errors, setErrors] = useState<FormErrors>({});
@@ -26,6 +28,11 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
   const inFlight = useRef(false);
   const titleField = useRef<Field>(null);
   const descriptionField = useRef<Field>(null);
+
+  // El formulario solo existe con el panel abierto: al montarse, el foco pasa al título.
+  useEffect(() => {
+    titleField.current?.focus();
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -50,9 +57,7 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
     inFlight.current = false;
     setBusy(false);
     if (result.kind === 'ok') {
-      setTitle('');
-      setDescription('');
-      titleField.current?.focus();
+      // El padre cierra el panel (este formulario se desmonta y su borrador desaparece) y devuelve el foco al botón.
       onCreated();
     } else if (result.kind === 'invalid') {
       setErrors(fromInvalid(result));
@@ -91,10 +96,15 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
           descriptionField.current = element;
         }}
       />
-      <button type="submit" aria-disabled={busy} className={`${BTN_PRIMARY} self-start`}>
-        <PlusIcon />
-        Crear tarea
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" aria-disabled={busy} className={BTN_PRIMARY}>
+          <PlusIcon />
+          Crear tarea
+        </button>
+        <button type="button" className={BTN_SECONDARY} onClick={onCancel}>
+          Cancelar
+        </button>
+      </div>
       {errors.general === undefined ? null : (
         <p role="alert" className="text-sm text-red-800">
           {errors.general}

@@ -1,12 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useReducer, useRef, useTransition } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState, useTransition } from 'react';
 import type { TaskFilter } from '../lib/task-filter';
 import { initialUiState, uiReducer } from '../lib/task-ui-state';
-import { BTN_SECONDARY } from '../lib/ui-classes';
+import { BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui-classes';
 import { CreateForm } from './create-form';
-import { RetryIcon } from './icons';
+import { PlusIcon, RetryIcon } from './icons';
 import { TaskCard } from './task-card';
 import { useTaskActions } from './use-task-actions';
 import { useTaskList } from './use-task-list';
@@ -32,6 +32,10 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
   // `routerPending` dura hasta que Next entrega los contadores nuevos: es el refresco en curso de los contadores.
   const [routerPending, startTransition] = useTransition();
   const [ui, dispatch] = useReducer(uiReducer, initialUiState);
+  // El formulario de crear empieza cerrado y se abre con el botón «Nueva tarea».
+  const [open, setOpen] = useState(false);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -57,10 +61,16 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
   });
 
   const clearNotice = useCallback(() => dispatch({ type: 'noticeCleared' }), []);
+  // Cierra el panel y devuelve el foco al botón (que siempre está montado).
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    newButton.current?.focus();
+  }, []);
   const created = useCallback(() => {
     dispatch({ type: 'noticeSet', notice: CREATED_NOTICE });
     afterWrite();
-  }, [afterWrite]);
+    closePanel();
+  }, [afterWrite, closePanel]);
 
   // Al llegar una lista, se olvidan los errores y la edición de las tareas que ya no están. Mientras carga (la lista
   // va vacía) no se hace: al cambiar de filtro se conservan los de las tareas que siguen.
@@ -81,7 +91,22 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
 
   return (
     <div>
-      <CreateForm onStart={clearNotice} onCreated={created} />
+      <button
+        ref={newButton}
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        className={`${BTN_PRIMARY} mb-4`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <PlusIcon />
+        Nueva tarea
+      </button>
+      {open ? (
+        <div id={panelId}>
+          <CreateForm onStart={clearNotice} onCreated={created} onCancel={closePanel} />
+        </div>
+      ) : null}
       <section>
         <h2 ref={headingRef} tabIndex={-1} className="mb-2 text-xl font-semibold">
           Tareas
