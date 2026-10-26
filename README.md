@@ -1815,8 +1815,9 @@ de la tabla.
 ## Despliegue con Docker Compose
 
 Esta sección explica cómo se empaqueta y se ejecuta la aplicación completa con Docker: PostgreSQL, una tarea de un
-solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: por ahora existen las
-imágenes del backend y del frontend; el archivo `docker-compose.yml` que las une se documenta cuando se añada.
+solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: están las imágenes
+del backend y del frontend, el script de inicio de la base, las variables y la composición (`docker-compose.yml`) que
+las une; el endurecimiento y el cierre ordenado se documentan cuando se añadan.
 
 Aviso para quien ejecute comandos: en esta carpeta conviven dos archivos de Compose, el de desarrollo
 (`docker-compose.dev.yml`, solo PostgreSQL) y el de despliegue (`docker-compose.yml`). Por eso TODOS los comandos de
@@ -2002,7 +2003,8 @@ el backend cuenta a todos como un solo cliente.
 
 Límites de recursos: `BACKEND_MEM_LIMIT` (512m), `BACKEND_CPUS` (1.0), `BACKEND_PIDS_LIMIT` (200), `FRONTEND_MEM_LIMIT`
 (768m), `FRONTEND_CPUS` (1.0) y `FRONTEND_PIDS_LIMIT` (300). Evitan que un proceso agote la máquina. Son valores
-generosos para que una demostración no falle; si se descomentan en el `.env`, sustituyen a los de la composición.
+generosos para que una demostración no falle. La composición todavía no los aplica: se incorporan en el paso de
+endurecimiento, y desde entonces los valores descomentados en el `.env` sustituyen a los de la composición.
 
 Generación de valores propios (en la terminal; el resultado se pega solo en el `.env`, nunca en un archivo que se
 versione):
@@ -2016,6 +2018,62 @@ La primera línea sirve para cada contraseña (`POSTGRES_PASSWORD`, `OWNER_PASSW
 y la segunda para `API_KEY`. Las contraseñas solo pueden tener los caracteres `[A-Za-z0-9._~-]`, que es lo que produce
 `base64url`; con otros caracteres (`@ : / ' %` y espacios) la URL de conexión o el script de inicio fallan. Los valores
 `change-me` de `.env.example` son de ejemplo, no son secretos, y los servicios rechazan la `API_KEY` de ejemplo.
+
+### Composición
+
+El archivo `docker-compose.yml` define el proyecto `todo-app-deploy` con cuatro servicios:
+
+| Servicio   | Para qué sirve                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| `postgres` | La base de datos (imagen `postgres:16.15`, etiqueta exacta). Guarda los datos en el volumen `todo_app_deploy_pgdata`. |
+| `migrate`  | Tarea de un solo uso: aplica las migraciones y los permisos con el rol `owner` y termina.               |
+| `backend`  | La API de Express (imagen `runtime`), con el rol `writer`.                                              |
+| `frontend` | La interfaz de Next.js (imagen `runner`), con el rol `reader` solo para los contadores.                 |
+
+**Orden de arranque.** `postgres` arranca primero. `migrate` espera a que esté sano. El backend espera a que
+`postgres` esté sano y a que `migrate` haya terminado con éxito. El frontend espera a que el backend esté sano y a que
+`postgres` esté sano (la página lee los contadores de la base). Porqué: la API no debe aceptar peticiones antes de que
+exista el esquema, y si la migración falla, ni el backend ni el frontend arrancan. Alternativa descartada: migrar al
+arrancar Express (el servicio expuesto necesitaría las credenciales y las herramientas del rol `owner`).
+
+**Credenciales por servicio.** Solo `migrate` recibe la URL del rol `owner`; el backend recibe la de `writer` y el
+frontend la de `reader`. Cada servicio ve únicamente lo suyo (ver «Variables del despliegue»). Alternativa descartada:
+`env_file` con el `.env` completo para todos.
+
+**Dos redes.**
+
+- `internal` (`todo_app_deploy_internal`) está marcada como interna: sus contenedores no tienen salida a internet y el
+  anfitrión no puede llegar a ellos. Están en ella los cuatro servicios. Docker le asigna la subred; no hay subred
+  asignada a mano.
+- `publish` (`todo_app_deploy_publish`) existe solo para publicar el puerto del frontend en el equipo. Sin una red
+  normal no se puede publicar un puerto. Honestidad: por estar en `publish`, el frontend SÍ tiene salida a internet;
+  la base de datos, el backend y `migrate` no.
+
+**Puertos.** Solo el frontend publica un puerto: `127.0.0.1:3001`, es decir, accesible desde este equipo y no desde
+otras máquinas. La base y la API no publican nada. Si el 3001 está ocupado, hay que liberarlo (el puerto está fijado
+también en el `ALLOWED_HOSTS` y en `CORS_ORIGIN`); si se cambia el puerto publicado, se mantiene `127.0.0.1` y se
+cambian esos dos valores. Para aceptar otro nombre de acceso, se añade a `ALLOWED_HOSTS` (y se ajusta `CORS_ORIGIN`).
+
+**Cupo compartido y `TRUSTED_PROXIES=none`.** El backend se configura con `TRUSTED_PROXIES=none` (valor fijo en la
+composición, no sobrescribible desde el `.env`): el frontend no envía cabeceras con la IP del usuario, así que Express
+no debe creerlas de nadie y ve a todos como un único cliente, el contenedor del frontend. Riesgo aceptado: un usuario
+puede agotar el cupo de todos y los fallos de la key bloquean a todos. Si algún día hubiera un proxy de confianza delante
+del frontend, se pondría su dirección en `TRUSTED_PROXIES`. `HOST` es `0.0.0.0` porque dentro de la red interna el
+backend debe aceptar conexiones de otro contenedor.
+
+**Comprobaciones de salud.** `postgres` usa `pg_isready` por TCP. El backend y el frontend usan un pequeño programa de
+Node que hace un `GET` (la imagen no lleva `curl` ni `wget`): al `/health` del backend y a `/` del frontend con un
+`Host` permitido. Limitaciones: `/health` no consulta la base, así que el backend sigue «sano» si la base cae; el
+frontend sí depende de la base y pasa a «no sano» sin reiniciarse.
+
+**Arranque.**
+
+```powershell
+docker compose -f docker-compose.yml up -d --build --wait
+```
+
+`--wait` espera a que los servicios estén sanos; `migrate` es de un solo uso y termina con salida 0. Versión de Compose
+comprobada: v5.3.1 (Docker 29.6.2). La primera vez crea el volumen de datos; `down` sin `-v` lo conserva.
 
 ## Despliegue en Ubuntu
 

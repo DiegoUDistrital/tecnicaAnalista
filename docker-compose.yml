@@ -1,0 +1,123 @@
+# Despliegue de la aplicación completa. Todos los comandos llevan -f docker-compose.yml porque en esta carpeta
+# convive docker-compose.dev.yml (solo PostgreSQL de desarrollo). Las variables salen del .env de la raíz; si falta una
+# obligatoria, Compose se detiene y la nombra.
+name: todo-app-deploy
+
+services:
+  postgres:
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER en .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD en .env}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:?defina OWNER_PASSWORD en .env}
+      WRITER_PASSWORD: ${WRITER_PASSWORD:?defina WRITER_PASSWORD en .env}
+      READER_PASSWORD: ${READER_PASSWORD:?defina READER_PASSWORD en .env}
+      DB_NAME: ${DB_NAME:?defina DB_NAME en .env}
+    volumes:
+      - todo_app_deploy_pgdata:/var/lib/postgresql/data
+      # El script se ejecuta solo la primera vez, con el volumen vacío.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Por TCP: el servidor temporal del arranque inicial solo escucha en el socket local.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+  # Tarea de un solo uso: migra y concede permisos con el rol owner, y termina.
+  migrate:
+    build:
+      context: ./backend
+      target: migrate
+    environment:
+      OWNER_DATABASE_URL: postgresql://owner:${OWNER_PASSWORD:?defina OWNER_PASSWORD en .env}@postgres:5432/${DB_NAME:?defina DB_NAME en .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql://writer:${WRITER_PASSWORD:?defina WRITER_PASSWORD en .env}@postgres:5432/${DB_NAME:?defina DB_NAME en .env}
+      API_KEY: ${API_KEY:?defina API_KEY en .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3001}
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      # Literal: el frontend no envía cabeceras de IP, así que el backend no debe creerlas de nadie.
+      TRUSTED_PROXIES: none
+      SHUTDOWN_TIMEOUT_MS: "10000"
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-1000}
+      RATE_LIMIT_POST_MAX: ${RATE_LIMIT_POST_MAX:-200}
+      RATE_LIMIT_AUTH_FAILURES_MAX: ${RATE_LIMIT_AUTH_FAILURES_MAX:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const http=require('node:http');http.get('http://127.0.0.1:3000/health',{timeout:3000},(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1)).on('timeout',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runner
+    environment:
+      BACKEND_URL: http://backend:3000
+      API_KEY: ${API_KEY:?defina API_KEY en .env}
+      READER_DATABASE_URL: postgresql://reader:${READER_PASSWORD:?defina READER_PASSWORD en .env}@postgres:5432/${DB_NAME:?defina DB_NAME en .env}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost:3001,127.0.0.1:3001}
+      PORT: "3001"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      # Solo en la máquina local: nunca se publica hacia la red.
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # GET / con un Host permitido (el primero de ALLOWED_HOSTS). Depende de la base: la página lee los contadores.
+      test:
+        - CMD
+        - node
+        - -e
+        - "const http=require('node:http');const host=(process.env.ALLOWED_HOSTS||'127.0.0.1:3001').split(',')[0];http.get({host:'127.0.0.1',port:3001,path:'/',headers:{Host:host},timeout:3000},(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1)).on('timeout',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - internal
+      - publish
+
+networks:
+  # Sin salida a internet: aquí viven la base, la API y la migración.
+  internal:
+    name: todo_app_deploy_internal
+    internal: true
+  # Solo para publicar el puerto del frontend en el equipo.
+  publish:
+    name: todo_app_deploy_publish
+
+volumes:
+  todo_app_deploy_pgdata:
+    name: todo_app_deploy_pgdata
