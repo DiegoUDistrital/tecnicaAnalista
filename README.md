@@ -1880,6 +1880,33 @@ solo comando, ver «Arranque conjunto».
 
 ## Pruebas
 
+Resumen: qué grupos de pruebas hay, dónde viven y con qué comando se ejecutan. Cada comando se ejecuta dentro de la
+carpeta indicada (`backend/`, `frontend/` o la raíz).
+
+| Grupo                                            | Dónde                                         | Comando                                   |
+| ------------------------------------------------ | --------------------------------------------- | ----------------------------------------- |
+| Unitarias, API (Supertest), base de datos, procesos y estáticas del backend | `backend/tests/` | `npm test` (en `backend/`)        |
+| Servidor y componentes del frontend              | `frontend/tests/`                             | `npm test` (en `frontend/`)               |
+| Scripts del arranque conjunto y contenido del README | `tests/` (raíz)                           | `npm test` (en la raíz)                   |
+| Procesos reales (Express sustituto y `next start`) | `integration/` (raíz)                       | `npm run test:integration` (en la raíz)   |
+| Calidad de código                                | los tres paquetes                             | `npm run lint` y `npm run typecheck`      |
+| Compilación                                      | `backend/` y `frontend/`                      | `npm run build`                           |
+| Comprobación manual del despliegue               | Docker Desktop (ver «Comprobación manual»)    | los comandos de cada paso                 |
+
+Cobertura: el mínimo es del 95 % de líneas y sentencias sobre el código propio (backend, frontend y `scripts/` de la
+raíz); si baja de ese valor, `npm test` falla. `npm test` ejecuta la cobertura en los tres paquetes.
+
+Pruebas extremo a extremo: no hay un comando `e2e` en los `package.json`, así que este README no documenta ninguno. Lo
+más cercano son las pruebas de procesos reales (`npm run test:integration`) y la comprobación manual del despliegue.
+
+Comprobación manual del despliegue: de los 20 pasos de «Comprobación manual», el usuario ejecutó en Docker Desktop 10 de
+los 20 pasos, total o parcialmente. Resultado registrado: 4 cumple, 6 parcial y 10 no ejecutado. Los pasos no
+ejecutados son 2, 5, 6, 8, 9, 12, 13, 16, 18 y 19, y quedan como lista de verificación para quien despliegue. Si sobra
+tiempo, conviene ejecutar al menos 6, 8 y 16 (migración fallida, red interna sin salida y ausencia de secretos). Nada de
+lo no ejecutado se da por probado.
+
+Detalle por paquete:
+
 - Cobertura mínima del 95 % sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
@@ -2667,8 +2694,106 @@ despliegue.
 
 ## Despliegue en Ubuntu
 
-Los pasos de Ubuntu no se han probado en una máquina Ubuntu. Mientras tanto, el despliegue con Docker y su
-comprobación manual están en «Despliegue con Docker Compose».
+Esta sección explica cómo desplegar la aplicación en un servidor Ubuntu con Docker Engine y el plugin de Compose. Todos
+los pasos de esta sección están documentados, no probados: no hubo una máquina Ubuntu donde ejecutarlos. Lo que sí se
+probó es la misma composición en Docker Desktop de Windows (ver «Comprobación manual»). Los comandos usan el mismo
+`docker-compose.yml`, así que se espera que se comporten igual, pero eso no está comprobado.
+
+### Requisitos
+
+- Un servidor Ubuntu con acceso a internet para descargar las imágenes y construirlas (la red de la aplicación no tiene
+  salida, pero la construcción sí la necesita).
+- Un usuario con permisos para ejecutar `sudo` y para usar Docker.
+- Git, Docker Engine y el plugin de Compose (se usa como `docker compose`). No hace falta
+  instalar Node ni PostgreSQL: todo corre en contenedores.
+
+### Instalar Docker
+
+Siga la guía oficial de Docker para Ubuntu (https://docs.docker.com/engine/install/ubuntu/), que incluye el plugin de
+Compose. Este README no copia sus comandos ni fija versiones: cambian con el tiempo y la guía oficial es la fuente
+correcta. Al terminar, compruebe que `docker --version` y `docker compose version` responden. Las versiones con las que
+se comprobó la composición en Windows están en «Versiones usadas»; en Ubuntu no se probó ninguna.
+
+### Clonar y configurar
+
+```
+git clone <url-del-repositorio>
+cd <carpeta-del-repositorio>
+cp .env.example .env
+```
+
+Genere los secretos y péguelos solo en el `.env` (nunca en un archivo que se suba al repositorio): una contraseña por
+cada variable `POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD` y `READER_PASSWORD`, y la clave en `API_KEY`.
+
+```
+node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+Si el servidor no tiene Node, genere los valores en otra máquina y péguelos en el `.env` del servidor. Ponga
+`RATE_LIMIT_MAX` en `1000` y `RATE_LIMIT_POST_MAX` en `200`, o borre esas dos líneas (los valores de la plantilla se
+agotan pronto con la interfaz). Revise «Variables del despliegue». Ningún comando de esta sección imprime el `.env`.
+
+### Levantar y comprobar
+
+```
+docker compose -f docker-compose.yml up -d --build --wait
+docker compose -f docker-compose.yml ps
+docker compose -f docker-compose.yml logs --tail 50 backend
+```
+
+Esperado: `postgres`, `backend` y `frontend` sanos, y `migrate` terminado con código 0. Después, `curl -I http://127.0.0.1:3001`
+desde el propio servidor debe responder `200`. Por defecto el puerto se publica solo en el propio servidor
+(`127.0.0.1:3001:3001` en la composición), así que desde otra máquina no responde: es lo esperado.
+
+### Actualizar
+
+```
+git pull
+docker compose -f docker-compose.yml up -d --build --wait
+```
+
+Reconstruye las imágenes, y `migrate` aplica las migraciones nuevas antes de arrancar el backend (es idempotente).
+Los datos se conservan en el volumen. Una migración que falle impide que el resto arranque; se revisa con
+`docker compose -f docker-compose.yml logs migrate`.
+
+### Parar
+
+```
+docker compose -f docker-compose.yml down
+```
+
+Detiene y elimina los contenedores y conserva el volumen con los datos. No se documenta ninguna opción que borre el
+volumen: borrar los datos no forma parte del uso normal.
+
+### Copia de seguridad
+
+Un comando, desde la raíz del repositorio, que guarda un volcado en un archivo del servidor (`respaldo.sql`; contiene
+las tareas, así que no debe subirse a git ni compartirse):
+
+```
+docker compose -f docker-compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$DB_NAME"' > respaldo.sql
+```
+
+El servicio es `postgres`; el usuario y la base salen de las variables `POSTGRES_USER` y `DB_NAME` que la composición ya
+da a ese contenedor, así que no hace falta escribirlas ni imprimir el `.env`. La restauración no se documenta ni se
+probó.
+
+### Antes de exponer a una red
+
+La aplicación sale configurada para uso local. Antes de publicarla a una red o a internet hace falta, como mínimo:
+
+- **TLS:** poner delante un proxy inverso con HTTPS. La aplicación no trae HTTPS propio.
+- **Login:** no existe; quien alcance la página puede crear, editar y borrar tareas (ver «Riesgos residuales y limitaciones»
+  en «Decisiones técnicas»).
+- **`ALLOWED_HOSTS`:** añadir el nombre público (con puerto si lo lleva); si no, las escrituras reciben 403.
+- **`CORS_ORIGIN`:** cambiarlo al origen público exacto, por ejemplo `https://nombre-publico`.
+- **Dirección de publicación:** la composición publica el puerto solo en `127.0.0.1`; para que lo alcance el proxy
+  externo hay que cambiar esa publicación en `docker-compose.yml` o poner el proxy en el mismo servidor apuntando a
+  `127.0.0.1:3001`. Ese cambio es del operador y no se probó.
+- **`TRUSTED_PROXIES`:** la composición lo fija a `none`. Aun con un proxy delante, el frontend no reenvía la IP real, así
+  que el cupo sigue siendo compartido (ver «Cupo compartido por diseño (desviación declarada)»).
+- Cortafuegos del servidor: solo deben quedar abiertos los puertos del proxy.
 
 ## Decisiones técnicas
 

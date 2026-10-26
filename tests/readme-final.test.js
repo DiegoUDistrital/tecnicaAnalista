@@ -229,3 +229,85 @@ describe('README final: ejecución sin contradicciones', () => {
     expect(readme).not.toContain('se documentan cuando se añadan');
   });
 });
+
+describe('README final: despliegue en Ubuntu y pruebas', () => {
+  const ubuntu = norm(section('Despliegue en Ubuntu'));
+  const compose = file('docker-compose.yml');
+
+  it('RF-R4: la sección «Despliegue en Ubuntu» existe y contiene «documentados, no probados»', () => {
+    expect(ubuntu.length).toBeGreaterThan(0);
+    expect(ubuntu).toContain('documentados, no probados');
+  });
+
+  it('RF-R4: Ubuntu cubre requisitos, Docker, clonar, .env, up, comprobaciones, actualización, parada y copia', () => {
+    for (const piece of [
+      'requisitos',
+      'docs.docker.com/engine/install/ubuntu',
+      'plugin de compose',
+      'git clone',
+      'cp .env.example .env',
+      'randombytes(24)',
+      'randombytes(32)',
+      'docker compose -f docker-compose.yml up -d --build --wait',
+      'docker compose -f docker-compose.yml ps',
+      'docker compose -f docker-compose.yml logs',
+      'git pull',
+      'docker compose -f docker-compose.yml down',
+      'pg_dump',
+      'tls',
+      'login',
+      'allowed_hosts',
+      'cors_origin',
+      'trusted_proxies',
+      '127.0.0.1:3001:3001',
+    ]) {
+      expect(ubuntu, piece).toContain(piece);
+    }
+    expect(ubuntu, 'sin down -v').not.toMatch(/down -v/);
+    expect(ubuntu, 'sin config sin --quiet').not.toMatch(/docker compose [^\n]*\bconfig\b(?! --quiet)/);
+    expect(ubuntu, 'sin sudo apt install de versiones').not.toMatch(/docker-ce=/);
+  });
+
+  it('RF-R4: los nombres del pg_dump existen en docker-compose.yml', () => {
+    const dump = /docker compose -f docker-compose\.yml exec -T (\w+) sh -c '([^']*pg_dump[^']*)'/.exec(
+      section('Despliegue en Ubuntu'),
+    );
+    expect(dump, 'comando pg_dump con exec -T').not.toBeNull();
+    const [, service, inner] = dump ?? [];
+    expect(compose, `servicio ${service}`).toMatch(new RegExp(`^ {2}${service}:`, 'm'));
+    const user = capture(inner ?? '', /-U "\$(\w+)"/);
+    const database = capture(inner ?? '', /"\$(\w+)"\s*$/);
+    for (const name of [user, database]) expect(compose, `variable ${name}`).toMatch(new RegExp(`^ {6}${name}: `, 'm'));
+  });
+
+  const tests = norm(section('Pruebas'));
+
+  it('RF-R4: «Pruebas» tiene la tabla de grupos, comandos, cobertura y nota de E2E', () => {
+    expect(section('Pruebas'), 'tabla de grupos').toMatch(/^\| Grupo\s+\| Dónde\s+\| Comando\s+\|/m);
+    for (const piece of [
+      'npm test',
+      'npm run lint',
+      'npm run typecheck',
+      'npm run build',
+      'npm run test:integration',
+      '95 %',
+      'extremo a extremo',
+      'no hay un comando',
+    ]) {
+      expect(tests, piece).toContain(piece);
+    }
+  });
+
+  it('RF-R4: «Pruebas» declara 10 de 20 pasos manuales ejecutados y nombra los no ejecutados', () => {
+    expect(tests).toContain('4 cumple, 6 parcial y 10 no ejecutado');
+    expect(tests).toContain('10 de los 20 pasos');
+    expect(tests).toContain('2, 5, 6, 8, 9, 12, 13, 16, 18 y 19');
+    expect(tests).toContain('6, 8 y 16');
+  });
+
+  it('RF-R4: la lista manual sigue con sus 20 pasos', () => {
+    const steps = [...section('Comprobación manual').matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]));
+    expect(steps).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(section('Comprobación manual')).toContain('| Paso | Qué se comprueba | Resultado | Observación |');
+  });
+});
