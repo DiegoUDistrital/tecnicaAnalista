@@ -2,37 +2,149 @@
 
 Prueba Técnica para Analista de Desarrollo.
 
-## Descripción
+## Resumen y alcance
 
 Aplicación de lista de tareas (To-Do) con backend en Express, base de datos PostgreSQL y frontend en Next.js.
 Permite crear, listar, editar, completar y eliminar tareas, y filtrarlas por estado (todas, completadas, pendientes).
-El énfasis del proyecto está en la seguridad y en el mínimo privilegio.
+El énfasis del proyecto está en la seguridad y en el mínimo privilegio: tres roles de base de datos, una API protegida
+por key, límites de peticiones y un frontend que nunca expone secretos al navegador.
 
-## Tecnologías utilizadas
+Qué incluye:
 
-Las versiones se fijan al crear cada proyecto.
+- Un backend (`backend/`) que hace todo el CRUD y el filtro, y es dueño del esquema y de las migraciones.
+- Un frontend (`frontend/`) con la interfaz, que solo habla con su propio servidor.
+- Una base de datos PostgreSQL con los roles `owner`, `writer` y `reader`.
+- Una composición de Docker que levanta todo con un comando, y un arranque conjunto para desarrollar.
 
-- Node.js
-- Express
-- helmet 8.3.0 (cabeceras de seguridad)
-- express-rate-limit 8.7.1 (límite de peticiones por IP)
-- PostgreSQL
-- Next.js 16.4.3 (App Router) con React 19.3.1 (frontend)
-- Prisma 7.10.1 (en el backend y, solo lectura, en el frontend con `@prisma/adapter-pg`)
-- TypeScript 6.0.3
-- Tailwind CSS 4.3.3 (con `@tailwindcss/postcss` y PostCSS 8.5.31)
-- Vitest 5.0.5
-- ESLint 10.13.0, typescript-eslint 8.72.0 y Prettier 3.9.10
-- Docker
+Fuera de alcance: login de usuarios, HTTPS, pruebas en una máquina Ubuntu (los pasos se documentan, no se probaron),
+Redis y límites por persona (ver «Trabajo futuro» y «Cupo compartido por diseño (desviación declarada)»).
+
+## Índice
+
+- [Resumen y alcance](#resumen-y-alcance)
+- [Arranque rápido](#arranque-rápido)
+- [Arquitectura](#arquitectura) y [Recorrido de una petición](#recorrido-de-una-petición)
+- [Estructura del repositorio](#estructura-del-repositorio)
+- [Versiones usadas](#versiones-usadas)
+- [Base de datos de desarrollo](#base-de-datos-de-desarrollo)
+- [Instalación](#instalación), [Arranque conjunto](#arranque-conjunto) y [Cómo ejecutar](#cómo-ejecutar)
+- [Variables del servicio](#variables-del-servicio) y [Migrar y aplicar permisos](#migrar-y-aplicar-permisos)
+- [API de tareas](#api-de-tareas) y [Contrato de errores](#contrato-de-errores)
+- [Roles y permisos](#roles-y-permisos)
+- [Cupo compartido por diseño (desviación declarada)](#cupo-compartido-por-diseño-desviación-declarada)
+- [Frontend](#frontend)
+- [Pruebas](#pruebas)
+- [Despliegue con Docker Compose](#despliegue-con-docker-compose)
+- [Despliegue en Ubuntu](#despliegue-en-ubuntu)
+- [Decisiones técnicas](#decisiones-técnicas)
+- [Trabajo futuro](#trabajo-futuro)
+
+## Arranque rápido
+
+Ruta más corta para ver la aplicación funcionando: todo dentro de Docker, sin instalar Node ni PostgreSQL. Requisitos:
+Docker Desktop en marcha (Windows) o Docker Engine con el plugin de Compose (Linux).
+
+1. Clone el repositorio y entre en la carpeta:
+
+   ```
+   git clone <url-del-repositorio>
+   cd <carpeta-del-repositorio>
+   ```
+
+2. Cree el `.env` a partir de la plantilla (un solo archivo sirve al despliegue; el frontend de Docker no necesita
+   `frontend/.env`):
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+   En Linux o macOS: `cp .env.example .env`.
+
+3. Genere los secretos y péguelos solo en el `.env` (nunca en un archivo que se suba al repositorio). Una contraseña por
+   cada variable `POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD` y `READER_PASSWORD`, y la clave en `API_KEY`:
+
+   ```powershell
+   node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+   ```
+
+   La primera línea genera cada contraseña; la segunda, la `API_KEY`. Las URL de conexión del `.env` son de desarrollo y
+   el despliegue no las usa. Además, la plantilla define `RATE_LIMIT_MAX=100` y `RATE_LIMIT_POST_MAX=20`, que se agotan
+   pronto con la interfaz: póngalos en `1000` y `200`, o borre esas dos líneas.
+
+4. Construya y levante todo:
+
+   ```powershell
+   docker compose -f docker-compose.yml up -d --build --wait
+   ```
+
+5. Abra `http://127.0.0.1:3001`.
+
+6. Para apagar (los datos se conservan en un volumen):
+
+   ```powershell
+   docker compose -f docker-compose.yml down
+   ```
+
+Todos los comandos de despliegue llevan `-f docker-compose.yml` porque la carpeta tiene también el archivo de
+desarrollo. Detalles, límites y comprobaciones en «Despliegue con Docker Compose». Para desarrollar con recarga, ver
+«Instalación» y «Arranque conjunto».
+
+## Arquitectura
+
+Tres piezas, cada una con un solo trabajo:
+
+```
+navegador -> servidor de Next (puerto 3001) -> Express (puerto 3000) -> PostgreSQL
+                       |
+                       +-> Prisma (rol reader) -> vista de conteos
+```
+
+- **Navegador:** solo habla con el servidor de Next. No ve la API key, ni la URL de Express ni la base de datos.
+- **Servidor de Next (frontend):** sirve la página, lee los contadores con el rol `reader` y reenvía las operaciones a
+  Express con la API key, que solo existe en el servidor.
+- **Express (backend):** valida, aplica los límites y hace todo el CRUD con el rol `writer`.
+- **PostgreSQL:** guarda las tareas; `owner` solo migra, `writer` escribe y `reader` solo lee la vista de conteos.
+
+### Recorrido de una petición
+
+Ejemplo: el usuario completa una tarea.
+
+1. El navegador envía `PUT /api/tasks/<id>` al servidor de Next (su propio origen).
+2. La ruta de Next comprueba el origen (rechaza con 403 un `Origin` ajeno) y valida lo que recibe.
+3. La ruta llama a Express con `Authorization: Bearer <API key>`; la key viaja solo entre servidores.
+4. Express comprueba la API key, aplica los límites de peticiones, valida el cuerpo y el identificador, y ejecuta un
+   `UPDATE` con SQL parametrizado usando el rol `writer`.
+5. PostgreSQL responde, Express devuelve la tarea (o un error sin detalles internos) y Next la entrega al navegador.
+6. La página vuelve a leer la lista y los contadores: estos últimos salen de una vista de PostgreSQL, con el rol
+   `reader`, que no tiene acceso a la tabla `tasks`.
 
 ## Estructura del repositorio
 
 - `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
 - `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
-  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend»).
+  contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend»). Su plantilla de variables es `frontend/.env.example`.
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: despliegue completo con Docker Compose (ver «Despliegue con Docker Compose»).
 - `backend/queries.sql`: consultas SQL de la prueba.
+- `scripts/`: arranque conjunto (`npm run dev`) y sus ayudantes.
+- `integration/`: pruebas con procesos reales (`npm run test:integration`).
+- `tests/`: pruebas de los scripts de la raíz y del contenido de este README.
+- `.env.example`: plantilla de variables de entorno (el `.env` real no se sube).
+
+## Versiones usadas
+
+Leídas de los `package.json` (raíz, `backend/` y `frontend/`, todas exactas), de `docker-compose.yml` y de los
+Dockerfile.
+
+- Node.js: `^22.12.0 || ^24.0.0 || >=26.0.0` (campo `engines`); las imágenes usan node:26.1.0-bookworm-slim.
+- PostgreSQL: postgres:16.15 (imagen de la composición).
+- Docker 29.6.2 y Compose v5.3.1 (las versiones con las que se comprobó el despliegue).
+- Backend: express 5.3.0, helmet 8.3.0, express-rate-limit 8.7.1, pg 8.23.1, prisma 7.10.1 (migraciones), supertest 7.3.1.
+- Frontend: next 16.4.3 (App Router), react 19.3.1, react-dom 19.3.1, prisma 7.10.1 y @prisma/adapter-pg 7.10.1
+  (solo lectura), tailwindcss 4.3.3 con @tailwindcss/postcss 4.3.3 y postcss 8.5.31, jsdom 30.1.3 y
+  @testing-library/react 16.3.3 (pruebas de componentes).
+- Herramientas comunes: typescript 6.0.3, vitest 5.0.5, eslint 10.13.0, typescript-eslint 8.72.0 y prettier 3.9.10.
 
 ## Backend
 
@@ -62,8 +174,8 @@ Comandos disponibles (dentro de `backend/`):
 
 ## Base de datos de desarrollo
 
-PostgreSQL 16 se levanta con Docker (`docker-compose.dev.yml`, solo para desarrollo y pruebas; el despliegue se
-documenta más adelante). Hace falta Docker Desktop en marcha.
+PostgreSQL 16 se levanta con Docker (`docker-compose.dev.yml`, solo para desarrollo y pruebas; el despliegue completo
+está en «Despliegue con Docker Compose»). Hace falta Docker Desktop en marcha.
 
 ```powershell
 Copy-Item .env.example .env
@@ -910,8 +1022,9 @@ falla. Se puede repetir sin riesgo: sin migraciones pendientes no cambia nada.
 
 ## Instalación
 
-Requisitos: Node.js con npm y Docker Desktop. Con la base de datos de desarrollo arriba (ver «Base de datos de
-desarrollo») y el `.env` creado:
+Esta sección es para desarrollar (para solo ver la aplicación, ver «Arranque rápido»). Requisitos: Node.js con npm
+(versiones en «Versiones usadas») y Docker Desktop (en Linux, Docker Engine con el plugin de Compose). Con la base de
+datos de desarrollo arriba (ver «Base de datos de desarrollo») y el `.env` creado:
 
 ```powershell
 cd backend
@@ -983,6 +1096,9 @@ Copy-Item .env.example .env
 Copy-Item frontend/.env.example frontend/.env
 ```
 
+En Linux o macOS se usa `cp` en lugar de `Copy-Item`. A diferencia del «Arranque rápido» (Docker, un solo `.env`), el
+desarrollo usa también `frontend/.env`.
+
 1. Edite `.env` (contraseñas de los roles y `API_KEY`) y `frontend/.env` (`API_KEY` y la contraseña de
    `READER_DATABASE_URL`). La `API_KEY` debe ser **la misma `API_KEY` en los dos archivos**. Genérela una vez con:
    `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Si no coincide, el backend
@@ -999,7 +1115,7 @@ Copy-Item frontend/.env.example frontend/.env
 4. Migre y aplique los permisos con el rol `owner` (dentro de `backend/`): `npm run db:deploy`.
 5. Solo si cambia el esquema de la base de datos, regenere el del frontend con `prisma db pull` (ver «Contadores y
    Prisma en el frontend»).
-6. Desde la raíz: `npm run dev`, y abra `http://127.0.0.1:3001`.
+6. Desde la raíz: `npm run dev`, y abra `http://127.0.0.1:3001` (el backend queda en `127.0.0.1:3000`).
 
 ### Avisos y limitaciones del arranque conjunto
 
@@ -1737,7 +1853,8 @@ sin él. `npm run dev` puede crear un `AGENTS.md` si detecta un asistente de có
 
 ## Cómo ejecutar
 
-Con el contenedor de PostgreSQL arriba y el `.env` creado (ver «Base de datos de desarrollo»), dentro de `backend/`:
+Esta sección ejecuta solo el backend. Para la aplicación completa en desarrollo, ver «Arranque conjunto»; en Docker,
+«Arranque rápido». Con el contenedor de PostgreSQL arriba y el `.env` creado (ver «Base de datos de desarrollo»), dentro de `backend/`:
 
 ```
 npm start
@@ -1813,9 +1930,9 @@ de la tabla.
 ## Despliegue con Docker Compose
 
 Esta sección explica cómo se empaqueta y se ejecuta la aplicación completa con Docker: PostgreSQL, una tarea de un
-solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: están las imágenes
-del backend y del frontend, el script de inicio de la base, las variables y la composición (`docker-compose.yml`) que
-las une; el endurecimiento y el cierre ordenado se documentan cuando se añadan.
+solo uso que migra la base (`migrate`), el backend y el frontend. Reúne las imágenes del backend y del frontend, el
+script de inicio de la base, las variables, la composición (`docker-compose.yml`) que las une, el endurecimiento con
+el cierre ordenado y la comprobación manual. Para levantarla con pocos comandos, ver «Arranque rápido».
 
 Aviso para quien ejecute comandos: en esta carpeta conviven dos archivos de Compose, el de desarrollo
 (`docker-compose.dev.yml`, solo PostgreSQL) y el de despliegue (`docker-compose.yml`). Por eso TODOS los comandos de
