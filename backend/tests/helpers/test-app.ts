@@ -1,9 +1,10 @@
 import type { Express } from 'express';
-import { createApp } from '../../src/app';
+import { createApp, type ShutdownApp } from '../../src/app';
+import type { AppConfig } from '../../src/config/config';
 import type { Database } from '../../src/db/pool';
 import type { Logger } from '../../src/logging/logger';
 import { createCaptureLogger, type CaptureLogger } from './capture-logger';
-import { testSecurity, withTestKey } from './security';
+import { TEST_TASKS, testSecurity, withTestKey } from './security';
 
 export interface TestAppOptions {
   /** Rutas de prueba que se registran antes del 404 final y del manejador central. */
@@ -12,10 +13,14 @@ export interface TestAppOptions {
   capture?: CaptureLogger;
   /** Base de datos de la app; si falta se inyecta una que falla al usarse (los tests sin BD no deben tocarla). */
   database?: Database;
+  /** Ajustes de seguridad; por defecto `testSecurity()`. */
+  security?: AppConfig['security'];
+  /** Ajustes de la lista de tareas; por defecto `TEST_TASKS` (tope 1000). */
+  tasks?: AppConfig['tasks'];
 }
 
 export interface TestApp {
-  readonly app: Express;
+  readonly app: ShutdownApp;
   readonly capture: CaptureLogger;
 }
 
@@ -31,18 +36,23 @@ export interface BuildTestAppOptions {
   logger: Logger;
   database: Database;
   registerRoutes?: (app: Express) => void;
+  /** Ajustes de seguridad; por defecto `testSecurity()` (key válida, sin proxies de confianza, cupos altos). */
+  security?: AppConfig['security'];
+  /** Ajustes de la lista de tareas; por defecto `TEST_TASKS` (tope 1000). */
+  tasks?: AppConfig['tasks'];
 }
 
 /**
  * Único punto de los tests que llama a `createApp`: construye la app real y hace que toda petición lleve la API key
  * de pruebas (`withTestKey`); para una petición sin key se envía el marcador `X-Test-Omit-Key`.
  */
-export function buildTestApp(options: BuildTestAppOptions): Express {
+export function buildTestApp(options: BuildTestAppOptions): ShutdownApp {
   return withTestKey(
     createApp({
       logger: options.logger,
       database: options.database,
-      security: testSecurity(),
+      security: options.security ?? testSecurity(),
+      tasks: options.tasks ?? TEST_TASKS,
       ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
     }),
   );
@@ -54,6 +64,8 @@ export function createTestApp(options: TestAppOptions = {}): TestApp {
   const app = buildTestApp({
     logger: capture.logger,
     database: options.database ?? unusedDatabase(),
+    ...(options.security === undefined ? {} : { security: options.security }),
+    ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
     ...(options.registerRoutes === undefined ? {} : { registerRoutes: options.registerRoutes }),
   });
   return { app, capture };

@@ -125,7 +125,7 @@ describe('Repositorio de tareas: update contra PostgreSQL real', () => {
     const id = await seed('t');
     const hostile = `'); DROP TABLE tasks;--`;
     await repository.update(id, { title: hostile, description: `${hostile} ' OR '1'='1` });
-    const rows = await repository.list();
+    const rows = await repository.list(undefined, 1000);
     expect(rows.map((row) => [row.title, row.description])).toEqual([[hostile, `${hostile} ' OR '1'='1`]]);
     const exists = await owner.query<{ found: boolean }>(`SELECT to_regclass('public.tasks') IS NOT NULL AS found`);
     expect(exists.rows[0]?.found).toBe(true);

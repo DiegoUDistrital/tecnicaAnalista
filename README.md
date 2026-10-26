@@ -17,6 +17,7 @@ Las versiones se fijan al crear cada proyecto.
 - Node.js
 - Express
 - helmet 8.3.0 (cabeceras de seguridad)
+- express-rate-limit 8.7.1 (límite de peticiones por IP)
 - PostgreSQL
 - Next.js 15+ (App Router)
 - Prisma
@@ -40,9 +41,15 @@ El paquete del backend usa TypeScript estricto, ESLint, Prettier y Vitest con co
 configurado para las migraciones. Express construye la aplicación con `createApp` y el servicio se arranca con
 `npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
-`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API está protegida por API key (ver «Seguridad: API key») y las respuestas llevan cabeceras de `helmet` y
-`Cache-Control: no-store` (ver «Seguridad: cabeceras»). Todavía NO tiene límites por IP, CORS ni tope de la lista: no
-debe exponerse hasta que se añadan.
+`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). Toda ruta exige API key (ver «Seguridad:
+API key»), salvo `GET /health` y el preflight de CORS válido de las rutas de la API (ver «CORS»). Las respuestas llevan cabeceras de `helmet` y `Cache-Control: no-store` (ver «Seguridad: cabeceras»). Cada
+IP tiene dos cupos de peticiones (general y de `POST`), y se bloquea temporalmente tras demasiados intentos fallidos de
+key (ver «Límite de peticiones» y «Bloqueo por intentos fallidos»). CORS admite un único origen y responde el preflight
+de las rutas de la API (ver «CORS»). La lista de tareas tiene un tope (ver «Tope de la lista»). No hay login de usuarios
+(ver «Trabajo futuro»).
+
+Aviso: la API ya está protegida, pero NO debe exponerse a internet. No tiene HTTPS propio ni login de usuarios: úsela
+solo en la red interna o en loopback, y quien tenga la key puede crear, modificar y borrar tareas.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -101,7 +108,8 @@ La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con test
 
 El backend escribe los logs como una línea JSON por registro (`level`, `event`, `time` y, si procede, campos de
 contexto). Solo se escriben campos de una lista permitida y de valor simple (`host`, `port`, `signal`, `exitCode` y
-`timeoutMs`): nunca contraseñas, URL de conexión, API key, cabecera `Authorization`, cuerpos de petición ni datos de usuario. De un error se
+`timeoutMs`): nunca contraseñas, URL de conexión, API key, cabecera `Authorization`, IP del cliente, cabecera `Origin`,
+cuerpos de petición ni datos de usuario. Las respuestas 401, 429 y de preflight de CORS no escriben ninguna línea. De un error se
 registra la clase, el SQLSTATE (o el código de sistema, como `EPIPE`) y una traza construida solo con marcos de pila,
 sin el texto del mensaje. El mensaje solo se registra en los errores propios del proyecto y en los de base de datos
 fuera de la clase 22 (datos inválidos), cuyo mensaje puede contener el valor enviado por el usuario. Lo que se lance y
@@ -117,31 +125,37 @@ que no detecta una base de datos caída. Ignora el cuerpo, las cabeceras (`Conte
 `Authorization`, `If-None-Match`...) y la cadena de consulta (`/health?x=1` también da 200). El servicio no envía ETag
 ni `X-Powered-By`, y nunca responde `304`.
 
-`/health` es la única ruta que no pide API key (ver «Seguridad: API key»); todas las demás, existan o no, dan `401`
-si la petición no trae la key.
+`/health` no pide API key (ver «Seguridad: API key»). Las demás rutas, existan o no, dan `401` si la petición no trae la
+key. Única excepción: el preflight de CORS válido de una ruta de la API, que se responde con `204` sin key (ver «CORS»).
 
 Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y, con key válida, dan `404 NOT_FOUND`, igual que
 cualquier ruta desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también
 es 404, no 400); sin key dan `401`. Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
-ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta. Los 404 y
+ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta, con una
+única excepción, el preflight de CORS válido de las rutas de `/api` (ver «CORS»); `OPTIONS /health` sigue dando `405`
+con `Allow: GET`, también sin key. Los 404 y
 405 usan el mismo sobre JSON del contrato de errores y no se registran en el log.
 
 ## Seguridad: API key
 
-Toda petición, salvo `GET /health`, debe traer `Authorization: Bearer <key>` con la key configurada en `API_KEY`
+Toda petición, salvo `GET /health` y el preflight de CORS válido (ver «CORS»), debe traer `Authorization: Bearer <key>` con la key configurada en `API_KEY`
 (ver «Variables del servicio»). Si falta, está mal formada o no coincide, la respuesta es siempre la misma:
 `401 {"error":{"code":"UNAUTHORIZED","message":"No autorizado.","details":[]}}` con `WWW-Authenticate: Bearer`. El
 texto es idéntico para todas las causas, para no dar pistas a quien prueba claves.
 
 - **Formato estricto.** La cabecera debe aparecer una sola vez, con el esquema `Bearer` (sin distinguir mayúsculas), un
-  único espacio y una key de 1 a 128 caracteres de `A-Za-z0-9_-`. Dos cabeceras `Authorization` (aunque sean iguales),
+  único espacio y un valor de 1 a 128 caracteres de `A-Za-z0-9_-`. Un valor fuera de ese formato da `401` sin llegar a
+  comparar. (La key configurada en `API_KEY` es más exigente: de 43 a 128 caracteres, ver «Variables del servicio».)
+  Dos cabeceras `Authorization` (aunque sean iguales),
   otros esquemas, dos espacios, un tabulador o la key en la URL o en una cookie dan `401`. `Proxy-Authorization` se
   ignora. Node ya recorta los espacios al principio y al final del valor de una cabecera.
 - **Denegar por defecto.** `/health` se registra antes de la guarda y la guarda se aplica a todo lo que se registra
-  después, sin comparar rutas: la exención la decide el mismo enrutador que despacha `/health`. Así `/health;x`,
+  después, sin comparar rutas: la exención la decide el mismo enrutador que despacha `/health`. El preflight de CORS también se registra antes de la guarda,
+pero solo atiende a un `OPTIONS` válido (ver «CORS»). Así `/health;x`,
   `//health`, `/%68ealth`, `/Health` y `/health/` no están exentas (dan `401` sin key y `404` con ella) y una ruta nueva
   nace protegida. `/health` sigue su tabla de métodos: `HEAD /health` da `405` con `Allow: GET`, no `401`.
-- **Antes de todo lo demás.** La guarda es la etapa 0 de la tubería (ver «Orden de comprobación de una petición»): sin
+- **Antes de todo lo demás.** La guarda es la etapa P3 de la tubería (ver «Orden de comprobación de una petición»): antes
+  solo van las cabeceras (P0), el cupo general (P1) y un preflight de CORS válido (P2). Sin
   key, un `PATCH /api/tasks` da `401` (no `405`), una ruta inexistente da `401` (no `404`), y no se lee el cuerpo ni se
   consulta la base de datos. Así quien no está autorizado no averigua qué rutas ni métodos existen ni gasta recursos
   del servicio. Si la petición trae cuerpo (aunque sea de 20 KB, que con key daría `413`), el `401` lleva
@@ -181,6 +195,168 @@ lleva las cabeceras de [`helmet`](https://helmetjs.github.io/) 8.3.0 con sus val
 - **Limitación.** Las respuestas que Node genera antes de que la petición llegue a Express (por ejemplo `431` por
   cabeceras demasiado grandes o una petición mal formada) no pasan por la aplicación y no llevan estas cabeceras.
 
+## IP real del cliente y proxies de confianza
+
+El servicio calcula una «clave de cliente» a partir de la IP de quien llama. La usa para contar las peticiones
+de cada persona en el límite de peticiones (ver «Límite de peticiones»); este apartado explica cómo se obtiene y cómo
+se configura.
+
+- **Por qué hace falta.** El navegador no llama a Express: lo hace el servidor del frontend. Para Express, todas las
+  peticiones vienen de ese servidor. Si el límite contara su IP, un solo usuario agotaría el cupo de todos. Por eso el
+  frontend debe pasar la IP del usuario en `X-Forwarded-For` y Express debe leerla, pero solo cuando se puede creer.
+- **Cuándo se cree `X-Forwarded-For`.** Solo si la conexión TCP viene de una dirección de la lista
+  `TRUSTED_PROXIES`. Si viene de otra, la cabecera se ignora y cuenta la dirección de la conexión: quien falsifique
+  la cabecera desde fuera no evade nada. `Forwarded` y `X-Real-IP` no se leen nunca.
+- **Por qué una lista de direcciones.** Alternativas descartadas: `true` (creer a cualquiera: cualquiera falsifica su
+  IP) y un número de saltos (depende de cuántos proxies haya y de que ninguno falle). Una lista dice exactamente de
+  quién se fía el servicio. Tampoco se usa `req.ip` de Express con `trust proxy`, que devuelve la entrada no confiable tal
+  cual aunque no sea una IP; el servicio tiene su propio cálculo, con reglas escritas y probadas, y `trust proxy` está
+  desactivado.
+- **Regla de la última entrada no confiable.** Con la conexión de confianza se recorre `X-Forwarded-For` de derecha a
+  izquierda, se saltan las direcciones de confianza y decide la primera que no lo es: `X, A` cuenta `A` (cambiar `X`
+  no sirve para evadir). Si esa entrada no es una IP válida (`A, basura`), o todas son de confianza
+  (`127.0.0.1, 127.0.0.1`), cuenta la dirección de la conexión: falla del lado estricto (un cupo compartido) y nunca
+  del permisivo. Una cabecera de más de 512 caracteres se trata como basura.
+- **Qué es una IP válida.** Una IP literal en forma canónica: sin zona (`fe80::1%eth0`), sin ceros a la izquierda
+  (`010.0.0.1`), sin puerto ni corchetes. Las IPv6 se escriben abreviadas y en minúsculas (la forma larga y la corta
+  son la misma) y una IPv4-mapeada (`::ffff:203.0.113.7`) cuenta como la IPv4 (`203.0.113.7`). Un valor mal formado no
+  crea claves nuevas: cae en la dirección de la conexión.
+- **IPv6 por /64.** Las direcciones IPv6 se agrupan por sus 4 primeros grupos (el /64): quien tiene una red IPv6
+  dispone de millones de direcciones y, si cada una contara aparte, evadiría el límite cambiando de dirección.
+- **`TRUSTED_PROXIES`.** Lista separada por comas, con espacios opcionales alrededor de cada entrada. Cada entrada es
+  un nombre, una IP o una `IP/prefijo`:
+  - `loopback`: `127.0.0.0/8` y `::1`.
+  - `linklocal`: `169.254.0.0/16` y `fe80::/10`.
+  - `uniquelocal`: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` y `fc00::/7`.
+  - Prefijo mínimo `/8` en IPv4 y `/7` en IPv6 (así una lista no puede confiar en medio Internet); la máscara larga
+    (`10.0.0.0/255.0.0.0`) no se admite. Los nombres distinguen mayúsculas.
+  - `none` (solo, en minúsculas) significa que nadie es de confianza: ninguna cabecera influye y cuenta siempre la
+    dirección de la conexión.
+  - Ausente equivale a `loopback`. Vacía, con entradas vacías (`a,,b`), `true`, `/0`, `None`, `NONE` o cualquier otro
+    texto es inválida y el servicio no arranca (el error nombra la variable, nunca su valor).
+- **Contrato para el frontend.** El servidor de Next debe escribir en `X-Forwarded-For` UNA sola IP: la dirección de su
+  propio socket entrante (la de quien le llama, que el servidor ve en la conexión). Debe SOBRESCRIBIR cualquier valor que
+  traiga el navegador: nunca copiarlo ni anteponerlo, porque un cliente podría falsificar su IP.
+  Si Next estuviera detrás de otro proxy, su socket vería la IP de ese proxy; ese caso se decide al desplegar, no se
+  resuelve copiando cabeceras.
+- **Riesgo.** Si el frontend no envía la cabecera, o `TRUSTED_PROXIES` no incluye la red desde la que se conecta, todos
+  los usuarios comparten una misma clave y un solo usuario podría agotar el cupo de todos.
+- **Despliegue (pendiente).** Cuando el frontend y la API estén en Docker Compose, la red desde la que Next llama a
+  Express debe figurar en `TRUSTED_PROXIES` como subred fija (IP/prefijo), no como `loopback`. Esa configuración se
+  documentará con el despliegue.
+
+## Límite de peticiones
+
+El servicio limita cuántas peticiones puede hacer cada IP con la librería `express-rate-limit` 8.7.1. Hay dos cupos,
+que se cuentan por separado y por la IP real del cliente (ver «IP real del cliente y proxies de confianza»):
+
+- **Cupo general (100 por ventana).** Cuenta toda petición a una ruta que no sea `/health`, con cualquier método y con o
+  sin key: incluye las que acaban en `401`, `404` o `405`. `/health` no cuenta ni se limita.
+- **Cupo de `POST` (20 por ventana).** Cuenta solo los `POST` que llegan con una key válida y con cupo general
+  disponible. Un `POST` rechazado después por validación (`400`) o por tipo de contenido (`415`) sí cuenta (se cuenta la
+  petición, no el éxito); un `POST` sin key, uno rechazado por el cupo general o `POST /health` no lo consumen. `GET`,
+  `PUT` y `DELETE` solo cuentan en el general: son los `POST` los que crean filas.
+
+Al superar un cupo, la respuesta es `429 {"error":{"code":"TOO_MANY_REQUESTS","message":"Demasiadas peticiones.","details":[]}}`
+con la cabecera `Retry-After` (segundos enteros, al menos 1, hasta que termine la ventana de esa IP). No se envían
+cabeceras `RateLimit-*` ni `X-RateLimit-*`. El servicio no lee el cuerpo de una petición rechazada: si lo trae,
+responde con `Connection: close` y cierra la conexión (nunca da `413` en su lugar). Un `429` conserva las cabeceras de
+seguridad y no se registra en el log.
+
+- **Ventana fija por IP.** La ventana de cada IP dura `RATE_LIMIT_WINDOW_MS` (15 minutos por defecto) y empieza con su
+  primera petición contada; al terminar, su contador vuelve a cero. Con cupo N pasan las N primeras y la N+1 recibe
+  `429`. Límite aceptado: una ventana fija puede dejar pasar hasta 2N peticiones en la frontera entre dos ventanas
+  (N al final de una y N al principio de la siguiente). Alternativa descartada: ventana deslizante, más compleja y sin
+  beneficio con un único cliente.
+- **Orden.** El cupo general se cuenta ANTES de mirar la key: una IP agotada recibe `429` aunque la key sea errónea (el
+  `429` gana a un `401`). El cupo de `POST` va después de la key y antes de las rutas, así que un `POST` a una ruta que
+  daría `405` también se rechaza con `429` si el cupo está agotado.
+- **En memoria, un solo proceso.** Los contadores viven en la memoria de la instancia de Express: se pierden al
+  reiniciar y no se comparten entre instancias (con varias instancias, cada una cuenta aparte). Redis se deja como
+  trabajo futuro: no hay un problema de carga que lo justifique. Al cerrar el servicio se liberan los almacenes y sus
+  temporizadores (ver «Cierre ordenado»).
+- **Variables.** `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (ver «Variables del servicio»).
+  `RATE_LIMIT_POST_MAX` no puede ser mayor que `RATE_LIMIT_MAX`: un cupo de `POST` mayor que el general sería
+  inalcanzable, porque cada `POST` también gasta del general. Si lo es, el servicio no arranca y el error nombra las dos
+  variables (nunca sus valores). Como el defecto de `RATE_LIMIT_POST_MAX` es 20, bajar solo `RATE_LIMIT_MAX` por debajo
+  de 20 obliga a bajar también `RATE_LIMIT_POST_MAX`.
+
+## Bloqueo por intentos fallidos
+
+Además de los cupos, el servicio bloquea la IP que acierta mal la key demasiadas veces. Un intento fallido es una
+petición que acaba en `401` (sin `Authorization`, mal formada, repetida o con la key equivocada). Tras
+`RATE_LIMIT_AUTH_FAILURES_MAX` intentos fallidos (10 por defecto) dentro de la ventana de la IP, TODA petición de esa IP
+recibe `429` con `Retry-After` hasta que la ventana termina, incluso si trae la key buena. `/health` ni cuenta ni se
+bloquea.
+
+- **Por qué se bloquea toda la IP y no solo las keys erróneas.** Si la IP bloqueada pudiera entrar con la key buena, quien
+  adivina la clave seguiría probando con éxito posible: un acierto se notaría porque deja de ser rechazado. Con el
+  bloqueo total, tras agotar los intentos no obtiene ninguna información más hasta que termine la ventana.
+- **Contador propio, síncrono y solo al emitir un `401`.** Es un contador de ventana fija por IP real (la misma ventana
+  fija de 15 minutos de los cupos, que empieza con el primer fallo de esa IP) que vive en memoria. La guarda lee el
+  contador, compara la key y suma en el mismo cuerpo síncrono, sin `await`: con peticiones simultáneas la cifra es exacta
+  (20 peticiones simultáneas con key errónea y límite 3 dan exactamente 3 respuestas `401` y 17 respuestas `429`). Una
+  petición con key válida nunca suma, acabe como acabe (`400`, `404`, `405`, `413`, `415`, `429` o `500`), y un `429`
+  tampoco. El contador no usa temporizadores: caduca de forma perezosa y barre las IP vencidas como mucho una vez por
+  ventana, así que no mantiene vivo el proceso ni necesita cierre.
+- **Alternativa descartada: `skipSuccessfulRequests` de la librería de cupos.** Cuenta cada petición al entrar y descuenta
+  las exitosas al responder; con peticiones simultáneas la cifra intermedia es inexacta (15 peticiones válidas
+  simultáneas con límite 10 llegarían a bloquear a quien nunca falló).
+- **Orden.** El cupo general va antes (un `429` por cupo gana a todo) y el bloqueo por fallos va justo antes de mirar la
+  key; el cupo de `POST` va después de la key.
+- **Coste.** Quien pueda falsificar un `X-Forwarded-For` ajeno desde una dirección de `TRUSTED_PROXIES` puede hacer que la
+  IP de otro acumule fallos y quede bloqueada. Por eso `TRUSTED_PROXIES` debe incluir solo la red del frontend (ver «IP
+  real del cliente y proxies de confianza»). Los contadores están en memoria de una instancia: se pierden al reiniciar.
+- **Rotar la API key.** Si se cambia `API_KEY` y el frontend sigue enviando la antigua, cada petición del frontend es un
+  intento fallido y la IP del frontend queda bloqueada hasta que termine su ventana (15 minutos por defecto). El resto de
+  usuarios, que llegan por esa misma IP si el frontend no reenvía la suya, también quedan bloqueados. Por eso conviene
+  reiniciar Express y el frontend a la vez con la key nueva: al reiniciar Express se borran los contadores.
+- **Variable.** `RATE_LIMIT_AUTH_FAILURES_MAX` (entero 1-1000, por defecto 10). No puede superar `RATE_LIMIT_MAX`: el
+  cupo general también cuenta los `401`, y más fallos tolerados que peticiones permitidas serían inalcanzables. Si lo
+  supera, el servicio no arranca y el error nombra las dos variables (nunca sus valores). Como el defecto es 10, bajar
+  solo `RATE_LIMIT_MAX` por debajo de 10 obliga a bajar también esta variable.
+
+## CORS
+
+CORS es el mecanismo con el que un navegador decide si una página de un origen puede leer las respuestas de otro. El
+servicio solo reconoce UN origen, el de `CORS_ORIGIN` (por ejemplo, `http://localhost:3000`). Una petición que trae
+exactamente un `Origin` idéntico a ese valor recibe `Access-Control-Allow-Origin` con ese mismo valor; cualquier otra
+(otro dominio, otro puerto, otro esquema, `null`, una barra final, mayúsculas distintas, la cabecera repetida o sin
+`Origin`) no recibe ninguna cabecera `Access-Control-Allow-*` y se procesa igual que antes: CORS no rechaza nada, solo
+informa al navegador. Por eso la protección real sigue siendo la API key y el aislamiento de red.
+
+- **Por qué existe aunque el navegador no llame a Express.** En esta arquitectura quien llama a Express es el servidor del
+  frontend, que no envía `Origin`; CORS no interviene. Se añade como segunda barrera, por si algún día la API se expone o
+  se prueba desde una página de un navegador: así solo esa página puede leer las respuestas.
+- **Siempre `Vary: Origin`.** Toda respuesta de una ruta protegida (incluidos `401`, `404`, `405` y `429`) lleva
+  `Vary: Origin`, también cuando la petición no trae `Origin`: la respuesta depende de esa cabecera y una caché no debe
+  servirle a un origen la respuesta pensada para otro. Se suma al `Vary` que ya hubiera. `GET /health` no lleva `Vary` ni
+  cabeceras de CORS (no es una ruta de la API).
+- **Nunca `*` ni credenciales.** No se envía `Access-Control-Allow-Origin: *` ni `Access-Control-Allow-Credentials`, y
+  nunca se refleja el `Origin` recibido: solo se escribe el valor configurado, y solo si coincide exactamente.
+- **También en los errores.** Las cabeceras se añaden antes de la guarda y de los cupos, así que un `401` o un `429` para
+  el origen permitido las lleva y el navegador puede leer el error.
+- **Preflight por ruta.** Antes de una petición con `Authorization` o `Content-Type: application/json`, el navegador
+  envía un `OPTIONS` (el preflight) para preguntar qué se permite, y ese `OPTIONS` NO lleva `Authorization`: exigirla lo
+  rompería siempre. Por eso un preflight válido se atiende sin key. Es válido solo si se cumple todo: método `OPTIONS`,
+  exactamente un `Origin` igual a `CORS_ORIGIN`, `Access-Control-Request-Method` presente y no vacío (su valor no se
+  valida: decide el navegador) y una ruta real de la API (`/api/tasks` o `/api/tasks/<id>`, comparada sin la consulta,
+  que el navegador sí incluye; `/api/tasks/`, `/API/tasks` y `//api/tasks` no cuentan). La respuesta es `204` sin cuerpo
+  con `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` con los métodos REALES de esa ruta (`GET, POST` o
+  `PUT, DELETE`, tomados de la misma tabla que genera `Allow` en el `405`, sin una segunda lista),
+  `Access-Control-Allow-Headers: Authorization, Content-Type`, `Access-Control-Max-Age: 600` y `Vary: Origin`. Pasa por
+  el cupo general (un preflight puede dar `429`) pero no cuenta como intento fallido ni en el cupo de `POST`, y no se
+  registra. Si trae cuerpo, no se lee y se responde con `Connection: close`. Cualquier otro `OPTIONS` sigue el flujo
+  normal. Alternativa descartada: responder `204` a todo `OPTIONS`, que anunciaría rutas y métodos que no existen.
+- **Escrito a mano.** Son unas pocas líneas sobre `rawHeaders` (donde se cuenta cuántas cabeceras `Origin` llegan, porque
+  Node descarta las repetidas en `req.headers`). Alternativa descartada: el paquete `cors`, cuyos valores por defecto
+  aceptan cualquier origen o lo reflejan, y que añade una dependencia para algo que aquí cabe en una función.
+- **Variable obligatoria `CORS_ORIGIN`.** Sin valor por defecto: si falta o es inválida, el servicio no arranca y el
+  error nombra la variable (nunca su valor). Debe ser un origen canónico: `esquema://host[:puerto]` con `http` o
+  `https`, host en minúsculas, sin ruta, barra final, consulta, fragmento ni credenciales, y sin el puerto por defecto
+  (`http://localhost:80` es inválido; `http://localhost` es válido). No admite `*`, `null` ni listas. El `.env`
+  necesita las dos variables, `API_KEY` y `CORS_ORIGIN`, antes de `npm start`.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
@@ -194,6 +370,7 @@ Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type:
 | 405    | `METHOD_NOT_ALLOWED`     | Método no permitido.                              |
 | 413    | `PAYLOAD_TOO_LARGE`      | El cuerpo de la petición supera el tamaño máximo. |
 | 415    | `UNSUPPORTED_MEDIA_TYPE` | Tipo de contenido no admitido.                    |
+| 429    | `TOO_MANY_REQUESTS`      | Demasiadas peticiones.                            |
 | 500    | `INTERNAL_ERROR`         | Error interno del servidor.                       |
 
 Un error no previsto (una excepción, una promesa rechazada o cualquier valor lanzado, aunque no sea un `Error`)
@@ -216,10 +393,25 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 
 | Variable | Valores | Por defecto | Descripción |
 | --- | --- | --- | --- |
+| `DATABASE_URL` | URL `postgresql://` con usuario `writer`, contraseña, host y una sola base; sin parámetros de consulta | (obligatoria) | Conexión de la API a PostgreSQL (secreta). Si es inválida, el servicio no arranca y el error no muestra la URL. |
+| `DB_POOL_MAX` | entero 1-100 | `10` | Conexiones simultáneas del Pool de `pg` (ver «Conexión a la base de datos»). |
+| `DB_POOL_IDLE_TIMEOUT_MS` | entero 1000-600000 | `30000` | Milisegundos que vive una conexión inactiva. |
+| `DB_POOL_CONNECTION_TIMEOUT_MS` | entero 100-60000 | `5000` | Milisegundos de espera para obtener una conexión. |
 | `PORT` | entero 1-65535 | `3000` | Puerto en el que escuchará el servicio. |
 | `HOST` | dirección IP literal | `127.0.0.1` | Dirección en la que escuchará el servicio. |
 | `SHUTDOWN_TIMEOUT_MS` | entero 1000-120000 | `10000` | Plazo máximo, en milisegundos, del cierre ordenado. |
 | `API_KEY` | 43 a 128 caracteres de `A-Za-z0-9_-`, al menos 10 distintos | (obligatoria) | Clave de la API (secreta). |
+| `TRUSTED_PROXIES` | lista de `loopback`, `linklocal`, `uniquelocal`, IP o `IP/prefijo`; o `none` | `loopback` | Direcciones de las que se cree `X-Forwarded-For` (ver «IP real del cliente y proxies de confianza»). |
+| `RATE_LIMIT_WINDOW_MS` | entero 1000-3600000 | `900000` | Duración, en milisegundos, de la ventana de los cupos (15 minutos). |
+| `RATE_LIMIT_MAX` | entero 1-10000 | `100` | Cupo general por IP y ventana. |
+| `RATE_LIMIT_POST_MAX` | entero 1-10000, no mayor que `RATE_LIMIT_MAX` | `20` | Cupo de `POST` por IP y ventana (ver «Límite de peticiones»). |
+| `RATE_LIMIT_AUTH_FAILURES_MAX` | entero 1-1000, no mayor que `RATE_LIMIT_MAX` | `10` | Intentos fallidos de key por IP y ventana antes de bloquear la IP (ver «Bloqueo por intentos fallidos»). |
+| `CORS_ORIGIN` | un origen canónico `http(s)://host[:puerto]` | (obligatoria) | Único origen del navegador que recibe `Access-Control-Allow-Origin` (ver «CORS»). |
+| `TASKS_LIST_LIMIT` | entero 1-10000 | `1000` | Máximo de tareas que devuelve `GET /api/tasks`, las más recientes (ver «Tope de la lista»). |
+
+El servicio valida solo las variables de la tabla. El resto del `.env` lo usan otras piezas: las de contraseñas de roles,
+`POSTGRES_USER`, `DB_NAME`, `DB_NAME_TEST` y `DB_LOCAL_PORT` (el contenedor de PostgreSQL), `OWNER_DATABASE_URL`
+(`npm run db:deploy`), `READER_DATABASE_URL` (el frontend) y las `TEST_*` (los tests). El servicio las ignora.
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 
@@ -230,7 +422,7 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'
 El servicio comprueba el formato y que la clave no sea trivial (una letra repetida, por ejemplo), pero NO verifica su
 entropía: la garantía real viene de generarla con el comando anterior. El valor de ejemplo de `.env.example`
 (`change-me-use-randomBytes-32`) no es un secreto y el servicio lo rechaza al arrancar, para que nadie deje la clave
-sin cambiar. El `.env` necesita `API_KEY` antes de `npm start`. La clave se valida al arrancar y la API la exige en
+sin cambiar. El `.env` necesita `API_KEY` y `CORS_ORIGIN` antes de `npm start`. La clave se valida al arrancar y la API la exige en
 cada petición (ver «Seguridad: API key»).
 
 `0.0.0.0` y `::` escuchan en todas las interfaces y solo deben usarse dentro de la red interna de un contenedor. No
@@ -298,7 +490,8 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
   de la zona horaria de la sesión.
 - Hay dos consultas de lista (con y sin filtro `completed`) en lugar de una con condición opcional, para que
   PostgreSQL pueda usar el índice sobre `completed`.
-- La lista no tiene paginación: devuelve todas las tareas.
+- La lista no tiene paginación y devuelve como máximo `TASKS_LIST_LIMIT` tareas, las más recientes (ver «Tope de la
+  lista»). El tope viaja como último parámetro de un `LIMIT`.
 - Actualizar y borrar una tarea son UNA sola sentencia SQL cada una, sin consulta previa. La existencia se decide por las
   filas afectadas: un `DELETE` que borra una fila es un éxito y uno que no encuentra nada es «no existe». Por eso dos
   borrados simultáneos de la misma tarea dan un éxito y un «no existe», y una actualización concurrente con un borrado
@@ -311,17 +504,18 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 
 ## API de tareas
 
-> **Aviso de seguridad.** La API exige API key (cabecera `Authorization: Bearer`, ver «Seguridad: API key»); todavía NO
-> tiene límites por IP, CORS ni tope de la lista, y escucha por defecto solo en 127.0.0.1: no debe exponerse a
-> ninguna red hasta que se añadan los límites y CORS. Quien tenga la key puede crear, modificar y
-> borrar tareas sin límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la actualización (`PUT` en
-> `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`). Los ejemplos de esta sección omiten la cabecera
-> `Authorization` por brevedad: sin ella, todas las rutas dan `401`.
+> **Aviso de seguridad.** La API exige API key (cabecera `Authorization: Bearer`, ver «Seguridad: API key»), tiene
+> límites por IP, bloqueo por intentos fallidos, CORS con un solo origen y tope de la lista, y escucha por defecto solo
+> en 127.0.0.1. Aun así NO debe exponerse a internet: no tiene HTTPS propio ni login de usuarios. Quien tenga la key
+> puede crear, modificar y borrar tareas. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la
+> actualización (`PUT` en `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`). Los ejemplos de esta sección
+> omiten la cabecera `Authorization` por brevedad: sin ella, todas las rutas dan `401`.
 
 ### `GET /api/tasks`
 
-Devuelve `200` con un arreglo JSON de todas las tareas, de la más reciente a la más antigua (con desempate por `id`),
-o `[]` si no hay ninguna. No hay paginación. Cada tarea tiene exactamente cinco campos:
+Devuelve `200` con un arreglo JSON con las tareas más recientes (hasta `TASKS_LIST_LIMIT`, ver «Tope de la lista»), de
+la más reciente a la más antigua (con desempate por `id`), o `[]` si no hay ninguna. No hay paginación. Cada tarea
+tiene exactamente cinco campos:
 
 ```json
 {
@@ -352,6 +546,23 @@ Filtro opcional `?completed=true` (solo completadas) o `?completed=false` (solo 
   todos los parámetros, también más allá del 1 000. Alternativa descartada: usar la consulta ya interpretada (falsos
   negativos silenciosos).
 - `GET` no admite cuerpo (400 `body`) y se aplican las reglas de «Entrada de la API».
+
+#### Tope de la lista
+
+`GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (1000 por defecto; entero de 1 a 10000, validado al
+arrancar). Son las más recientes según el orden de siempre (`createdAt` descendente y `id` ascendente), y el tope se
+aplica DESPUÉS del filtro: con `?completed=false` son las N pendientes más recientes. La respuesta sigue siendo un
+arreglo de cinco campos con `200`; no hay cabeceras nuevas.
+
+- Alternativa descartada: paginación. Cambia el contrato (parámetros, respuesta con total) y obliga a rehacer el
+  frontend; el tope protege al servidor con un cambio mínimo.
+- El tope no es una medida de seguridad contra escrituras: la tabla puede seguir creciendo (el cupo de `POST` frena el
+  ritmo, no el total).
+- Limitación: el listado ya no es completo y NO avisa de que está truncado. Los contadores del frontend (que leen el
+  total real de la base de datos) pueden mostrar más tareas de las que lista la API; el frontend lo avisará.
+- Coste: ordenar y quedarse con las N más recientes cuesta O(n) sobre la tabla (PostgreSQL ordena todas las filas
+  candidatas y se queda con las N primeras: top-N). Un índice por fecha (`createdAt DESC, id`) sería la mejora si la
+  tabla creciera mucho; hoy no se añade porque el tope acota lo que se envía, no lo que se lee.
 
 ### `POST /api/tasks`
 
@@ -469,7 +680,20 @@ cuerpo, identificador) devuelven un único error.
 
 ### Orden de comprobación de una petición
 
-0. API key (`401`), salvo en `/health`. Va antes que todo lo demás, también que el `404` y el `405`.
+Etapas previas, en este orden. Van antes que todo lo demás, también que el `404` y el `405`. `/health` solo pasa por P0.
+
+- **P0. Cabeceras.** `helmet` en toda respuesta; `Cache-Control: no-store`, `Vary: Origin` y, si el origen es el
+  permitido, `Access-Control-Allow-Origin` en las rutas de la API. No deciden nada.
+- **P1. Cupo general (`429`).** Cuenta toda petición a la API, también las que luego fallan. Va antes que la key: una IP
+  agotada recibe `429` aunque la key sea errónea.
+- **P2. Preflight de CORS (`204`).** Solo un `OPTIONS` válido (ver «CORS»). No lleva key, no cuenta como intento fallido
+  y no cuenta en el cupo de `POST`.
+- **P3. API key y bloqueo (`401` o `429`).** Si la IP ya acumuló demasiados fallos, recibe `429` aunque la key sea buena.
+  Si no, la key correcta pasa y cualquier otra cosa da `401`, que cuenta como fallo.
+- **P4. Cupo de `POST` (`429`).** Solo para los `POST` con key válida.
+
+Después, las ocho etapas de la petición:
+
 1. Ruta y método (`404` si la ruta no existe, `405` con `Allow` si el método no está permitido).
 2. Tamaño del cuerpo (`413`).
 3. Codificación y tipo de contenido (`415`).
@@ -489,7 +713,8 @@ la base de datos no llega a consultarse).
 ### Rutas y errores de base de datos
 
 Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
-`Allow: GET, POST`. En `/api/tasks/<id>` solo existen `PUT` y `DELETE`: cualquier otro método (también `GET`) da `405` con
+`Allow: GET, POST`; `OPTIONS` solo recibe `204` si es un preflight de CORS válido (ver «CORS»), y cualquier otro
+`OPTIONS` sigue este flujo (sin key `401`; con key `405` en una ruta existente y `404` en una inexistente). En `/api/tasks/<id>` solo existen `PUT` y `DELETE`: cualquier otro método (también `GET`) da `405` con
 `Allow: PUT, DELETE` (`GET` no está permitido porque no se pidió leer una tarea por identificador); el método se
 evalúa antes que el identificador, así que `GET /api/tasks/%E0%A4%A` da `405` y no `400`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>/`,
 `/api/tasks/<id>/x` y cualquier ruta desconocida dan `404`. Si la base de datos falla (inalcanzable o
@@ -707,7 +932,8 @@ Con el servicio en funcionamiento, `SIGTERM` o `SIGINT` inician un único cierre
 1. El servidor deja de aceptar conexiones nuevas y cierra las conexiones ociosas (keep-alive).
 2. Las peticiones en curso terminan con normalidad; su respuesta lleva `Connection: close`, así que su conexión se
    cierra al acabar (también `/health`).
-3. Cuando ya no quedan conexiones, se cierra el Pool de la base de datos.
+3. Cuando ya no quedan conexiones, se liberan los almacenes de los cupos de peticiones y se cierra el Pool de la base
+   de datos.
 
 Todo ocurre dentro del plazo `SHUTDOWN_TIMEOUT_MS`. Si el cierre es completo, el servicio registra
 `shutdown_started` (con la señal) y `shutdown_completed` (con `exitCode`) y termina con código 0. Si el plazo se
@@ -763,9 +989,10 @@ código 0).
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
 Aviso de seguridad: el servicio escucha solo en loopback y la API exige API key (`API_KEY` en el `.env`, ver
-«Seguridad: API key»); todavía NO tiene límites por IP, CORS ni tope de la lista. No debe
-exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve la lista completa, que crece sin cota,
-y quien tenga la key puede crear, modificar y borrar tareas.
+«Seguridad: API key»). Limita las peticiones por IP (ver «Límite de peticiones»), bloquea la IP tras demasiados fallos
+de key (ver «Bloqueo por intentos fallidos») y aplica CORS a un solo origen (`CORS_ORIGIN`, ver «CORS»). `GET /api/tasks`
+devuelve como máximo `TASKS_LIST_LIMIT` tareas (ver «Tope de la lista»). Aun así, no debe exponerse a internet: no tiene
+HTTPS propio ni login de usuarios. Quien tenga la key puede crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
 cuando exista el frontend.
@@ -783,9 +1010,18 @@ cuando exista el frontend.
 - Seguridad: los tests envían una key de prueba (`TEST_API_KEY`, una constante pública definida en
   `backend/tests/helpers/security.ts`) en toda petición que llega a la aplicación, así que los que no tratan de la
   seguridad no la escriben. Para probar una petición sin key se usa el marcador `X-Test-Omit-Key`, que el ayudante
-  retira antes de que la vea la aplicación. Los tests de la protección (401, sin registro en el log e inyección SQL con
-  la pila completa) están en `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
-  `backend/tests/api/sql-injection-stack.test.ts`.
+  retira antes de que la vea la aplicación. Los cupos de peticiones de la aplicación de pruebas son altos (10000) y
+  `TRUSTED_PROXIES` vale `none`, así que ningún test que no trate de los límites puede recibir un `429`; los que sí
+  tratan de ellos (`backend/tests/http/rate-limits.test.ts`) piden cupos pequeños explícitos. Los tests de la
+  protección (401, sin registro en el log e inyección SQL con la pila completa) están en
+  `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
+  `backend/tests/api/sql-injection-stack.test.ts`. El orden de las etapas
+  de seguridad con todos los mecanismos activos a la vez (cada par de etapas contiguas) está en
+  `backend/tests/http/security-order.test.ts`.
+- Cierre ordenado: `backend/tests/process/graceful-exit.test.ts` arranca el servicio compilado en un proceso hijo con un
+  proceso falso (un emisor de eventos en lugar del proceso real). El hijo recibe dos `401` y un `429` (el segundo fallo bloquea la IP), emite la señal a
+  mano y debe terminar solo, con código 0, sin llamar a `process.exit`. Si quedara un temporizador vivo, el hijo no
+  acabaría y el test fallaría por el plazo de 20 segundos.
 - Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
   haber un éxito y nueve «no existe»), y `backend/tests/api/tasks-delete.test.ts` y `tasks-put.test.ts` lanzan dos
   `DELETE` a la vez, dos `PUT` de campos distintos y 50 iteraciones de `PUT` y `DELETE` simultáneos con un Pool de 2
@@ -812,7 +1048,7 @@ Pendiente.
 
 ## Decisiones técnicas
 
-Estas decisiones describen el diseño previsto mientras el proyecto está en construcción.
+Cada decisión indica su porqué y la alternativa descartada. Las de seguridad se resumen al final de esta sección.
 
 **a) Monorepo con `backend/` y `frontend/`.** Un solo repositorio facilita revisar y versionar todo junto y
 mantener coherentes los cambios que afectan a ambas partes. Alternativa descartada: dos repositorios, que
@@ -848,9 +1084,12 @@ tiempo depende de dónde falla) y comprobar la longitud antes (la revela). La gu
 registrar `/health`, y no con una comparación de rutas, porque dos lógicas distintas podrían discrepar (`/health;x`,
 `//health`) y dejar una ruta sin proteger.
 
-**g) Rate limiting (pendiente).** Se añadirá con `express-rate-limit` y valores configurables por variables de entorno,
-para frenar el abuso y los intentos repetidos con una API key inválida. Todavía NO existe: el servicio no limita las
-peticiones. El contador en memoria será válido solo para una instancia de Express.
+**g) Rate limiting.** Dos cupos por IP real (general y de `POST`) con `express-rate-limit`, ventana fija, almacén en
+memoria y valores configurables por variables de entorno (ver «Límite de peticiones»). Se eligió la librería porque
+hace el trabajo sin código propio de más; el almacén en memoria basta para una sola instancia. Alternativas
+descartadas: un contador propio para estos dos cupos (más código y deja la librería sin uso) y Redis (sin problema de
+carga que lo justifique). Además, el bloqueo por intentos fallidos de key tiene su propio contador (ver «Bloqueo por
+intentos fallidos»).
 
 **h) Redis descartado.** No hay un problema de carga que lo justifique y añade un servicio, una credencial y más
 superficie de ataque. Se mide la necesidad antes de añadir infraestructura; el `Pool` y el índice cubren la carga
@@ -878,8 +1117,9 @@ milisegundos y en UTC, y la lista se ordena por la marca completa. Así la hora 
 guardada y el orden no depende de la zona horaria ni del redondeo. Alternativa descartada: formatear en JavaScript
 con `Date` (redondea y pierde el orden fino).
 
-**n) Orden fijo de validación.** Ocho etapas, tras la etapa 0 de la API key (ver más abajo): ruta y método, tamaño, codificación y tipo, cuerpo, identificador,
-consulta y campos, existencia de la tarea, base de datos (ver «Orden de comprobación de una petición»): el resultado
+**n) Orden fijo de comprobación.** Cinco etapas previas (P0 a P4: cabeceras, cupo general, preflight, key y bloqueo, cupo
+de `POST`) y ocho de la petición: ruta y método, tamaño, codificación y tipo, cuerpo, identificador, consulta y campos,
+existencia de la tarea, base de datos (ver «Orden de comprobación de una petición»): el resultado
 de una petición con varios fallos es siempre el mismo, un `400` gana a un `404` y una base de datos caída nunca tapa un
 error de validación. Solo la etapa de consulta y campos acumula problemas.
 
@@ -887,6 +1127,7 @@ error de validación. Solo la etapa de consulta y campos acumula problemas.
 puro: el cliente puede completar una tarea enviando únicamente `{"completed":true}`, y una pestaña con datos viejos no
 pisa los cambios hechos desde otra. Alternativa descartada: reemplazo completo, que obligaría a reenviar todos los
 campos y sobrescribiría cambios ajenos.
+
 **p) Existencia por filas afectadas.** `UPDATE` y `DELETE` son una sola sentencia y la tarea «no existe» si afectaron
 cero filas. Así no hay carrera entre comprobar y escribir: dos borrados simultáneos dan un `204` y un `404`, y un `PUT`
 concurrente con un `DELETE` da `200` o `404`, nunca `500`. Alternativa descartada: un `SELECT` previo, que dejaría una
@@ -899,12 +1140,48 @@ crudo de `req.path`, porque con un parámetro `:id` Express decodifica el segmen
 falla con un `500` antes de decidir el método. Con esto un identificador mal formado da `400` en `PUT` y `DELETE`, y
 `405` con otro método. Alternativa descartada: la ruta `/api/tasks/:id` con `req.params.id`, que da `500` ante `%E0%A4%A`.
 
+**Decisiones de seguridad (resumen).** Cada una se explica en su sección; aquí, el porqué y la alternativa descartada.
+
+- **Bearer en `Authorization`.** Es el estándar para credenciales y no deja la key en la URL, que queda en historiales y
+  registros de proxies. Alternativas descartadas: una cabecera propia o la key en la consulta.
+- **SHA-256 y `timingSafeEqual`.** Ambos resúmenes miden 32 bytes: la comparación no lanza ni revela la longitud, y su
+  tiempo no depende del contenido. Alternativas descartadas: `===` (el tiempo depende de dónde falla) y comprobar la
+  longitud antes (la revela).
+- **Denegar por defecto.** Toda ruta exige key salvo `/health` y el preflight de CORS válido, porque la guarda se
+  registra con `app.use` y no compara rutas (las exenciones están en su propio manejador, antes de la guarda). Alternativa descartada: una lista de rutas protegidas, donde una ruta nueva nacería sin protección.
+- **La key antes que `404` y `405`.** Quien no tiene key no averigua qué rutas ni métodos existen. Alternativa
+  descartada: responder primero el `404` o el `405`.
+- **Límites por IP real.** Cada persona tiene su cupo y el frontend no consume el de todos. Alternativa descartada: contar
+  la IP de la conexión, que para el frontend es siempre la misma.
+- **Bloqueo total de la IP tras fallos.** Si la IP bloqueada pudiera entrar con la key buena, quien adivina seguiría
+  obteniendo señal. Alternativa descartada: bloquear solo las keys erróneas.
+- **Contador propio de fallos.** Es síncrono y suma solo al emitir el `401`, así que es exacto con peticiones
+  simultáneas. Alternativa descartada: `skipSuccessfulRequests` de la librería, inexacta en ese caso.
+- **CORS escrito a mano, un solo origen.** Son pocas líneas sin dependencia. Alternativa descartada: el paquete `cors`,
+  cuyos valores por defecto reflejan orígenes.
+- **`helmet` con sus valores por defecto.** Son suficientes para una API de JSON y fáciles de explicar. Alternativa
+  descartada: ajustar cada política sin beneficio claro.
+- **IP tras proxies por lista de confianza.** `TRUSTED_PROXIES` dice de quién se fía el servicio. Alternativas
+  descartadas: `true` (cualquiera falsifica su IP), un número de saltos (depende de la topología) y el `trust proxy` de
+  Express (su `req.ip` no sirve con reglas escritas y probadas).
+- **Tope de la lista frente a paginación.** El tope protege al servidor sin cambiar el contrato ni el frontend.
+  Alternativa descartada: paginación, que cambia la respuesta y obliga a rehacer el frontend.
+- **Redis descartado.** Ver el punto h).
+
 **Limitaciones conocidas de la API actual.**
 
-- Seguridad incompleta: hay API key y cabeceras de `helmet`, pero todavía no hay límite de peticiones por IP, CORS ni
-  tope de la lista. No debe exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las
-  personas.
-- `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST`, `PUT` y `DELETE` no tienen límite de uso.
+- Seguridad: la API tiene key, cabeceras de `helmet`, límites por IP, bloqueo por intentos fallidos, CORS con un solo
+  origen y tope de la lista. Aun así no debe exponerse a internet: no tiene HTTPS propio ni login de usuarios. La key
+  autentica a la aplicación, no a las personas.
+- Ventana fija en los cupos: en la frontera entre dos ventanas pueden pasar hasta el doble del cupo (2N).
+- Los contadores (cupos y fallos) viven en la memoria de una sola instancia: se pierden al reiniciar y no se comparten
+  entre instancias.
+- Rotar `API_KEY` con el frontend sin reiniciar: la IP del frontend queda bloqueada hasta que termine la ventana (ver
+  «Bloqueo por intentos fallidos»).
+- Hasta que el frontend envíe `X-Forwarded-For` (ver el contrato en «IP real del cliente y proxies de confianza»), todos
+  los usuarios comparten un solo cupo.
+- `GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (las más recientes, sin paginación) y no avisa de que
+  la lista está truncada; la tabla puede seguir creciendo (ver «Tope de la lista»).
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición
   mal formada) los contesta Node con sus propios códigos (400, 414 o 431, a veces sin cuerpo JSON) o cierra la
@@ -919,3 +1196,4 @@ el esquema y las migraciones, mientras que las consultas de la API se hacen con 
 
 - Redis para caché y para un contador de rate limiting compartido entre varias instancias.
 - Login de usuarios, implementado de forma completa.
+- HTTPS (terminación TLS) antes de exponer la API fuera de la red interna.

@@ -73,6 +73,39 @@ describe('RF-D2: .env.example', () => {
     expect(comment).toContain('rechaza');
   });
 
+  it('RF-G12: TRUSTED_PROXIES figura en .env.example con su valor por defecto y un comentario explicativo', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('TRUSTED_PROXIES');
+    expect(values['TRUSTED_PROXIES']).toBe('loopback');
+    const comment = /((?:^#.*\r?\n)+)TRUSTED_PROXIES=/m.exec(raw)?.[1] ?? '';
+    for (const word of ['loopback', 'linklocal', 'uniquelocal', 'none', 'X-Forwarded-For']) {
+      expect(comment, word).toContain(word);
+    }
+  });
+
+  it('RF-G12: los tres cupos figuran en .env.example con sus defectos y un comentario explicativo', () => {
+    const expected = { RATE_LIMIT_WINDOW_MS: '900000', RATE_LIMIT_MAX: '100', RATE_LIMIT_POST_MAX: '20' };
+    for (const [name, value] of Object.entries(expected)) {
+      expect(CONFIG_VARIABLE_NAMES, name).toContain(name);
+      expect(values[name], name).toBe(value);
+      const comment = new RegExp(`((?:^#.*\\r?\\n)+)${name}=`, 'm').exec(raw)?.[1] ?? '';
+      expect(comment, name).not.toBe('');
+    }
+    const maxComment = /((?:^#.*\r?\n)+)RATE_LIMIT_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(maxComment).toContain('RATE_LIMIT_POST_MAX');
+    expect(maxComment).toContain('20');
+    const postComment = /((?:^#.*\r?\n)+)RATE_LIMIT_POST_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(postComment).toContain('RATE_LIMIT_MAX');
+  });
+
+  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX figura en .env.example con defecto 10 y comentario', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('RATE_LIMIT_AUTH_FAILURES_MAX');
+    expect(values['RATE_LIMIT_AUTH_FAILURES_MAX']).toBe('10');
+    const comment = /((?:^#.*\r?\n)+)RATE_LIMIT_AUTH_FAILURES_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain('RATE_LIMIT_MAX');
+    expect(comment).toContain('429');
+    expect(comment).toContain('key');
+  });
+
   it('RF-D2 (v): DB_NAME y DB_NAME_TEST cumplen [a-z0-9_]{1,63} y DB_NAME_TEST termina en _test', () => {
     expect(values['DB_NAME']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/^[a-z0-9_]{1,63}$/);
@@ -86,5 +119,26 @@ describe('RF-D2: .env.example', () => {
     const comment = /((?:^#.*\r?\n)+)HOST=/m.exec(raw)?.[1] ?? '';
     expect(comment).toContain('0.0.0.0');
     expect(comment).toContain('red interna de un contenedor');
+  });
+});
+
+describe('RF-G12: TASKS_LIST_LIMIT en .env.example', () => {
+  it('RF-G12: TASKS_LIST_LIMIT figura con el defecto 1000 y un comentario sobre el tope de la lista', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('TASKS_LIST_LIMIT');
+    expect(values['TASKS_LIST_LIMIT']).toBe('1000');
+    const comment = /((?:^#.*\r?\n)+)TASKS_LIST_LIMIT=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain('10000');
+    expect(comment).toContain('recientes');
+  });
+});
+
+describe('RF-G15: CORS_ORIGIN en .env.example', () => {
+  it('RF-G15: CORS_ORIGIN figura con el valor provisional, es válida y su comentario explica el formato', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('CORS_ORIGIN');
+    expect(values['CORS_ORIGIN']).toBe('http://localhost:3000');
+    const comment = /((?:^#.*\r?\n)+)CORS_ORIGIN=/m.exec(raw)?.[1] ?? '';
+    for (const word of ['obligatoria', 'origen', 'frontend']) {
+      expect(comment, word).toContain(word);
+    }
   });
 });

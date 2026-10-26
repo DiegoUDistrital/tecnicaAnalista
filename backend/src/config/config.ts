@@ -1,6 +1,8 @@
 import { isIP } from 'node:net';
 import { ConfigError } from '../errors/config-error';
 import { checkApiKey } from '../security/api-key';
+import { checkCorsOrigin } from '../security/cors';
+import { parseTrustedProxies, type TrustedProxies } from '../security/trusted-proxies';
 
 /** Configuración validada que usa el resto del backend. */
 export interface AppConfig {
@@ -17,12 +19,24 @@ export interface AppConfig {
   };
   security: {
     apiKey: string;
+    /** Direcciones de las que se cree `X-Forwarded-For`. */
+    trustedProxies: TrustedProxies;
+    /** Límites por IP: ventana fija, cupo general, cupo de `POST` y fallos de key tolerados antes de bloquear la IP. */
+    rateLimit: { windowMs: number; max: number; postMax: number; authFailuresMax: number };
+    /** Único origen del navegador al que se permite leer las respuestas (CORS), en su forma canónica. */
+    corsOrigin: string;
+  };
+  tasks: {
+    /** Máximo de tareas que devuelve `GET /api/tasks` (las más recientes, después del filtro). */
+    listLimit: number;
   };
 }
 
 type VariableSpec =
   | { name: string; kind: 'writer-url' }
   | { name: string; kind: 'api-key' }
+  | { name: string; kind: 'trusted-proxies' }
+  | { name: string; kind: 'cors-origin' }
   | { name: string; kind: 'host'; fallback: string }
   | { name: string; kind: 'int'; min: number; max: number; fallback: number };
 
@@ -39,12 +53,23 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'HOST', kind: 'host', fallback: '127.0.0.1' },
   { name: 'SHUTDOWN_TIMEOUT_MS', kind: 'int', min: 1000, max: 120000, fallback: 10000 },
   { name: 'API_KEY', kind: 'api-key' },
+  { name: 'TRUSTED_PROXIES', kind: 'trusted-proxies' },
+  { name: 'RATE_LIMIT_WINDOW_MS', kind: 'int', min: 1000, max: 3600000, fallback: 900000 },
+  { name: 'RATE_LIMIT_MAX', kind: 'int', min: 1, max: 10000, fallback: 100 },
+  { name: 'RATE_LIMIT_POST_MAX', kind: 'int', min: 1, max: 10000, fallback: 20 },
+  { name: 'RATE_LIMIT_AUTH_FAILURES_MAX', kind: 'int', min: 1, max: 1000, fallback: 10 },
+  { name: 'CORS_ORIGIN', kind: 'cors-origin' },
+  { name: 'TASKS_LIST_LIMIT', kind: 'int', min: 1, max: 10000, fallback: 1000 },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
 export const CONFIG_VARIABLE_NAMES: readonly string[] = VARIABLES.map((variable) => variable.name);
 
 const URL_FORMAT_MESSAGE = 'DATABASE_URL: formato inválido';
+/** Un cupo de `POST` mayor que el general sería inalcanzable: nombra las dos variables, sin valores. */
+const CROSS_MESSAGE = 'RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX';
+/** Más fallos tolerados que peticiones generales sería inalcanzable (el general cuenta también los 401). */
+const FAILURES_CROSS_MESSAGE = 'RATE_LIMIT_AUTH_FAILURES_MAX: no puede superar RATE_LIMIT_MAX';
 const URL_ROLE_MESSAGE = 'DATABASE_URL: debe usar el rol writer';
 
 /** Dirección IP literal (v4 o v6) sin corchetes ni zona (`%eth0`): no se admiten nombres de host. */
@@ -104,6 +129,7 @@ function checkWriterUrl(raw: string): string | undefined {
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): AppConfig {
   const messages: string[] = [];
   const values = new Map<string, string | number>();
+  let trustedProxies: TrustedProxies | undefined;
 
   for (const variable of VARIABLES) {
     const raw = env[variable.name];
@@ -125,6 +151,22 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       }
       continue;
     }
+    if (variable.kind === 'cors-origin') {
+      const message = checkCorsOrigin(raw);
+      if (message !== undefined) {
+        messages.push(message);
+      } else if (raw !== undefined) {
+        values.set(variable.name, raw);
+      }
+      continue;
+    }
+    if (variable.kind === 'trusted-proxies') {
+      trustedProxies = parseTrustedProxies(raw);
+      if (trustedProxies === undefined) {
+        messages.push(`${variable.name}: lista inválida`);
+      }
+      continue;
+    }
     if (variable.kind === 'host') {
       const host = raw ?? variable.fallback;
       if (isLiteralIp(host)) {
@@ -140,6 +182,22 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     } else {
       values.set(variable.name, value);
     }
+  }
+
+  // Validación cruzada: solo si ambas son válidas por separado (si no, ya se nombró la inválida).
+  if (
+    values.has('RATE_LIMIT_MAX') &&
+    values.has('RATE_LIMIT_POST_MAX') &&
+    Number(values.get('RATE_LIMIT_POST_MAX')) > Number(values.get('RATE_LIMIT_MAX'))
+  ) {
+    messages.push(CROSS_MESSAGE);
+  }
+  if (
+    values.has('RATE_LIMIT_MAX') &&
+    values.has('RATE_LIMIT_AUTH_FAILURES_MAX') &&
+    Number(values.get('RATE_LIMIT_AUTH_FAILURES_MAX')) > Number(values.get('RATE_LIMIT_MAX'))
+  ) {
+    messages.push(FAILURES_CROSS_MESSAGE);
   }
 
   if (messages.length > 0) {
@@ -158,6 +216,18 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       host: String(values.get('HOST')),
       shutdownTimeoutMs: Number(values.get('SHUTDOWN_TIMEOUT_MS')),
     },
-    security: { apiKey: String(values.get('API_KEY')) },
+    // Sin mensajes de error, `trustedProxies` está definida (se asigna en cada vuelta de la variable).
+    security: {
+      apiKey: String(values.get('API_KEY')),
+      trustedProxies: trustedProxies as TrustedProxies,
+      rateLimit: {
+        windowMs: Number(values.get('RATE_LIMIT_WINDOW_MS')),
+        max: Number(values.get('RATE_LIMIT_MAX')),
+        postMax: Number(values.get('RATE_LIMIT_POST_MAX')),
+        authFailuresMax: Number(values.get('RATE_LIMIT_AUTH_FAILURES_MAX')),
+      },
+      corsOrigin: String(values.get('CORS_ORIGIN')),
+    },
+    tasks: { listLimit: Number(values.get('TASKS_LIST_LIMIT')) },
   };
 }

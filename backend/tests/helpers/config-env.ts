@@ -1,4 +1,4 @@
-import { TEST_API_KEY } from './security';
+import { TEST_API_KEY, TEST_CORS_ORIGIN } from './security';
 
 export type Env = Record<string, string | undefined>;
 
@@ -10,6 +10,8 @@ export function baseEnv(overrides: Env = {}): Env {
   return {
     DATABASE_URL: 'postgresql://writer:change-me@127.0.0.1:5433/todo_app',
     API_KEY: TEST_API_KEY,
+    TRUSTED_PROXIES: 'none',
+    CORS_ORIGIN: TEST_CORS_ORIGIN,
     ...overrides,
   };
 }

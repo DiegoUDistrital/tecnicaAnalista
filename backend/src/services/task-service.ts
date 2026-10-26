@@ -5,7 +5,9 @@ import type { NewTask, TaskChanges, TaskRepository, TaskRow } from '../repositor
 export type Task = TaskRow;
 
 export interface TaskService {
-  /** Todas las tareas, de la más reciente a la más antigua; con `completed` solo completadas o solo pendientes. */
+  /**
+   * Hasta `listLimit` tareas, las más recientes primero; con `completed` solo completadas o solo pendientes.
+   */
   list(completed?: boolean): Promise<Task[]>;
   /** Crea una tarea con los textos ya validados y recortados; `id`, `completed` y `createdAt` los pone la BD. */
   create(input: NewTask): Promise<Task>;
@@ -28,10 +30,11 @@ function toTask(row: TaskRow): Task {
 
 export function createTaskService(
   repository: Pick<TaskRepository, 'list' | 'insert' | 'update' | 'remove'>,
+  listLimit: number,
 ): TaskService {
   return {
     async list(completed?: boolean): Promise<Task[]> {
-      const rows = await repository.list(completed);
+      const rows = await repository.list(completed, listLimit);
       return rows.map(toTask);
     },
     async create(input: NewTask): Promise<Task> {

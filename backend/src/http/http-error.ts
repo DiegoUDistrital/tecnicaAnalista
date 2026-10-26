@@ -8,6 +8,7 @@ const STATUS_TABLE = {
   405: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.' },
   413: { code: 'PAYLOAD_TOO_LARGE', message: 'El cuerpo de la petición supera el tamaño máximo.' },
   415: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Tipo de contenido no admitido.' },
+  429: { code: 'TOO_MANY_REQUESTS', message: 'Demasiadas peticiones.' },
   500: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.' },
 } as const;
 

@@ -46,31 +46,47 @@ describe('Repositorio de tareas (SQL enviado)', () => {
     expect(calls[0]?.values).toEqual(['secret-title-sentinel', 'secret-desc-sentinel']);
   });
 
-  it('RF-C21: list sin filtro no lleva parámetros ni WHERE', async () => {
+  it('RF-C21: list sin filtro no lleva WHERE y solo envía el tope como $1', async () => {
     const { database, calls } = spyDatabase();
-    await createTaskRepository(database).list();
+    await createTaskRepository(database).list(undefined, 1000);
     expect(calls[0]?.text).not.toMatch(/WHERE/i);
-    expect(calls[0]?.text).not.toContain('$1');
-    expect(calls[0]?.values ?? []).toEqual([]);
+    expect(calls[0]?.text).not.toContain('$2');
+    expect(calls[0]?.values).toEqual([1000]);
   });
 
   it.each([true, false])(
     'RF-C21: list con filtro envía $1 y el valor booleano tipado en el arreglo (%s)',
     async (flag) => {
       const { database, calls } = spyDatabase();
-      await createTaskRepository(database).list(flag);
+      await createTaskRepository(database).list(flag, 1000);
       expect(calls[0]?.text).toMatch(/WHERE\s+completed\s*=\s*\$1/);
-      expect(calls[0]?.values).toEqual([flag]);
+      expect(calls[0]?.values?.[0]).toBe(flag);
       expect(typeof calls[0]?.values?.[0]).toBe('boolean');
     },
   );
+
+  it('RF-G17: list usa LIMIT $1 sin filtro y LIMIT $2 con filtro, con el tope como último parámetro', async () => {
+    const { database, calls } = spyDatabase();
+    const repository = createTaskRepository(database);
+    await repository.list(undefined, 123);
+    await repository.list(true, 456);
+    await repository.list(false, 789);
+    expect(calls[0]?.text).toMatch(/ORDER BY tasks\."createdAt" DESC, tasks\.id ASC\s+LIMIT \$1\s*$/);
+    expect(calls[0]?.values).toEqual([123]);
+    expect(calls[1]?.text).toMatch(/WHERE\s+completed\s*=\s*\$1[\s\S]*LIMIT \$2\s*$/);
+    expect(calls[1]?.values).toEqual([true, 456]);
+    expect(calls[2]?.values).toEqual([false, 789]);
+    for (const call of calls) {
+      expect(call.text).not.toMatch(/123|456|789/);
+    }
+  });
 
   it('RF-C20: createdAt se pide ya formateado: el SQL trunca los milisegundos y usa UTC', async () => {
     const { database, calls } = spyDatabase();
     const repository = createTaskRepository(database);
     await repository.insert({ title: 't', description: '' });
-    await repository.list();
-    await repository.list(true);
+    await repository.list(undefined, 1000);
+    await repository.list(true, 1000);
     for (const call of calls) {
       expect(call.text).toContain(`date_trunc('milliseconds'`);
       expect(call.text).toContain(`AT TIME ZONE 'UTC'`);
@@ -80,8 +96,8 @@ describe('Repositorio de tareas (SQL enviado)', () => {
   it('RF-C14: el SQL ordena por tasks."createdAt" calificado y luego por id ascendente', async () => {
     const { database, calls } = spyDatabase();
     const repository = createTaskRepository(database);
-    await repository.list();
-    await repository.list(false);
+    await repository.list(undefined, 1000);
+    await repository.list(false, 1000);
     for (const call of calls) {
       expect(call.text).toContain('ORDER BY tasks."createdAt" DESC, tasks.id ASC');
     }

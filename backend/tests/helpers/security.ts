@@ -1,4 +1,6 @@
 import type { Express, RequestHandler } from 'express';
+import type { AppConfig } from '../../src/config/config';
+import { parseTrustedProxies, type TrustedProxies } from '../../src/security/trusted-proxies';
 
 // `Express` no declara `handle` en sus tipos (sí existe en tiempo de ejecución, con la forma de un manejador).
 
@@ -8,12 +10,46 @@ export const TEST_API_KEY = 'Tk3st-Ap1-K3y_0123456789-abcdefghijklmnopqr';
 /** Cabecera que pide una petición SIN key: `withTestKey` no inyecta nada y la retira antes de que la vea la app. */
 export const OMIT_KEY_HEADER = 'X-Test-Omit-Key';
 
+/** Lista de proxies de confianza a partir del texto de `TRUSTED_PROXIES`; falla si el texto es inválido. */
+export function testProxies(raw: string | undefined): TrustedProxies {
+  const parsed = parseTrustedProxies(raw);
+  if (parsed === undefined) {
+    throw new Error(`TRUSTED_PROXIES de prueba inválida: ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
+/** Origen permitido de la app de pruebas (el valor provisional de `.env.example`). */
+export const TEST_CORS_ORIGIN = 'http://localhost:3000';
+
+/** Tope de la lista de la app de pruebas: el valor por defecto de `TASKS_LIST_LIMIT`. */
+export const TEST_TASKS: AppConfig['tasks'] = { listLimit: 1000 };
+
 /**
- * Ajustes de seguridad de la app de pruebas: por ahora solo la key válida. `overrides` los modifica (por ejemplo,
- * para probar la app con otra key).
+ * Cupos de la app de pruebas: tan altos que ningún test que no trate de los límites puede recibir un 429 (los tests
+ * de límites piden valores pequeños explícitos). Los intentos fallidos también: 1000, para que un test que mande
+ * varias keys erróneas no bloquee su IP.
  */
-export function testSecurity(overrides: { apiKey?: string } = {}): { apiKey: string } {
-  return { apiKey: TEST_API_KEY, ...overrides };
+export const TEST_RATE_LIMIT: AppConfig['security']['rateLimit'] = {
+  windowMs: 900000,
+  max: 10000,
+  postMax: 10000,
+  authFailuresMax: 1000,
+};
+
+/**
+ * Ajustes de seguridad de la app de pruebas: la key válida, `TRUSTED_PROXIES=none` (ninguna cabecera de proxy
+ * influye, así que la IP que cuenta es siempre la de la conexión), cupos altos y el origen de pruebas.
+ * `overrides` los modifica (por ejemplo, para probar la app con otra key, otra lista de proxies o cupos pequeños).
+ */
+export function testSecurity(overrides: Partial<AppConfig['security']> = {}): AppConfig['security'] {
+  return {
+    apiKey: TEST_API_KEY,
+    trustedProxies: testProxies('none'),
+    rateLimit: TEST_RATE_LIMIT,
+    corsOrigin: TEST_CORS_ORIGIN,
+    ...overrides,
+  };
 }
 
 /**
@@ -25,8 +61,8 @@ export function testSecurity(overrides: { apiKey?: string } = {}): { apiKey: str
  * No inyecta si la petición ya trae `Authorization` (con cualquier mayúscula del nombre) ni si trae el marcador
  * `OMIT_KEY_HEADER`, que además se retira. Se modifican `headers` y `rawHeaders`, que son lo que lee la app.
  */
-export function withTestKey(app: Express): Express {
-  const target = app as Express & { handle: RequestHandler };
+export function withTestKey<T extends Express>(app: T): T {
+  const target = app as Express as Express & { handle: RequestHandler };
   const handle = target.handle.bind(app);
   target.handle = (req, res, next) => {
     const marker = OMIT_KEY_HEADER.toLowerCase();

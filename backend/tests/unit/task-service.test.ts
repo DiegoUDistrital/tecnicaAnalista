@@ -12,7 +12,7 @@ const ROW: TaskRow = {
 };
 
 interface FakeRepository {
-  list: Mock<(completed?: boolean) => Promise<TaskRow[]>>;
+  list: Mock<(completed: boolean | undefined, limit: number) => Promise<TaskRow[]>>;
   insert: Mock<(input: NewTask) => Promise<TaskRow>>;
   update: Mock<(id: string, changes: TaskChanges) => Promise<TaskRow | undefined>>;
   remove: Mock<(id: string) => Promise<boolean>>;
@@ -20,7 +20,7 @@ interface FakeRepository {
 
 function fakeRepository(rows: TaskRow[], inserted: TaskRow = ROW): FakeRepository {
   return {
-    list: vi.fn<(completed?: boolean) => Promise<TaskRow[]>>().mockResolvedValue(rows),
+    list: vi.fn<(completed: boolean | undefined, limit: number) => Promise<TaskRow[]>>().mockResolvedValue(rows),
     insert: vi.fn<(input: NewTask) => Promise<TaskRow>>().mockResolvedValue(inserted),
     update: vi.fn<(id: string, changes: TaskChanges) => Promise<TaskRow | undefined>>().mockResolvedValue(inserted),
     remove: vi.fn<(id: string) => Promise<boolean>>().mockResolvedValue(true),
@@ -31,7 +31,7 @@ describe('RF-C12: TaskService.list', () => {
   it('RF-C12: list devuelve cada tarea con EXACTAMENTE los cinco campos (id, title, description, ...)', async () => {
     // Una fila con un campo extra (p. ej. una columna futura) no debe filtrarse a la respuesta.
     const dirty = { ...ROW, secret: 'no debe salir' } as TaskRow;
-    const service = createTaskService(fakeRepository([dirty]));
+    const service = createTaskService(fakeRepository([dirty]), 1000);
 
     const tasks = await service.list();
 
@@ -40,7 +40,7 @@ describe('RF-C12: TaskService.list', () => {
   });
 
   it('RF-C12: list devuelve [] cuando no hay tareas', async () => {
-    expect(await createTaskService(fakeRepository([])).list()).toEqual([]);
+    expect(await createTaskService(fakeRepository([]), 1000).list()).toEqual([]);
   });
 });
 
@@ -48,9 +48,19 @@ describe('RF-C13: TaskService.list con filtro', () => {
   it.each([[true], [false], [undefined]])('RF-C13: list pasa el filtro %s al repositorio', async (completed) => {
     const repository = fakeRepository([]);
 
-    await createTaskService(repository).list(completed);
+    await createTaskService(repository, 1000).list(completed);
 
-    expect(repository.list).toHaveBeenCalledExactlyOnceWith(completed);
+    expect(repository.list).toHaveBeenCalledExactlyOnceWith(completed, 1000);
+  });
+
+  it('RF-G17: el servicio pasa su tope al repositorio', async () => {
+    const repository = fakeRepository([]);
+
+    await createTaskService(repository, 7).list(true);
+    await createTaskService(repository, 3).list();
+
+    expect(repository.list).toHaveBeenNthCalledWith(1, true, 7);
+    expect(repository.list).toHaveBeenNthCalledWith(2, undefined, 3);
   });
 });
 
@@ -59,7 +69,7 @@ describe('RF-C11: TaskService.create', () => {
     const dirty = { ...ROW, secret: 'no debe salir' } as TaskRow;
     const repository = fakeRepository([], dirty);
 
-    const task = await createTaskService(repository).create({ title: 'Comprar pan', description: 'Integral' });
+    const task = await createTaskService(repository, 1000).create({ title: 'Comprar pan', description: 'Integral' });
 
     expect(repository.insert).toHaveBeenCalledExactlyOnceWith({ title: 'Comprar pan', description: 'Integral' });
     expect(task).toEqual(ROW);
@@ -71,7 +81,7 @@ describe('RF-C11: TaskService.create', () => {
     const failure = new Error('fallo del repositorio');
     repository.insert.mockRejectedValue(failure);
 
-    await expect(createTaskService(repository).create({ title: 'a', description: '' })).rejects.toBe(failure);
+    await expect(createTaskService(repository, 1000).create({ title: 'a', description: '' })).rejects.toBe(failure);
   });
 });
 
@@ -83,7 +93,7 @@ describe('RF-C15 / RF-C17: TaskService.update', () => {
     const repository = fakeRepository([]);
     repository.update.mockResolvedValue(dirty);
 
-    const task = await createTaskService(repository).update(ID, { completed: true });
+    const task = await createTaskService(repository, 1000).update(ID, { completed: true });
 
     expect(repository.update).toHaveBeenCalledExactlyOnceWith(ID, { completed: true });
     expect(task).toEqual(ROW);
@@ -94,7 +104,7 @@ describe('RF-C15 / RF-C17: TaskService.update', () => {
     const repository = fakeRepository([]);
     repository.update.mockResolvedValue(undefined);
 
-    const failure = createTaskService(repository).update(ID, { title: 'a' });
+    const failure = createTaskService(repository, 1000).update(ID, { title: 'a' });
 
     await expect(failure).rejects.toBeInstanceOf(HttpError);
     await expect(failure).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
@@ -105,7 +115,7 @@ describe('RF-C15 / RF-C17: TaskService.update', () => {
     const failure = new Error('fallo del repositorio');
     repository.update.mockRejectedValue(failure);
 
-    await expect(createTaskService(repository).update(ID, { title: 'a' })).rejects.toBe(failure);
+    await expect(createTaskService(repository, 1000).update(ID, { title: 'a' })).rejects.toBe(failure);
   });
 });
 
@@ -116,7 +126,7 @@ describe('RF-C18 / RF-C19: TaskService.remove', () => {
     const repository = fakeRepository([]);
     repository.remove.mockResolvedValue(true);
 
-    await expect(createTaskService(repository).remove(ID)).resolves.toBeUndefined();
+    await expect(createTaskService(repository, 1000).remove(ID)).resolves.toBeUndefined();
 
     expect(repository.remove).toHaveBeenCalledExactlyOnceWith(ID);
   });
@@ -125,7 +135,7 @@ describe('RF-C18 / RF-C19: TaskService.remove', () => {
     const repository = fakeRepository([]);
     repository.remove.mockResolvedValue(false);
 
-    const failure = createTaskService(repository).remove(ID);
+    const failure = createTaskService(repository, 1000).remove(ID);
 
     await expect(failure).rejects.toBeInstanceOf(HttpError);
     await expect(failure).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
@@ -136,6 +146,6 @@ describe('RF-C18 / RF-C19: TaskService.remove', () => {
     const failure = new Error('fallo del repositorio');
     repository.remove.mockRejectedValue(failure);
 
-    await expect(createTaskService(repository).remove(ID)).rejects.toBe(failure);
+    await expect(createTaskService(repository, 1000).remove(ID)).rejects.toBe(failure);
   });
 });

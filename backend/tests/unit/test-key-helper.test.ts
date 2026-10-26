@@ -6,7 +6,7 @@ import { loadConfig } from '../../src/config/config';
 import { baseEnv } from '../helpers/config-env';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest } from '../helpers/raw-http';
-import { OMIT_KEY_HEADER, TEST_API_KEY, testSecurity, withTestKey } from '../helpers/security';
+import { OMIT_KEY_HEADER, TEST_API_KEY, testProxies, testSecurity, withTestKey } from '../helpers/security';
 
 const BEARER = `Bearer ${TEST_API_KEY}`;
 
@@ -161,8 +161,13 @@ describe('RF-G19: baseEnv', () => {
 
 describe('RF-G19: testSecurity', () => {
   it('RF-G19: testSecurity() lleva la key de pruebas y acepta sobrescrituras', () => {
-    expect(testSecurity()).toEqual({ apiKey: TEST_API_KEY });
-    expect(testSecurity({ apiKey: 'otra' })).toEqual({ apiKey: 'otra' });
+    expect(testSecurity().apiKey).toBe(TEST_API_KEY);
+    expect(testSecurity({ apiKey: 'otra' }).apiKey).toBe('otra');
+  });
+
+  it('RF-G12: testSecurity() usa TRUSTED_PROXIES=none por defecto y acepta otra lista', () => {
+    expect(testSecurity().trustedProxies.contains('127.0.0.1')).toBe(false);
+    expect(testSecurity({ trustedProxies: testProxies('loopback') }).trustedProxies.contains('127.0.0.1')).toBe(true);
   });
 
   it('RF-G19: TEST_API_KEY cumple el formato de una key válida (43 a 128 caracteres, al menos 10 distintos)', () => {

@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type { TaskController } from '../controllers/task-controller';
 import { withInput } from '../http/input/request-input';
-import { registerRoute } from '../http/route-table';
+import { registerRoute, type RouteCatalog } from '../http/route-table';
 
 /**
  * Ruta de identificador: una expresión regular SIN grupos de captura. Con `/api/tasks/:id` Express decodificaría el
@@ -16,13 +16,23 @@ const TASK_ID_PATH = /^\/api\/tasks\/[^/]+$/;
  * `Allow: GET, POST`. `/api/tasks/<id>`: `PUT` (actualizar) y `DELETE` (borrar); el resto recibe 405 con
  * `Allow: PUT, DELETE` (la tabla de métodos genera `Allow` en el orden de sus claves). `/api/tasks/` no existe: 404.
  */
-export function registerTaskRoutes(app: Express, controller: TaskController): void {
-  registerRoute(app, '/api/tasks', {
-    GET: withInput({ bodyMode: 'none' }, controller.list),
-    POST: withInput({ bodyMode: 'required' }, controller.create),
-  });
-  registerRoute(app, TASK_ID_PATH, {
-    PUT: withInput({ bodyMode: 'required' }, controller.update),
-    DELETE: withInput({ bodyMode: 'none' }, controller.remove),
-  });
+export function registerTaskRoutes(app: Express, controller: TaskController, catalog: RouteCatalog): void {
+  registerRoute(
+    app,
+    '/api/tasks',
+    {
+      GET: withInput({ bodyMode: 'none' }, controller.list),
+      POST: withInput({ bodyMode: 'required' }, controller.create),
+    },
+    catalog,
+  );
+  registerRoute(
+    app,
+    TASK_ID_PATH,
+    {
+      PUT: withInput({ bodyMode: 'required' }, controller.update),
+      DELETE: withInput({ bodyMode: 'none' }, controller.remove),
+    },
+    catalog,
+  );
 }
