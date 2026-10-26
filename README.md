@@ -1159,6 +1159,14 @@ El frontend lee tres números (completadas, pendientes y todas) con Prisma 7.10.
   de base de datos (`writer` en el backend y `reader` en el frontend). Los contadores pueden diferir un instante de la
   lista tras una escritura.
 
+### Página principal
+
+- **El filtro vive en la URL**: `/?filter=completed` o `/?filter=pending`; así se puede compartir, recargar y usar el botón «atrás». `readFilter` (en `lib/task-filter.ts`) es una función pura: cualquier otra cosa (`all`, mayúsculas, vacío, repetido, parámetros extra) es «Todas», sin error, sin redirección y sin reflejar el valor en la página.
+- **Contadores**: se leen en el servidor en cada petición (`readCounters`) y no dependen del filtro activo. Si fallan, cada cantidad es `—` y sale el aviso «No se pudieron cargar los contadores.» (`role="status"`); los enlaces siguen funcionando.
+- **Por petición, no en la compilación**: `page` exporta `dynamic = 'force-dynamic'`, así `next build` no se conecta a la BD (en la salida de la compilación `/` aparece como `ƒ (Dynamic)`).
+- **Página fina**: `page.tsx` solo une `readFilter`, `readCounters` y `HomeView`; la lógica y el HTML están en funciones y componentes puros que se prueban sin invocar un componente de servidor asíncrono.
+- **Sin JavaScript** la página funciona (los filtros son enlaces normales); la lista de tareas llegará con la interfaz del cliente.
+
 ### Por qué el proyecto se creó a mano
 
 No se usó `create-next-app`: instala versiones con `^`, añade archivos de demostración y fuentes que se descargan en
