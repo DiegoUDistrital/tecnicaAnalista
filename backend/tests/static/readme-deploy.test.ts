@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readRepoText } from '../helpers/repo-files';
 
-// Lectura estática: comprueba que el README contiene la lista de comprobación manual completa.
-const HEADING = '### Comprobación manual';
+// Lectura estática: comprueba que docs-tecnicos/comprobacion-manual.md contiene la lista de comprobación manual completa.
+const HEADING = '# Comprobación manual';
 const STEP_COUNT = 20;
 
-/** Texto de la sección «Comprobación manual», hasta el siguiente encabezado de nivel 1 a 3. */
+/** Texto de la sección «Comprobación manual», hasta el siguiente encabezado de nivel 1 o 2. */
 function manualSection(readme: string): string {
   const lines = readme.split('\n');
   const start = lines.findIndex((line) => line.trim() === HEADING);
   if (start < 0) return '';
-  const endRelative = lines.slice(start + 1).findIndex((line) => /^#{1,3} /.test(line));
+  const endRelative = lines.slice(start + 1).findIndex((line) => /^#{1,2} /.test(line));
   const end = endRelative < 0 ? lines.length : start + 1 + endRelative;
   return lines.slice(start, end).join('\n');
 }
@@ -33,11 +33,11 @@ function stepBlocks(section: string): Map<number, string> {
   return new Map([...blocks].map(([number, blockLines]) => [number, blockLines.join('\n')]));
 }
 
-const section = manualSection(readRepoText('README.md'));
+const section = manualSection(readRepoText('docs-tecnicos/comprobacion-manual.md'));
 const steps = stepBlocks(section);
 const sectionLines = section.split('\n');
 
-describe('RF-P22: README con la comprobación manual del despliegue', () => {
+describe('RF-P22: documentación con la comprobación manual del despliegue', () => {
   it('RF-P22: existe el encabezado «Comprobación manual» con contenido', () => {
     expect(section).not.toBe('');
   });

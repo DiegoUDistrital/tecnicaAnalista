@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { corpus, documents } from './helpers/docs-corpus.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -11,10 +12,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * parten en líneas)
  */
 function read(relative) {
-  return readFileSync(path.join(root, relative), 'utf8').replace(/\s+/g, ' ').toLowerCase();
+  return normalize(readFileSync(path.join(root, relative), 'utf8'));
 }
 
-const readme = read('README.md');
+/** @param {string} text */
+function normalize(text) {
+  return text.replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** README más documentación técnica, normalizado. */
+const readme = normalize(corpus);
 const envExamples = { '.env.example': read('.env.example'), 'frontend/.env.example': read('frontend/.env.example') };
 
 /** Frases que prometían reenviar la IP real o que describían el cupo de otra manera. */
@@ -43,9 +50,9 @@ function expectAll(text, phrases) {
 }
 
 describe('documentación de la 007 (README y .env.example)', () => {
-  it('RF-I9: ni README.md ni .env.example ni frontend/.env.example contienen las frases retiradas', () => {
-    const files = { 'README.md': readme, ...envExamples };
-    for (const [name, text] of Object.entries(files)) {
+  it('RF-I9: ningún documento ni .env.example ni frontend/.env.example contienen las frases retiradas', () => {
+    const files = Object.fromEntries(documents.map(({ name, text }) => [name, normalize(text)]));
+    for (const [name, text] of Object.entries({ ...files, ...envExamples })) {
       for (const phrase of RETIRED_PHRASES) expect(text.includes(phrase), `${name}: «${phrase}»`).toBe(false);
     }
   });

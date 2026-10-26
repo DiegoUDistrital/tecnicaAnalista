@@ -2,12 +2,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { corpus, documents, headingLevel, readme as readmeOnly, section, sectionOf } from './helpers/docs-corpus.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** README tal cual (para los patrones de línea con la bandera m). */
-const raw = readFileSync(path.join(root, 'README.md'), 'utf8');
-/** README normalizado: minúsculas y espacios colapsados (los textos se parten en líneas). */
+/** README más documentación técnica tal cual (para los patrones de línea con la bandera m). */
+const raw = corpus;
+/** Corpus normalizado: minúsculas y espacios colapsados (los textos se parten en líneas). */
 const readme = raw.replace(/\s+/g, ' ').toLowerCase();
 
 /** Lenguaje provisional que no debe volver. */
@@ -55,26 +56,17 @@ describe('README final: lenguaje provisional y referencias', () => {
     for (const phrase of PER_PERSON_QUOTA) expect(readme.includes(phrase), `«${phrase}»`).toBe(false);
   });
 
-  it('RF-R4: no remite a archivos no versionados', () => {
-    for (const reference of UNVERSIONED) expect(readme.includes(reference), `«${reference}»`).toBe(false);
+  it('RF-R4: ningún documento remite a archivos no versionados', () => {
+    for (const document of documents) {
+      const text = document.text.replace(/\s+/g, ' ').toLowerCase();
+      for (const reference of UNVERSIONED)
+        expect(text.includes(reference), `${document.name}: «${reference}»`).toBe(false);
+    }
   });
 });
 
 /** @param {string} relative ruta desde la raíz; devuelve el contenido del archivo */
 const file = (relative) => readFileSync(path.join(root, relative), 'utf8');
-
-/**
- * @param {string} title título exacto del encabezado (sin las almohadillas)
- * @returns {string} texto del encabezado hasta el siguiente del mismo nivel o superior; vacío si no existe
- */
-function section(title) {
-  const lines = raw.split(/\r?\n/);
-  const start = lines.findIndex((line) => headingLevel(line) > 0 && line.replace(/^#+ /, '') === title);
-  if (start === -1) return '';
-  const level = headingLevel(lines[start] ?? '');
-  const end = lines.findIndex((line, i) => i > start && headingLevel(line) > 0 && headingLevel(line) <= level);
-  return lines.slice(start, end === -1 ? undefined : end).join(String.fromCharCode(10));
-}
 
 /**
  * @param {string} text texto donde buscar
@@ -86,9 +78,6 @@ function capture(text, pattern) {
   if (!found) throw new Error(String(pattern));
   return found[1] ?? '';
 }
-
-/** @param {string} line línea del README; devuelve el nivel del encabezado (0 si no lo es) */
-const headingLevel = (line) => (/^(#{1,6}) /.exec(line)?.[1] ?? '').length;
 
 /** Normaliza un texto como el README (minúsculas y espacios colapsados). */
 /** @param {string} text */
@@ -426,23 +415,23 @@ const anchorOf = (title) =>
     .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .replace(/\s/g, '-');
 
-/** Líneas dentro de bloques de código con su texto. */
-const codeLines = (() => {
+/** @param {string} text documento Markdown; devuelve las líneas dentro de bloques de código */
+const codeLinesOf = (text) => {
   const lines = [];
   let inside = false;
-  for (const line of raw.split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     if (/^\s*```/.test(line)) inside = !inside;
     else if (inside) lines.push(line);
   }
   return lines;
-})();
+};
 
 describe('README final: verificación final', () => {
   it('RF-R4: todos los enlaces del índice apuntan a un encabezado existente', () => {
     const anchors = new Set();
     const seen = new Map();
     let fenced = false;
-    for (const line of raw.split(/\r?\n/)) {
+    for (const line of readmeOnly.split(/\r?\n/)) {
       if (/^\s*```/.test(line)) fenced = !fenced;
       if (fenced || headingLevel(line) === 0) continue;
       const base = anchorOf(line.replace(/^#+ /, ''));
@@ -450,41 +439,46 @@ describe('README final: verificación final', () => {
       seen.set(base, count + 1);
       anchors.add(count === 0 ? base : `${base}-${count}`);
     }
-    const links = [...section('Índice').matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1]);
+    const links = [...sectionOf(readmeOnly, 'Índice').matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1]);
     expect(links.length, 'el índice tiene enlaces').toBeGreaterThan(10);
     for (const link of links) expect(anchors.has(link ?? ''), `#${link}`).toBe(true);
   });
 
   it('RF-R4: ningún comando documentado imprime .env y docker compose config lleva siempre --quiet', () => {
     const printsEnv = /(?:\b(?:cat|type|more|less|head|tail|printenv)\s+|Get-Content\s+)[^\n|;]*\.env\b/;
-    for (const line of codeLines.filter((l) => printsEnv.test(l))) {
-      const safe = /Set-Content|^\s*\$\w+\s*=/.test(line);
-      expect(safe, `imprime .env: ${line.trim()}`).toBe(true);
-    }
-    for (const line of codeLines.filter((l) => /docker compose\b.*\bconfig\b/.test(l))) {
-      expect(line, line.trim()).toContain('config --quiet');
-    }
-    for (const match of raw.matchAll(/docker compose [^\n`]*\bconfig\b[^\n`]*/g)) {
-      expect(match[0], match[0]).toContain('--quiet');
-    }
     const dumps = [
       /\bdocker inspect (?!-f |--format )/,
       /\bprintenv\s*$/,
       /\bprintenv\b.*(?:PASSWORD|API_KEY|DATABASE_URL)/,
       /(?<![.\w])env\s*$/,
     ];
-    for (const line of codeLines) for (const dump of dumps) expect(line, line.trim()).not.toMatch(dump);
+    for (const { name, text } of documents) {
+      const codeLines = codeLinesOf(text);
+      for (const line of codeLines.filter((l) => printsEnv.test(l))) {
+        const safe = /Set-Content|^\s*\$\w+\s*=/.test(line);
+        expect(safe, `${name}: imprime .env: ${line.trim()}`).toBe(true);
+      }
+      for (const line of codeLines.filter((l) => /docker compose\b.*\bconfig\b/.test(l))) {
+        expect(line, `${name}: ${line.trim()}`).toContain('config --quiet');
+      }
+      for (const match of text.matchAll(/docker compose [^\n`]*\bconfig\b[^\n`]*/g)) {
+        expect(match[0], `${name}: ${match[0]}`).toContain('--quiet');
+      }
+      for (const line of codeLines) for (const dump of dumps) expect(line, `${name}: ${line.trim()}`).not.toMatch(dump);
+    }
   });
 
   it('RF-R4: no hay contraseñas, URL de conexión ni keys reales (solo valores de ejemplo)', () => {
-    expect(raw, 'URL con usuario y contraseña').not.toMatch(/[a-z]+:\/\/[^\s/@`]+:[^\s/@`]+@/);
     const example = new Set(['.*', 'change-me', 'change-me-use-randomBytes-32', 'contrasena-falsa-123']);
-    for (const m of raw.matchAll(/\b[A-Z_]*(?:PASSWORD|API_KEY|SECRET|TOKEN)\s*=\s*([^\s'"`]+)/g)) {
-      const value = (m[1] ?? '').replace(/[.,;)]+$/, '');
-      expect(value === '' || value.startsWith('*') || example.has(value), `${m[0]}`).toBe(true);
+    for (const { name, text } of documents) {
+      expect(text, `${name}: URL con usuario y contraseña`).not.toMatch(/[a-z]+:\/\/[^\s/@`]+:[^\s/@`]+@/);
+      for (const m of text.matchAll(/\b[A-Z_]*(?:PASSWORD|API_KEY|SECRET|TOKEN)\s*=\s*([^\s'"`]+)/g)) {
+        const value = (m[1] ?? '').replace(/[.,;)]+$/, '');
+        expect(value === '' || value.startsWith('*') || example.has(value), `${name}: ${m[0]}`).toBe(true);
+      }
+      expect(text, `${name}: claves largas en hexadecimal o base64`).not.toMatch(
+        /\b[0-9a-f]{32,}\b|(?<![\w/.-])(?=[A-Za-z_-]*\d)(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{43}(?![\w/.-])/,
+      );
     }
-    expect(raw, 'claves largas en hexadecimal o base64').not.toMatch(
-      /\b[0-9a-f]{32,}\b|(?<![\w/.-])(?=[A-Za-z_-]*\d)(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{43}(?![\w/.-])/,
-    );
   });
 });
