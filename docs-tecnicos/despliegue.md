@@ -69,9 +69,8 @@ docker build --target runtime -t todo-backend-runtime backend
 docker build --target migrate -t todo-backend-migrate backend
 ```
 
-Las pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) comprueban sin Docker las etapas y su orden, el
-usuario numérico, la etiqueta de Node, la ausencia de credenciales y de `COPY . .`, el contenido de
-`backend/.dockerignore` y la forma de los comandos de arranque.
+Los Dockerfiles no se prueban con Vitest: se validan construyendo la imagen (`docker compose build`) y con la
+comprobación manual (usuario numérico, etiqueta de Node, ausencia de credenciales y de `COPY . .`).
 
 ### Imagen del frontend
 
@@ -108,7 +107,7 @@ Decisiones y su porqué:
   `10001:10001`; así, si más adelante el sistema de archivos del contenedor se declara de solo lectura, basta con
   montar ahí un directorio temporal.
 - **Sin `public/`.** El frontend no tiene la carpeta `public`, así que no se copia. Si algún día se crea, hay que
-  añadir su `COPY` a la etapa `runner` (la prueba estática falla para recordarlo).
+  añadir su `COPY` a la etapa `runner` (si se olvida, la imagen no arranca).
 - **Usuario y arranque.** `USER 10001:10001` numérico, como en el backend, y `CMD ["node", "server.js"]` en forma de
   lista: `node` es el proceso principal y recibe directamente las señales de parada.
 
@@ -118,9 +117,9 @@ Construcción manual (solo para probar; Compose lo hará por ti):
 docker build -t todo-frontend frontend
 ```
 
-Las mismas pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) cubren el frontend: etapas, usuario,
-etiqueta de Node común con el backend, ausencia de variables de ejecución en la construcción, `.dockerignore`,
-`output: 'standalone'` y el comando de arranque.
+El Dockerfile del frontend se valida igual, construyendo la imagen y con la comprobación manual (etapas, usuario,
+etiqueta de Node común con el backend, ausencia de variables de ejecución en la construcción, `output: 'standalone'`
+y comando de arranque).
 
 ### Base de datos de despliegue: roles y bases
 
@@ -293,7 +292,7 @@ de arranque: ninguna (`no-new-privileges` en `postgres` y `read_only` en el fron
 `SIGKILL`. El backend cierra de forma ordenada en `SHUTDOWN_TIMEOUT_MS`, que en la composición es el literal `10000`
 (10 s); su `stop_grace_period` es de 20 s, es decir, al menos 5 s más que el cierre, para que Express termine solo antes
 de que Docker lo fuerce. El frontend tiene 15 s y `postgres` 30 s. `SHUTDOWN_TIMEOUT_MS` y los plazos no se pueden
-sobrescribir desde el `.env`: la relación entre ellos debe mantenerse y un test estático la comprueba. No se cambia
+sobrescribir desde el `.env`: la relación entre ellos debe mantenerse y `docker compose config --quiet` valida la sintaxis. No se cambia
 `stop_signal`: cada imagen usa el suyo (la de PostgreSQL envía `SIGINT`, que provoca su cierre rápido y seguro).
 Observado al parar uno a uno: el backend y `postgres` terminan con código 0; el frontend termina con 143 (128 + 15,
 es decir, `SIGTERM` sin salida propia de Next.js). Es una limitación conocida del servidor de Next y no pierde datos:

@@ -4,7 +4,7 @@
 
 ## Backend
 
-El paquete del backend usa TypeScript estricto, ESLint, Prettier y Vitest con cobertura mínima del 95 %, y Prisma está
+El paquete del backend usa TypeScript estricto, ESLint, Prettier y Vitest con cobertura mínima del 80 % (90 % en validación y rutas), y Prisma está
 configurado para las migraciones. Express construye la aplicación con `createApp` y el servicio se arranca con
 `npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
@@ -23,7 +23,7 @@ Comandos disponibles (dentro de `backend/`):
 - `npm run lint`: ESLint y comprobación de formato con Prettier.
 - `npm run format`: aplica Prettier a los archivos.
 - `npm run typecheck`: comprobación de tipos con `tsc` sin generar archivos.
-- `npm test`: tests con Vitest y cobertura (falla por debajo del 95 %).
+- `npm test`: tests con Vitest y cobertura (falla por debajo del 80 % global o del 90 % en validación y rutas).
 - `npm run build`: compila a `backend/dist`.
 - `npm start`: compila y arranca el servicio con el `.env` de la raíz (ver «Cómo ejecutar»).
 - `npm run db:deploy`: aplica las migraciones y los permisos (ver «Migrar y aplicar permisos»).

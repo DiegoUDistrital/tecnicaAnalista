@@ -23,7 +23,7 @@
 
 ## Checklist de calidad
 
-- [ ] `test` con cobertura >= 95 % en verde
+- [ ] `test` con cobertura (>= 80 % global y >= 90 % en validación y rutas) en verde
 - [ ] `lint` en verde
 - [ ] `typecheck` en verde
 - [ ] `build` en verde

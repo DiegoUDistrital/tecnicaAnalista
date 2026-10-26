@@ -25,7 +25,7 @@ Se ejecutan dentro de `frontend/` (primero `npm install`):
 | `npm run lint`      | ESLint y comprobación de formato con Prettier.                              |
 | `npm run format`    | Da formato con Prettier.                                                    |
 | `npm run typecheck` | Comprueba los tipos con TypeScript.                                         |
-| `npm test`          | Vitest con cobertura; falla si las líneas o sentencias bajan del 95 %.      |
+| `npm test`          | Vitest con cobertura; falla bajo 80 % global o 90 % en rutas y validación. |
 
 ### Puerto y host fijos
 

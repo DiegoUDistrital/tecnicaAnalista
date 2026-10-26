@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-Los tests estáticos leen los archivos, pero no ejecutan Docker. Esta lista de veinte pasos comprueba a mano, en Docker
+`docker compose config --quiet` valida el compose, pero no ejecuta los contenedores. Esta lista de veinte pasos comprueba a mano, en Docker
 Desktop, lo que solo se ve con los contenedores en marcha. Reglas de la lista:
 
 - Se ejecuta en PowerShell desde la raíz del repositorio, con un `.env` creado a partir de `.env.example` (ver

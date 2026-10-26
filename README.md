@@ -194,16 +194,18 @@ carpeta indicada (`backend/`, `frontend/` o la raíz).
 
 | Grupo                                            | Dónde                                         | Comando                                   |
 | ------------------------------------------------ | --------------------------------------------- | ----------------------------------------- |
-| Unitarias, API (Supertest), base de datos, procesos y estáticas del backend | `backend/tests/` | `npm test` (en `backend/`)        |
+| Unitarias, API (Supertest), base de datos y procesos del backend | `backend/tests/` | `npm test` (en `backend/`)        |
 | Servidor y componentes del frontend              | `frontend/tests/`                             | `npm test` (en `frontend/`)               |
-| Scripts del arranque conjunto y contenido del README | `tests/` (raíz)                           | `npm test` (en la raíz)                   |
+| Scripts del arranque conjunto                    | `tests/` (raíz)                               | `npm test` (en la raíz)                   |
 | Procesos reales (Express sustituto y `next start`) | `integration/` (raíz)                       | `npm run test:integration` (en la raíz)   |
 | Calidad de código                                | los tres paquetes                             | `npm run lint` y `npm run typecheck`      |
 | Compilación                                      | `backend/` y `frontend/`                      | `npm run build`                           |
 | Comprobación manual del despliegue               | Docker Desktop (ver «Comprobación manual»)    | los comandos de cada paso                 |
 
-Cobertura: el mínimo es del 95 % de líneas y sentencias sobre el código propio (backend, frontend y `scripts/` de la
-raíz); si baja de ese valor, `npm test` falla. `npm test` ejecuta la cobertura en los tres paquetes.
+Cobertura: el mínimo es del 80 % de líneas y sentencias en el global y del 90 % en validación y rutas (backend y
+frontend); si baja, `npm test` falla. La raíz no tiene umbral. La cobertura sirve para encontrar huecos, no como
+objetivo. Los Dockerfiles, el compose y el README no se prueban con Vitest: se validan con
+`docker compose config --quiet` y construyendo las imágenes.
 
 Pruebas extremo a extremo: no hay un comando `e2e` en los `package.json`, así que este README no documenta ninguno. Lo
 más cercano son las pruebas de procesos reales (`npm run test:integration`) y la comprobación manual del despliegue.

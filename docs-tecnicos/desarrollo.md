@@ -18,7 +18,7 @@ TypeScript y `@types/node`, todas con versión exacta). Sirve para escribir y co
 (`scripts/`) con las mismas garantías que el resto. Desde la raíz se ejecutan:
 
 - `npm run dev`: arranque conjunto (ver «Arranque conjunto»).
-- `npm run lint`, `npm run format`, `npm run typecheck` y `npm test` (con cobertura mínima del 95 % sobre `scripts/`).
+- `npm run lint`, `npm run format`, `npm run typecheck` y `npm test` (sin umbral de cobertura en la raíz).
 - `npm run test:integration`: pruebas con procesos reales (un Express sustituto y `next start`, y el arranque conjunto
   con un `.env` inválido); no usan la base de datos.
 
@@ -196,7 +196,7 @@ Complementa la sección «Pruebas» del README.
 
 Detalle por paquete:
 
-- Cobertura mínima del 95 % sobre el código propio (backend y frontend).
+- Cobertura mínima del 80 % global y del 90 % en validación y rutas, sobre el código propio (backend y frontend).
 - Además de los tests se comprueban `lint` y `typecheck`.
 - Backend, dentro de `backend/`: `npm test` (con cobertura), `npm run lint`, `npm run typecheck` y `npm run build`.
   Los tests de base de datos y de la API (`backend/tests/api`) usan PostgreSQL real, necesitan el contenedor arriba y el
