@@ -229,7 +229,9 @@ se configura.
   - `linklocal`: `169.254.0.0/16` y `fe80::/10`.
   - `uniquelocal`: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` y `fc00::/7`.
   - Prefijo mínimo `/8` en IPv4 y `/7` en IPv6 (así una lista no puede confiar en medio Internet); la máscara larga
-    (`10.0.0.0/255.0.0.0`) no se admite. Los nombres distinguen mayúsculas.
+    (`10.0.0.0/255.0.0.0`) no se admite. Una IPv4-mapeada con prefijo (`::ffff:a.b.c.d/N`) también se rechaza:
+    es ambigua (no está claro si el prefijo cuenta los 96 bits iniciales), así que se elige el lado estricto.
+    Los nombres distinguen mayúsculas.
   - `none` (solo, en minúsculas) significa que nadie es de confianza: ninguna cabecera influye y cuenta siempre la
     dirección de la conexión.
   - Ausente equivale a `loopback`. Vacía, con entradas vacías (`a,,b`), `true`, `/0`, `None`, `NONE` o cualquier otro
@@ -723,7 +725,7 @@ SQLSTATE, nunca datos de la petición (ni título, ni descripción, ni cuerpo, n
 
 Capas: ruta (`backend/src/routes`) → controlador (`controllers`) → servicio (`services`) → repositorio
 (`repositories`), con SQL parametrizado de `pg`. La aplicación recibe la base de datos al construirse
-(`createApp({ logger, database, security })`), así que no existe una aplicación sin base de datos ni sin key.
+(`createApp({ logger, database, security, tasks })`), así que no existe una aplicación sin base de datos ni sin key.
 
 ## Validación de título y descripción
 
