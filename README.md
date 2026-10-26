@@ -1949,7 +1949,7 @@ Detalle por paquete:
 
 ## Base de datos
 
-Ya implementado: migración documentada de la tabla `tasks` (ver «Esquema y migraciones»), `backend/queries.sql` con
+Incluye: migración documentada de la tabla `tasks` (ver «Esquema y migraciones»), `backend/queries.sql` con
 dos consultas escritas a mano (filtro por `completed` y conteo agrupado por estado; ver «Consultas SQL») e índice
 sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio;
 se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
@@ -2707,6 +2707,12 @@ probó es la misma composición en Docker Desktop de Windows (ver «Comprobació
 - Un usuario con permisos para ejecutar `sudo` y para usar Docker.
 - Git, Docker Engine y el plugin de Compose (se usa como `docker compose`). No hace falta
   instalar Node ni PostgreSQL: todo corre en contenedores.
+
+En una máquina nueva solo hace falta Docker (Engine y Compose). Node y PostgreSQL no se instalan en el sistema: llegan
+como imágenes de Docker al ejecutar `docker compose -f docker-compose.yml up -d --build --wait`. La imagen de Node
+construye y ejecuta el backend y el frontend, y la imagen de PostgreSQL guarda los datos. Por eso este README no
+documenta una instalación de Node ni de PostgreSQL sin Docker: esos comandos no se han probado y la composición ya lo
+resuelve.
 
 ### Instalar Docker
 

@@ -239,6 +239,18 @@ describe('README final: despliegue en Ubuntu y pruebas', () => {
     expect(ubuntu).toContain('documentados, no probados');
   });
 
+  it('RF-R4: los requisitos de Ubuntu piden solo Docker (Node y PostgreSQL son imágenes)', () => {
+    const requirements = norm(section('Requisitos'));
+    for (const piece of [
+      'solo hace falta docker',
+      'imagen de node',
+      'imagen de postgresql',
+      'docker compose -f docker-compose.yml up -d --build --wait',
+    ]) {
+      expect(requirements, piece).toContain(piece);
+    }
+  });
+
   it('RF-R4: Ubuntu cubre requisitos, Docker, clonar, .env, up, comprobaciones, actualización, parada y copia', () => {
     for (const piece of [
       'requisitos',
@@ -402,5 +414,77 @@ describe('README final: decisiones, riesgos y trabajo futuro', () => {
   it('RF-R4: las decisiones o) y p) están separadas por una línea en blanco', () => {
     expect(raw).not.toMatch(/\n\*\*[a-z]\) [^\n]*\n\*\*[a-z]\) /);
     expect(raw).not.toMatch(/\n(?:- )?\*\*Decisión:\*\*[^\n]*\n\*\*D\d/);
+  });
+});
+
+/** Ancla de un encabezado como la calcula GitHub: minúsculas, sin signos, espacios por guiones. */
+/** @param {string} title */
+const anchorOf = (title) =>
+  title
+    .replaceAll('`', '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-');
+
+/** Líneas dentro de bloques de código con su texto. */
+const codeLines = (() => {
+  const lines = [];
+  let inside = false;
+  for (const line of raw.split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) inside = !inside;
+    else if (inside) lines.push(line);
+  }
+  return lines;
+})();
+
+describe('README final: verificación final', () => {
+  it('RF-R4: todos los enlaces del índice apuntan a un encabezado existente', () => {
+    const anchors = new Set();
+    const seen = new Map();
+    let fenced = false;
+    for (const line of raw.split(/\r?\n/)) {
+      if (/^\s*```/.test(line)) fenced = !fenced;
+      if (fenced || headingLevel(line) === 0) continue;
+      const base = anchorOf(line.replace(/^#+ /, ''));
+      const count = seen.get(base) ?? 0;
+      seen.set(base, count + 1);
+      anchors.add(count === 0 ? base : `${base}-${count}`);
+    }
+    const links = [...section('Índice').matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1]);
+    expect(links.length, 'el índice tiene enlaces').toBeGreaterThan(10);
+    for (const link of links) expect(anchors.has(link ?? ''), `#${link}`).toBe(true);
+  });
+
+  it('RF-R4: ningún comando documentado imprime .env y docker compose config lleva siempre --quiet', () => {
+    const printsEnv = /(?:\b(?:cat|type|more|less|head|tail|printenv)\s+|Get-Content\s+)[^\n|;]*\.env\b/;
+    for (const line of codeLines.filter((l) => printsEnv.test(l))) {
+      const safe = /Set-Content|^\s*\$\w+\s*=/.test(line);
+      expect(safe, `imprime .env: ${line.trim()}`).toBe(true);
+    }
+    for (const line of codeLines.filter((l) => /docker compose\b.*\bconfig\b/.test(l))) {
+      expect(line, line.trim()).toContain('config --quiet');
+    }
+    for (const match of raw.matchAll(/docker compose [^\n`]*\bconfig\b[^\n`]*/g)) {
+      expect(match[0], match[0]).toContain('--quiet');
+    }
+    const dumps = [
+      /\bdocker inspect (?!-f |--format )/,
+      /\bprintenv\s*$/,
+      /\bprintenv\b.*(?:PASSWORD|API_KEY|DATABASE_URL)/,
+      /(?<![.\w])env\s*$/,
+    ];
+    for (const line of codeLines) for (const dump of dumps) expect(line, line.trim()).not.toMatch(dump);
+  });
+
+  it('RF-R4: no hay contraseñas, URL de conexión ni keys reales (solo valores de ejemplo)', () => {
+    expect(raw, 'URL con usuario y contraseña').not.toMatch(/[a-z]+:\/\/[^\s/@`]+:[^\s/@`]+@/);
+    const example = new Set(['.*', 'change-me', 'change-me-use-randomBytes-32', 'contrasena-falsa-123']);
+    for (const m of raw.matchAll(/\b[A-Z_]*(?:PASSWORD|API_KEY|SECRET|TOKEN)\s*=\s*([^\s'"`]+)/g)) {
+      const value = (m[1] ?? '').replace(/[.,;)]+$/, '');
+      expect(value === '' || value.startsWith('*') || example.has(value), `${m[0]}`).toBe(true);
+    }
+    expect(raw, 'claves largas en hexadecimal o base64').not.toMatch(
+      /\b[0-9a-f]{32,}\b|(?<![\w/.-])(?=[A-Za-z_-]*\d)(?=[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]{43}(?![\w/.-])/,
+    );
   });
 });
