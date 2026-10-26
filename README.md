@@ -28,7 +28,7 @@ Las versiones se fijan al crear cada proyecto.
 
 ## Estructura del repositorio
 
-- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar; sin seguridad todavía).
+- `backend/`: paquete del backend con TypeScript; contiene Prisma (esquema y migraciones) y el servicio HTTP con Express con la API de tareas (leer, crear, actualizar y borrar), protegido por API key.
 - `frontend/`: aplicación Next.js con TypeScript y Tailwind (próximamente).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
 - `docker-compose.yml`: orquestación de los servicios (próximamente).
@@ -36,12 +36,13 @@ Las versiones se fijan al crear cada proyecto.
 
 ## Backend (estado actual)
 
-Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Prettier, Vitest con cobertura mínima
-del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
+El paquete del backend usa TypeScript estricto, ESLint, Prettier y Vitest con cobertura mínima del 95 %, y Prisma está
+configurado para las migraciones. Express construye la aplicación con `createApp` y el servicio se arranca con
+`npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
-`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API exige API key (ver «Seguridad: API key»); todavía NO
-tiene límite de peticiones, CORS ni tope de la lista: no debe exponerse hasta completar la seguridad. Las respuestas
-llevan cabeceras de seguridad de `helmet` y `Cache-Control: no-store` (ver «Seguridad: cabeceras»).
+`DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API está protegida por API key (ver «Seguridad: API key») y las respuestas llevan cabeceras de `helmet` y
+`Cache-Control: no-store` (ver «Seguridad: cabeceras»). Todavía NO tiene límites por IP, CORS ni tope de la lista: no
+debe exponerse hasta que se añadan.
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -100,7 +101,7 @@ La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con test
 
 El backend escribe los logs como una línea JSON por registro (`level`, `event`, `time` y, si procede, campos de
 contexto). Solo se escriben campos de una lista permitida y de valor simple (`host`, `port`, `signal`, `exitCode` y
-`timeoutMs`): nunca contraseñas, URL de conexión, API key, cuerpos de petición ni datos de usuario. De un error se
+`timeoutMs`): nunca contraseñas, URL de conexión, API key, cabecera `Authorization`, cuerpos de petición ni datos de usuario. De un error se
 registra la clase, el SQLSTATE (o el código de sistema, como `EPIPE`) y una traza construida solo con marcos de pila,
 sin el texto del mensaje. El mensaje solo se registra en los errores propios del proyecto y en los de base de datos
 fuera de la clase 22 (datos inválidos), cuyo mensaje puede contener el valor enviado por el usuario. Lo que se lance y
@@ -149,6 +150,13 @@ texto es idéntico para todas las causas, para no dar pistas a quien prueba clav
   aparece en los logs ni en las respuestas.
 - **Comparación.** Se compara el resumen SHA-256 de la key recibida con el de la configurada, ambos de 32 bytes, con
   `crypto.timingSafeEqual`: ninguna longitud distinta lanza error y el tiempo no depende del contenido.
+- **Entropía no verificada.** El servicio comprueba el formato de `API_KEY` y que no sea trivial, pero NO mide su
+  entropía. La garantía real viene de generarla con `randomBytes(32)` (comando en «Variables del servicio»).
+- **Rotación.** Para cambiar la key se modifica `API_KEY` en el `.env` y se reinicia el servicio. Desde el reinicio, la
+  key anterior da `401`. No hace falta tocar nada más.
+- **Limitaciones.** La key autentica a la aplicación, no a las personas: quien la tenga puede usar toda la API. El
+  servicio no habla HTTPS: el tráfico entre quien llama y el servicio viaja sin cifrar, así que debe ir solo por una
+  red interna. No hay login de usuarios (ver «Trabajo futuro»).
 
 ## Seguridad: cabeceras
 
@@ -304,8 +312,8 @@ Esta es la capa de datos que usa la API (`backend/src/repositories/task-reposito
 ## API de tareas
 
 > **Aviso de seguridad.** La API exige API key (cabecera `Authorization: Bearer`, ver «Seguridad: API key»); todavía NO
-> tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista, y escucha por defecto solo en
-> 127.0.0.1: no debe exponerse a ninguna red hasta completar la seguridad. Quien tenga la key puede crear, modificar y
+> tiene límites por IP, CORS ni tope de la lista, y escucha por defecto solo en 127.0.0.1: no debe exponerse a
+> ninguna red hasta que se añadan los límites y CORS. Quien tenga la key puede crear, modificar y
 > borrar tareas sin límite. Existen la lectura y la creación (`GET` y `POST` en `/api/tasks`), la actualización (`PUT` en
 > `/api/tasks/:id`) y el borrado (`DELETE` en `/api/tasks/:id`). Los ejemplos de esta sección omiten la cabecera
 > `Authorization` por brevedad: sin ella, todas las rutas dan `401`.
@@ -746,7 +754,8 @@ npm start
 ```
 
 `npm start` compila el backend y lo arranca con el `.env` de la raíz (si ese archivo no existe, Node termina con
-código 9 y no arranca). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; la
+código 9 y no arranca). El `.env` debe tener `API_KEY`; sin ella, o con el valor de ejemplo, el servicio no arranca
+(ver «Variables del servicio» para generarla). Por defecto escucha solo en `127.0.0.1:3000`. `GET /health` responde `{"status":"ok"}`; la
 API de tareas está en `GET` y `POST` de `/api/tasks` y `PUT` y `DELETE` de `/api/tasks/:id` (ver «API de tareas»). Se detiene con Ctrl+C (cierre ordenado,
 código 0).
 
@@ -754,8 +763,8 @@ código 0).
 healthcheck de contenedor debe usar GET (HEAD no está permitido).
 
 Aviso de seguridad: el servicio escucha solo en loopback y la API exige API key (`API_KEY` en el `.env`, ver
-«Seguridad: API key»); todavía NO tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista. No debe
-exponerse a ninguna red hasta completar la seguridad. `GET /api/tasks` devuelve la lista completa, que crece sin cota,
+«Seguridad: API key»); todavía NO tiene límites por IP, CORS ni tope de la lista. No debe
+exponerse a ninguna red hasta que se añadan. `GET /api/tasks` devuelve la lista completa, que crece sin cota,
 y quien tenga la key puede crear, modificar y borrar tareas.
 
 La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
@@ -771,6 +780,12 @@ cuando exista el frontend.
   Los tests de proceso compilan el backend en `backend/dist` y lanzan el punto de entrada como proceso hijo. En
   Windows la señal real (SIGTERM) no se prueba: Node no ejecuta manejadores de señal en esa plataforma; se verifica
   a mano en Linux.
+- Seguridad: los tests envían una key de prueba (`TEST_API_KEY`, una constante pública definida en
+  `backend/tests/helpers/security.ts`) en toda petición que llega a la aplicación, así que los que no tratan de la
+  seguridad no la escriben. Para probar una petición sin key se usa el marcador `X-Test-Omit-Key`, que el ayudante
+  retira antes de que la vea la aplicación. Los tests de la protección (401, sin registro en el log e inyección SQL con
+  la pila completa) están en `backend/tests/http/auth-guard.test.ts`, `backend/tests/http/security-logs.test.ts` y
+  `backend/tests/api/sql-injection-stack.test.ts`.
 - Concurrencia: `backend/tests/db/task-repository-write.test.ts` lanza 10 borrados simultáneos de la misma fila (debe
   haber un éxito y nueve «no existe»), y `backend/tests/api/tasks-delete.test.ts` y `tasks-put.test.ts` lanzan dos
   `DELETE` a la vez, dos `PUT` de campos distintos y 50 iteraciones de `PUT` y `DELETE` simultáneos con un Pool de 2
@@ -833,9 +848,9 @@ tiempo depende de dónde falla) y comprobar la longitud antes (la revela). La gu
 registrar `/health`, y no con una comparación de rutas, porque dos lógicas distintas podrían discrepar (`/health;x`,
 `//health`) y dejar una ruta sin proteger.
 
-**g) Rate limiting.** Con `express-rate-limit` y valores configurables por variables de entorno, protege frente a
-abuso y a intentos repetidos con una API key inválida. El contador está en memoria, por lo que solo es válido para
-una instancia de Express.
+**g) Rate limiting (pendiente).** Se añadirá con `express-rate-limit` y valores configurables por variables de entorno,
+para frenar el abuso y los intentos repetidos con una API key inválida. Todavía NO existe: el servicio no limita las
+peticiones. El contador en memoria será válido solo para una instancia de Express.
 
 **h) Redis descartado.** No hay un problema de carga que lo justifique y añade un servicio, una credencial y más
 superficie de ataque. Se mide la necesidad antes de añadir infraestructura; el `Pool` y el índice cubren la carga
@@ -886,8 +901,9 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
 
 **Limitaciones conocidas de la API actual.**
 
-- Seguridad incompleta: hay API key, pero todavía no hay límite de peticiones, CORS ni cabeceras de seguridad. No debe
-  exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las personas.
+- Seguridad incompleta: hay API key y cabeceras de `helmet`, pero todavía no hay límite de peticiones por IP, CORS ni
+  tope de la lista. No debe exponerse a ninguna red hasta que se añadan. La key autentica a la aplicación, no a las
+  personas.
 - `GET /api/tasks` devuelve todas las tareas (sin paginación ni cota) y `POST`, `PUT` y `DELETE` no tienen límite de uso.
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.
 - Los errores de nivel HTTP que resuelve Node antes de Express (cabeceras o URL enormes, método desconocido, petición

@@ -7,6 +7,7 @@ import { FRAME_PATTERN } from '../../src/logging/error-fields';
 import { createTaskRepository } from '../../src/repositories/task-repository';
 import { createClosedPortDatabase, createWriterDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
 import { getTestDatabase } from '../helpers/test-database';
+import { TEST_API_KEY } from '../helpers/security';
 import {
   dropResidualChecks,
   listTemporaryChecks,
@@ -149,6 +150,28 @@ describe('RF-C2 (i): base de datos inalcanzable en escritura', () => {
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({ event: 'request_error', errorClass: 'DatabaseUnavailableError' });
       expect(downCapture.output()).not.toContain(SECRET_TITLE);
+    } finally {
+      await down.close();
+    }
+  });
+});
+
+describe('RF-G19: base de datos apagada con key válida', () => {
+  it('RF-G19: con key válida y BD apagada el 500 es genérico, sin traza ni SQL en la respuesta', async () => {
+    const downCapture = createCaptureLogger();
+    const down = await startApiApp({
+      capture: downCapture,
+      database: await createClosedPortDatabase(downCapture.logger),
+    });
+    try {
+      const res = await request(down.app).get('/api/tasks').set('Authorization', `Bearer ${TEST_API_KEY}`);
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual(GENERIC_500);
+      for (const forbidden of ['SELECT', 'FROM tasks', 'ECONNREFUSED', '127.0.0.1', 'stack', 'pg']) {
+        expect(res.text).not.toContain(forbidden);
+      }
+      expect(downCapture.records()).toHaveLength(1);
     } finally {
       await down.close();
     }
