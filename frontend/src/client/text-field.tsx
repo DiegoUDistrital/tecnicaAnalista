@@ -2,6 +2,7 @@
 
 import { useId } from 'react';
 import { countCodePoints, trimText } from '../lib/task-text';
+import { FIELD } from '../lib/ui-classes';
 
 interface TextFieldProps {
   label: string;
@@ -16,8 +17,6 @@ interface TextFieldProps {
   inputRef: (element: HTMLInputElement | HTMLTextAreaElement | null) => void;
 }
 
-const FIELD_CLASS = 'min-h-11 w-full rounded border p-2';
-
 /** Campo con etiqueta visible, contador sobre el texto recortado y error asociado con `aria-describedby`. */
 export function TextField({ label, value, onChange, error, max, multiline = false, inputRef }: TextFieldProps) {
   const id = useId();
@@ -27,7 +26,7 @@ export function TextField({ label, value, onChange, error, max, multiline = fals
     id,
     value,
     ref: inputRef,
-    className: FIELD_CLASS,
+    className: FIELD,
     'aria-invalid': error === undefined ? undefined : true,
     'aria-describedby': error === undefined ? counterId : `${counterId} ${errorId}`,
   };
@@ -42,11 +41,11 @@ export function TextField({ label, value, onChange, error, max, multiline = fals
       ) : (
         <input {...common} type="text" onChange={(event) => onChange(event.target.value)} />
       )}
-      <span id={counterId} className="text-xs text-gray-600">
+      <span id={counterId} className="text-xs text-slate-600">
         {`${countCodePoints(trimText(value))}/${max}`}
       </span>
       {error === undefined ? null : (
-        <p id={errorId} role="alert" className="text-sm text-red-700">
+        <p id={errorId} role="alert" className="text-sm text-red-800">
           {error}
         </p>
       )}

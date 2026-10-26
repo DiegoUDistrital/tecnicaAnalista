@@ -6,6 +6,7 @@ import { HomeView } from '../../src/components/home-view';
 import type { Task } from '../../src/lib/task';
 import '../helpers/dom-cleanup';
 import { installFakeApi, jsonResponse, makeTask, type FakeApi } from '../helpers/fake-api';
+import { newTaskButton, openPanel } from '../helpers/open-panel';
 import { refresh } from '../helpers/router-mock';
 
 vi.mock('next/navigation', async () => (await import('../helpers/router-mock')).navigationMock);
@@ -54,6 +55,8 @@ async function answer(call: FakeApi['calls'][number] | undefined, response: Resp
 describe('Accesibilidad del cliente', () => {
   it('RF-F27: cada control se encuentra por rol y nombre accesible que incluye el título', async () => {
     await setup([makeTask(1), makeTask(2)]);
+    expect(newTaskButton().getAttribute('aria-expanded')).toBe('false');
+    openPanel();
     expect(screen.getByRole('form', { name: 'Nueva tarea' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Crear tarea' })).toBeTruthy();
     for (const title of ['Tarea 1', 'Tarea 2']) {
@@ -79,6 +82,7 @@ describe('Accesibilidad del cliente', () => {
     await waitFor(() => expect(region.textContent).toBe(''));
     expect(screen.getByRole('status')).toBe(region);
 
+    openPanel();
     fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Nueva' } });
     fireEvent.click(screen.getByRole('button', { name: 'Crear tarea' }));
     await answer(writes(api, 'POST')[0], jsonResponse(201, makeTask(3)));
@@ -99,8 +103,13 @@ describe('Accesibilidad del cliente', () => {
     const card = screen.getByRole('article');
     expect(card.classList).toContain('wrap-anywhere');
     expect(card.classList).toContain('min-w-0');
+    const titleButton = screen.getByRole('button', { name: 'x'.repeat(100) });
+    expect(titleButton.classList).toContain('min-h-11');
+    expect(titleButton.classList).toContain('min-w-11');
+    fireEvent.click(titleButton);
     expect(screen.getByText('a\nb', { normalizer: (text) => text }).classList).toContain('whitespace-pre-wrap');
     expect(screen.getByRole('navigation', { name: 'Filtros' }).classList).toContain('flex-wrap');
+    openPanel();
     fireEvent.click(editButton('x'.repeat(100)));
     const controls = [
       ...screen.getAllByRole('button'),
@@ -132,6 +141,7 @@ const ACTIONS: { name: string; method: string; run: () => void }[] = [
     name: 'crear',
     method: 'POST',
     run: () => {
+      openPanel();
       fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Nueva' } });
       fireEvent.click(screen.getByRole('button', { name: 'Crear tarea' }));
     },

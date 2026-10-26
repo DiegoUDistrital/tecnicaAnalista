@@ -7,6 +7,7 @@ import type { Task } from '../../src/lib/task';
 import type { TaskFilter } from '../../src/lib/task-filter';
 import '../helpers/dom-cleanup';
 import { installFakeApi, jsonResponse, makeTask, type FakeApi } from '../helpers/fake-api';
+import { newTaskButton, openPanel } from '../helpers/open-panel';
 import { refresh } from '../helpers/router-mock';
 
 vi.mock('next/navigation', async () => (await import('../helpers/router-mock')).navigationMock);
@@ -29,6 +30,7 @@ async function setup(options: { filter?: TaskFilter; total?: number | null; task
   const view = render(<TaskManager filter={options.filter ?? 'all'} total={options.total ?? null} />);
   act(() => api.calls[0]?.resolve(jsonResponse(200, options.tasks ?? [])));
   await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe(LOADING));
+  openPanel();
   return { api, ...view };
 }
 
@@ -57,7 +59,7 @@ const serverError = (status: number, code: string, message: string, details?: un
   jsonResponse(status, { error: { code, message, ...(details === undefined ? {} : { details }) } });
 
 describe('CreateForm: crear una tarea', () => {
-  it('RF-F9: envía título y descripción recortados, vacía el formulario, muestra «Tarea creada.», lleva el foco al título', async () => {
+  it('RF-F9: envía los textos recortados, cierra el panel, avisa y devuelve el foco al botón', async () => {
     const { api } = await setup();
     fill('  Comprar pan  ', '\n leche 　');
     fireEvent.click(submitButton());
@@ -66,9 +68,8 @@ describe('CreateForm: crear una tarea', () => {
     expect(posts(api)[0]?.body).toEqual({ title: 'Comprar pan', description: 'leche' });
     await answerPost(api, jsonResponse(201, makeTask(1)));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Tarea creada.'));
-    expect(titleField().value).toBe('');
-    expect(descriptionField().value).toBe('');
-    expect(document.activeElement).toBe(titleField());
+    expect(screen.queryByRole('form', { name: 'Nueva tarea' })).toBeNull();
+    expect(document.activeElement).toBe(newTaskButton());
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -231,13 +232,13 @@ describe('CreateForm: crear una tarea', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('RF-F9: crear bajo Completadas vacía el formulario y avisa aunque la tarea no aparezca', async () => {
+  it('RF-F9: crear bajo Completadas cierra el panel y avisa aunque la tarea no aparezca', async () => {
     const { api } = await setup({ filter: 'completed' });
     fill('Comprar pan');
     fireEvent.click(submitButton());
     await answerPost(api, jsonResponse(201, makeTask(1)));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Tarea creada.'));
-    expect(titleField().value).toBe('');
+    expect(screen.queryByRole('form', { name: 'Nueva tarea' })).toBeNull();
     expect(lists(api)[1]?.url).toBe('/api/tasks?filter=completed');
     await act(async () => {
       lists(api)[1]?.resolve(jsonResponse(200, []));
@@ -279,7 +280,8 @@ describe('CreateForm: crear una tarea', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(screen.getByText('Mostrando las 1000 tareas más recientes de 1200.')).toBeTruthy());
-  });
+    // Pinta 1000 tarjetas varias veces: con las tarjetas con más elementos (006c) 5 s no bastan bajo carga.
+  }, 20_000);
 
   it('RF-F9: si se desmonta durante el envío el POST no se cancela y no se pide la lista ni se refresca', async () => {
     const { api, unmount } = await setup();

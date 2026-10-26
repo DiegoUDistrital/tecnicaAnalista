@@ -7,6 +7,7 @@ import type { Task } from '../../src/lib/task';
 import type { TaskFilter } from '../../src/lib/task-filter';
 import '../helpers/dom-cleanup';
 import { installFakeApi, jsonResponse, makeTask, type FakeApi } from '../helpers/fake-api';
+import { openPanel } from '../helpers/open-panel';
 import { refresh } from '../helpers/router-mock';
 
 vi.mock('next/navigation', async () => (await import('../helpers/router-mock')).navigationMock);
@@ -122,6 +123,7 @@ describe('Completar y desmarcar', () => {
     const api = await setup([makeTask(1), makeTask(2)], 'pending');
     toggleButton('Tarea 1').focus();
     fireEvent.click(toggleButton('Tarea 1'));
+    openPanel();
     const title = screen.getByLabelText<HTMLInputElement>('Título');
     title.focus();
     await answer(puts(api)[0], jsonResponse(200, {}));

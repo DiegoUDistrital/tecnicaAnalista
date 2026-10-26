@@ -64,6 +64,7 @@ export function useTaskActions({ tasks, status, dispatch, editing, afterWrite }:
   const editFields = useRef(new Map<string, Field>());
   /** Tarea cuyo título recibe el foco cuando su formulario aparezca (solo al abrirla, no al volver a pintarla). */
   const titleFocusFor = useRef<string>(undefined);
+  const editButtonFocusFor = useRef<string>(undefined);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // Las acciones leen siempre lo último sin cambiar de identidad (así las tarjetas memorizadas no se repintan). Se
   // actualiza en el efecto de layout (síncrono con el pintado), no en uno pasivo, que podría llegar después de un clic.
@@ -165,11 +166,12 @@ export function useTaskActions({ tasks, status, dispatch, editing, afterWrite }:
   }, []);
 
   // Salir de la edición (Cancelar, Escape, guardar o no tener cambios): el foco vuelve al botón «Editar» de la tarea.
+  // Durante la edición ese botón no está en pantalla (RF-V10): el foco se pide aquí y se da cuando reaparece.
   const leaveEdit = useCallback(
     (id: string) => {
       dispatch({ type: 'editClose', id });
       if (focusIsFree(id)) {
-        editButtons.current.get(id)?.focus();
+        editButtonFocusFor.current = id;
       }
     },
     [dispatch],
@@ -179,10 +181,6 @@ export function useTaskActions({ tasks, status, dispatch, editing, afterWrite }:
   const open = useCallback(
     (task: Task) => {
       const current = editingRef.current;
-      if (current?.id === task.id) {
-        editFields.current.get(`${task.id}:title`)?.focus();
-        return;
-      }
       const original = current && tasksRef.current.find((candidate) => candidate.id === current.id);
       if (
         original &&
@@ -246,6 +244,14 @@ export function useTaskActions({ tasks, status, dispatch, editing, afterWrite }:
     if (editingId !== undefined && titleFocusFor.current === editingId) {
       titleFocusFor.current = undefined;
       editFields.current.get(`${editingId}:title`)?.focus();
+    }
+  }, [editingId]);
+
+  useEffect(() => {
+    const id = editButtonFocusFor.current;
+    editButtonFocusFor.current = undefined;
+    if (id !== undefined && editingId !== id) {
+      editButtons.current.get(id)?.focus();
     }
   }, [editingId]);
 

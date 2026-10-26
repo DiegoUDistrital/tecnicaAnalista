@@ -3,6 +3,8 @@
 import type { FormEvent, KeyboardEvent } from 'react';
 import type { Task } from '../lib/task';
 import type { Editing } from '../lib/task-ui-state';
+import { BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui-classes';
+import { CheckIcon, XIcon } from './icons';
 import { TextField } from './text-field';
 
 export type EditableField = 'title' | 'description';
@@ -43,7 +45,7 @@ export function EditForm({ task, draft, busy, actions }: EditFormProps) {
     <form
       aria-label={`Editar «${task.title}»`}
       noValidate
-      className="flex flex-col gap-3"
+      className="flex w-full flex-col gap-3"
       onSubmit={submit}
       onKeyDown={keyDown}
     >
@@ -64,24 +66,18 @@ export function EditForm({ task, draft, busy, actions }: EditFormProps) {
         multiline
         inputRef={(element) => actions.registerField(task.id, 'description', element)}
       />
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          aria-disabled={busy}
-          className="min-h-11 min-w-11 rounded border px-4 py-2 aria-disabled:opacity-60"
-        >
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" aria-disabled={busy} className={BTN_PRIMARY}>
+          <CheckIcon />
           Guardar
         </button>
-        <button
-          type="button"
-          onClick={() => actions.cancel(task.id)}
-          className="min-h-11 min-w-11 rounded border px-4 py-2"
-        >
+        <button type="button" onClick={() => actions.cancel(task.id)} className={BTN_SECONDARY}>
+          <XIcon />
           Cancelar
         </button>
       </div>
       {draft.errors.general === undefined ? null : (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-red-800">
           {draft.errors.general}
         </p>
       )}

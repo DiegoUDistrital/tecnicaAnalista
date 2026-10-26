@@ -122,6 +122,8 @@ describe('TaskManager y TaskCard: contenido de cada tarea', () => {
     const card = screen.getByText(longTitle).closest('article');
     expect(card?.className).toContain('wrap-anywhere');
     expect(card?.className).toContain('min-w-0');
+    expect(screen.queryByText(/línea uno/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: longTitle }));
     const description = screen.getByText(/línea uno/);
     expect(description.className).toContain('whitespace-pre-wrap');
     expect(description.textContent).toBe('línea uno\nlínea dos');

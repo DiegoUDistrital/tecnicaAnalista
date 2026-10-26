@@ -1,10 +1,13 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useReducer, useRef, useTransition } from 'react';
+import type { ReactNode } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState, useTransition } from 'react';
 import type { TaskFilter } from '../lib/task-filter';
 import { initialUiState, uiReducer } from '../lib/task-ui-state';
+import { BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui-classes';
 import { CreateForm } from './create-form';
+import { PlusIcon, RetryIcon } from './icons';
 import { TaskCard } from './task-card';
 import { useTaskActions } from './use-task-actions';
 import { useTaskList } from './use-task-list';
@@ -16,18 +19,35 @@ const EMPTY_TEXT: Record<TaskFilter, string> = {
   completed: 'No hay tareas completadas.',
   pending: 'No hay tareas pendientes.',
 };
-const ALERT_CLASS = 'mt-3 flex flex-wrap items-center gap-3 rounded border border-red-300 p-3 text-sm text-red-700';
+const ALERT_CLASS =
+  'mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800';
+const SKELETON_ROWS = [0, 1, 2];
+
+interface TaskManagerProps {
+  filter: TaskFilter;
+  total: number | null;
+  heading?: ReactNode;
+  children?: ReactNode;
+}
 
 /**
  * Lista de tareas del filtro recibido. El padre no se desmonta al cambiar de filtro (lo garantiza la página), así que
  * aquí no hay `key` que dependa del filtro.
+ *
+ * `heading` (el título, de servidor) comparte fila con el botón «Nueva tarea»; `children` (filtros y aviso de
+ * contadores, también de servidor) van entre el panel y la lista. Así el estado `open` y el orden de lectura
+ * (título, botón, panel, filtros, lista) viven en un solo componente.
  */
-export function TaskManager({ filter, total }: { filter: TaskFilter; total: number | null }) {
+export function TaskManager({ filter, total, heading, children }: TaskManagerProps) {
   const { tasks, status, loadError, refreshError, pending, reload } = useTaskList(filter);
   const router = useRouter();
   // `routerPending` dura hasta que Next entrega los contadores nuevos: es el refresco en curso de los contadores.
   const [routerPending, startTransition] = useTransition();
   const [ui, dispatch] = useReducer(uiReducer, initialUiState);
+  // El formulario de crear empieza cerrado y se abre con el botón «Nueva tarea».
+  const [open, setOpen] = useState(false);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -53,10 +73,16 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
   });
 
   const clearNotice = useCallback(() => dispatch({ type: 'noticeCleared' }), []);
+  // Cierra el panel y devuelve el foco al botón (que siempre está montado).
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    newButton.current?.focus();
+  }, []);
   const created = useCallback(() => {
     dispatch({ type: 'noticeSet', notice: CREATED_NOTICE });
     afterWrite();
-  }, [afterWrite]);
+    closePanel();
+  }, [afterWrite, closePanel]);
 
   // Al llegar una lista, se olvidan los errores y la edición de las tareas que ya no están. Mientras carga (la lista
   // va vacía) no se hace: al cambiar de filtro se conservan los de las tareas que siguen.
@@ -77,24 +103,40 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
 
   return (
     <div>
-      <CreateForm onStart={clearNotice} onCreated={created} />
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        {heading}
+        <button
+          ref={newButton}
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          className={BTN_PRIMARY}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <PlusIcon />
+          Nueva tarea
+        </button>
+      </div>
+      {open ? (
+        <div id={panelId} className="mb-6">
+          <CreateForm onStart={clearNotice} onCreated={created} onCancel={closePanel} />
+        </div>
+      ) : null}
+      {children}
       <section>
         <h2 ref={headingRef} tabIndex={-1} className="mb-2 text-xl font-semibold">
           Tareas
         </h2>
         <div role="status" aria-live="polite" className="text-sm">
-          {status === 'loading' ? <p>{LOADING_TEXT}</p> : null}
+          {status === 'loading' ? <p className="sr-only">{LOADING_TEXT}</p> : null}
           {ui.notice === undefined ? null : <p>{ui.notice}</p>}
           {truncated ? <p>{`Mostrando las ${tasks.length} tareas más recientes de ${total}.`}</p> : null}
         </div>
         {status === 'error' ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{loadError}</p>
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border px-3 py-1"
-              onClick={() => reload('initial')}
-            >
+            <button type="button" className={BTN_SECONDARY} onClick={() => reload('initial')}>
+              <RetryIcon />
               Reintentar
             </button>
           </div>
@@ -102,16 +144,24 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
         {status === 'ready' && refreshError !== undefined ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{refreshError}</p>
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border px-3 py-1"
-              onClick={() => reload('background')}
-            >
+            <button type="button" className={BTN_SECONDARY} onClick={() => reload('background')}>
+              <RetryIcon />
               Reintentar
             </button>
           </div>
         ) : null}
-        {status === 'ready' && tasks.length === 0 ? <p className="mt-3">{EMPTY_TEXT[filter]}</p> : null}
+        {status === 'loading' && tasks.length === 0 ? (
+          <div aria-hidden="true" className="mt-3 flex flex-col gap-3">
+            {SKELETON_ROWS.map((row) => (
+              <div key={row} className="h-24 animate-none rounded-xl bg-slate-200" />
+            ))}
+          </div>
+        ) : null}
+        {status === 'ready' && tasks.length === 0 ? (
+          <p className="mt-3 rounded-xl border border-dashed border-slate-300 p-6 text-center text-slate-600">
+            {EMPTY_TEXT[filter]}
+          </p>
+        ) : null}
         {tasks.length > 0 ? (
           <ul className="mt-3 flex flex-col gap-3">
             {tasks.map((task) => (

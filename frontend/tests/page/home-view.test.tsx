@@ -7,7 +7,15 @@ import type { Counters } from '../../src/server/counters/counters';
 import type { TaskFilter } from '../../src/lib/task-filter';
 
 // Se simula: el de verdad pinta su propia región role="status" y estas pruebas miden la página, no la lista.
-vi.mock('../../src/client/task-manager', () => ({ TaskManager: () => null }));
+// Conserva el título y los filtros que la página le pasa (`heading` y `children`).
+vi.mock('../../src/client/task-manager', () => ({
+  TaskManager: ({ heading, children }: { heading?: ReactNode; children?: ReactNode }) => (
+    <>
+      {heading}
+      {children}
+    </>
+  ),
+}));
 
 /** Todos los elementos de un árbol de React (sin ejecutar componentes). */
 function elementsIn(node: ReactNode): ReactElement<{ children?: ReactNode }>[] {
@@ -82,7 +90,7 @@ describe('HomeView', () => {
     'RF-F6: HomeView monta TaskManager con el filtro y el total del filtro (%s, contadores %j -> %s) o null si los contadores no están',
     (filter, counters, total) => {
       const element = taskManagerOf(filter, counters);
-      expect(element?.props).toEqual({ filter, total });
+      expect(element?.props).toMatchObject({ filter, total });
     },
   );
 });
