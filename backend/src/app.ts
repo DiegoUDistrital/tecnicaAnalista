@@ -5,11 +5,11 @@ import type { Database } from './db/pool';
 import { createErrorHandler } from './http/error-handler';
 import { health } from './http/health';
 import { HttpError } from './http/http-error';
-import { registerRoute } from './http/route-table';
+import { createRouteCatalog, registerRoute } from './http/route-table';
 import type { Logger } from './logging/logger';
 import { createTaskRepository } from './repositories/task-repository';
 import { createAuthGuard } from './security/auth-guard';
-import { createCors } from './security/cors';
+import { createCors, createPreflight } from './security/cors';
 import { createRateLimiters } from './security/rate-limiters';
 import { createSecurityHeaders, noStore } from './security/response-headers';
 import { registerTaskRoutes } from './routes/task-routes';
@@ -34,13 +34,13 @@ export type ShutdownApp = Express & { readonly shutdown: () => void };
  * sin `X-Powered-By` ni ETag (la respuesta no debe depender de cabeceras de la petición) y con
  * comparación estricta de rutas (`/Health` y `/health/` no coinciden con `/health`) y sin intérprete de consulta (la
  * consulta se evalúa cruda: el intérprete descarta claves como `__proto__` y trunca a 1 000 parámetros).
- * Orden: cabeceras de `helmet` (toda respuesta), `/health` (la única ruta sin key), `Cache-Control: no-store`,
- * cupo general (429), guarda de la API key (401, o 429 si la IP acumuló demasiados intentos fallidos), cupo de `POST`
- * (429), rutas de `/api/tasks`, rutas de prueba, 404 final y manejador central de errores. El cupo general va ANTES
- * de la guarda: cuenta también las peticiones sin key y el 429 gana a un 401; el de `POST` va después, así que solo
- * cuenta los `POST` autenticados que pasaron el general. Cupo y guarda son `app.use` sin ruta: protegen TODO lo
- * registrado después, así que una ruta nueva nace protegida y la exención la decide el mismo enrutador que
- * despacha `/health` (sin comparar cadenas).
+ * Orden: cabeceras de `helmet` (toda respuesta), `/health` (la única ruta sin key), `Cache-Control: no-store`, CORS,
+ * cupo general (429), preflight válido (204, sin key), guarda de la API key (401, o 429 si la IP acumuló demasiados
+ * intentos fallidos), cupo de `POST` (429), rutas de `/api/tasks`, rutas de prueba, 404 final y manejador central de
+ * errores. El cupo general va ANTES de la guarda: cuenta también las peticiones sin key y el 429 gana a un 401; el de
+ * `POST` va después, así que solo cuenta los `POST` autenticados que pasaron el general. Cupo y guarda son `app.use`
+ * sin ruta: protegen TODO lo registrado después, así que una ruta nueva nace protegida y la exención la decide el
+ * mismo enrutador que despacha `/health` (sin comparar cadenas).
  */
 export function createApp(options: CreateAppOptions): ShutdownApp {
   const app = express();
@@ -62,6 +62,8 @@ export function createApp(options: CreateAppOptions): ShutdownApp {
   app.use(createCors(corsOrigin));
   const limiters = createRateLimiters(rateLimit, trustedProxies);
   app.use(limiters.general);
+  const catalog = createRouteCatalog();
+  app.use(createPreflight(corsOrigin, catalog));
   app.use(
     createAuthGuard(apiKey, {
       trusted: trustedProxies,
@@ -70,7 +72,7 @@ export function createApp(options: CreateAppOptions): ShutdownApp {
     }),
   );
   app.use(limiters.post);
-  registerTaskRoutes(app, createTaskController(createTaskService(createTaskRepository(options.database))));
+  registerTaskRoutes(app, createTaskController(createTaskService(createTaskRepository(options.database))), catalog);
   options.registerRoutes?.(app);
   app.use((_req, _res, next) => {
     next(new HttpError(404));

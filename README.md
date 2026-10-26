@@ -124,7 +124,9 @@ si la petición no trae la key.
 Las rutas se distinguen exactamente: `/Health` y `/health/` no existen y, con key válida, dan `404 NOT_FOUND`, igual que
 cualquier ruta desconocida (con cualquier método; una codificación porcentual inválida en una ruta inexistente también
 es 404, no 400); sin key dan `401`. Un método no permitido en una ruta que sí existe da `405 METHOD_NOT_ALLOWED` con la cabecera `Allow` (por
-ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta. Los 404 y
+ejemplo `Allow: GET` en `/health`). Esto incluye HEAD y OPTIONS: el servicio no los responde por su cuenta, con una
+única excepción, el preflight de CORS válido de las rutas de `/api` (ver «CORS»); `OPTIONS /health` sigue dando `405`
+con `Allow: GET`, también sin key. Los 404 y
 405 usan el mismo sobre JSON del contrato de errores y no se registran en el log.
 
 ## Seguridad: API key
@@ -315,6 +317,18 @@ informa al navegador. Por eso la protección real sigue siendo la API key y el a
   nunca se refleja el `Origin` recibido: solo se escribe el valor configurado, y solo si coincide exactamente.
 - **También en los errores.** Las cabeceras se añaden antes de la guarda y de los cupos, así que un `401` o un `429` para
   el origen permitido las lleva y el navegador puede leer el error.
+- **Preflight por ruta.** Antes de una petición con `Authorization` o `Content-Type: application/json`, el navegador
+  envía un `OPTIONS` (el preflight) para preguntar qué se permite, y ese `OPTIONS` NO lleva `Authorization`: exigirla lo
+  rompería siempre. Por eso un preflight válido se atiende sin key. Es válido solo si se cumple todo: método `OPTIONS`,
+  exactamente un `Origin` igual a `CORS_ORIGIN`, `Access-Control-Request-Method` presente y no vacío (su valor no se
+  valida: decide el navegador) y una ruta real de la API (`/api/tasks` o `/api/tasks/<id>`, comparada sin la consulta,
+  que el navegador sí incluye; `/api/tasks/`, `/API/tasks` y `//api/tasks` no cuentan). La respuesta es `204` sin cuerpo
+  con `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` con los métodos REALES de esa ruta (`GET, POST` o
+  `PUT, DELETE`, tomados de la misma tabla que genera `Allow` en el `405`, sin una segunda lista),
+  `Access-Control-Allow-Headers: Authorization, Content-Type`, `Access-Control-Max-Age: 600` y `Vary: Origin`. Pasa por
+  el cupo general (un preflight puede dar `429`) pero no cuenta como intento fallido ni en el cupo de `POST`, y no se
+  registra. Si trae cuerpo, no se lee y se responde con `Connection: close`. Cualquier otro `OPTIONS` sigue el flujo
+  normal. Alternativa descartada: responder `204` a todo `OPTIONS`, que anunciaría rutas y métodos que no existen.
 - **Escrito a mano.** Son unas pocas líneas sobre `rawHeaders` (donde se cuenta cuántas cabeceras `Origin` llegan, porque
   Node descarta las repetidas en `req.headers`). Alternativa descartada: el paquete `cors`, cuyos valores por defecto
   aceptan cualquier origen o lo reflejan, y que añade una dependencia para algo que aquí cabe en una función.
@@ -642,7 +656,8 @@ la base de datos no llega a consultarse).
 ### Rutas y errores de base de datos
 
 Rutas y métodos: cualquier otro método en `/api/tasks` (incluidos HEAD, OPTIONS, PUT, DELETE, PATCH...) da `405` con
-`Allow: GET, POST`. En `/api/tasks/<id>` solo existen `PUT` y `DELETE`: cualquier otro método (también `GET`) da `405` con
+`Allow: GET, POST`; `OPTIONS` solo recibe `204` si es un preflight de CORS válido (ver «CORS»), y cualquier otro
+`OPTIONS` sigue este flujo (sin key `401`; con key `405` en una ruta existente y `404` en una inexistente). En `/api/tasks/<id>` solo existen `PUT` y `DELETE`: cualquier otro método (también `GET`) da `405` con
 `Allow: PUT, DELETE` (`GET` no está permitido porque no se pidió leer una tarea por identificador); el método se
 evalúa antes que el identificador, así que `GET /api/tasks/%E0%A4%A` da `405` y no `400`. `/api/tasks/`, `/api/tasks//`, `/api/%74asks`, `/api/tasks/<id>/`,
 `/api/tasks/<id>/x` y cualquier ruta desconocida dan `404`. Si la base de datos falla (inalcanzable o
