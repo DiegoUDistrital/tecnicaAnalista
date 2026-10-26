@@ -22,7 +22,8 @@ Redis y límites por persona (ver «Trabajo futuro» y «Cupo compartido por dis
 ## Índice
 
 - [Resumen y alcance](#resumen-y-alcance)
-- [Arranque rápido](#arranque-rápido)
+- [Arranque rápido](#arranque-rápido), [Desarrollo local](#desarrollo-local) y
+  [Despliegue en Ubuntu (resumen)](#despliegue-en-ubuntu-resumen)
 - [Arquitectura](#arquitectura) y [Recorrido de una petición](#recorrido-de-una-petición)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Versiones usadas](#versiones-usadas)
@@ -88,6 +89,51 @@ Todos los comandos de despliegue llevan `-f docker-compose.yml` porque la carpet
 desarrollo. Detalles, límites y comprobaciones en [Despliegue con Docker Compose](docs-tecnicos/despliegue.md#despliegue-con-docker-compose).
 Para desarrollar con recarga, ver [Instalación](docs-tecnicos/desarrollo.md#instalación) y
 [Arranque conjunto](docs-tecnicos/desarrollo.md#arranque-conjunto).
+
+## Desarrollo local
+
+Para desarrollar con recarga (requiere Node.js y Docker). Desde la raíz, con `.env` y `frontend/.env` ya creados desde
+sus `.env.example` y la misma `API_KEY` en ambos:
+
+```powershell
+npm ci
+cd backend; npm ci; cd ..
+cd frontend; npm ci; cd ..
+docker compose -f docker-compose.dev.yml up -d --wait
+cd backend; npm run db:deploy; cd ..
+npm run dev
+```
+
+Luego abra `http://127.0.0.1:3001`. Detalle (variables, límites y avisos) en
+[Desarrollo local](docs-tecnicos/desarrollo.md#primera-vez).
+
+## Despliegue en Ubuntu (resumen)
+
+Se interpreta el despliegue en Ubuntu como despliegue con Docker: Node y PostgreSQL van dentro de las imágenes y no se
+instalan en el servidor. Porqué: es el mismo entorno que en desarrollo y no hay que instalar versiones a mano.
+Alternativa descartada: instalación nativa con `apt` (versiones del sistema distintas de las probadas, más pasos
+manuales y sin probar). **No se probó en Ubuntu**; los pasos están documentados.
+
+1. Instale Docker Engine con el plugin de Compose siguiendo la
+   [guía oficial para Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+2. Clone el repositorio y cree el `.env`:
+
+   ```
+   git clone <url-del-repositorio>
+   cd <carpeta-del-repositorio>
+   cp .env.example .env
+   ```
+
+3. Edite el `.env`: contraseñas de los roles y `API_KEY` (comandos de generación en «Arranque rápido»), y
+   `RATE_LIMIT_MAX=1000` y `RATE_LIMIT_POST_MAX=200` (o borre esas dos líneas).
+4. Levante y compruebe:
+
+   ```
+   docker compose -f docker-compose.yml up -d --build --wait
+   docker compose -f docker-compose.yml ps
+   ```
+
+Detalle en [Despliegue en Ubuntu](docs-tecnicos/despliegue.md#despliegue-en-ubuntu).
 
 ## Arquitectura
 
@@ -322,7 +368,9 @@ limitaciones».
 
 - **Decisión:** `tasks_completed_idx` sobre la columna `completed`.
 - **Porqué:** con pocas filas aporta poco; se justifica por el patrón de consulta (casi todas las lecturas filtran por
-  estado) y por el crecimiento esperado de la tabla.
+  estado) y por el crecimiento esperado de la tabla. El filtro `WHERE completed = $1` y el conteo `GROUP BY completed`
+  leen por esa columna; con pocas filas el planificador puede preferir un recorrido secuencial y el índice paga al
+  crecer la tabla.
 - **Alternativa descartada:** no crear el índice, o uno por fecha (`createdAt DESC, id`).
 
 ### D15. Despliegue con Docker Compose
