@@ -22,3 +22,16 @@ export const BTN_DANGER = `${BTN_BASE} border-red-300 bg-white text-red-700 hove
 export const FIELD =
   'min-h-11 w-full rounded-lg border border-slate-300 bg-white p-2 text-slate-900 ' +
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600';
+
+/** Filtro en forma de píldora: enlace con borde; la página actual (`aria-current`) se rellena de índigo. */
+export const PILL =
+  'group inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-slate-300 ' +
+  'bg-white px-4 py-1 text-sm font-medium text-slate-800 hover:bg-slate-100 ' +
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ' +
+  'aria-[current=page]:border-indigo-600 aria-[current=page]:bg-indigo-600 aria-[current=page]:text-white ' +
+  'aria-[current=page]:hover:bg-indigo-700';
+
+/** Contador pequeño dentro de la píldora; se invierte cuando el enlace es la página actual. */
+export const PILL_COUNT =
+  'rounded-full bg-slate-100 px-2 text-xs text-slate-700 ' +
+  'group-aria-[current=page]:bg-indigo-500 group-aria-[current=page]:text-white';

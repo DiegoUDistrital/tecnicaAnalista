@@ -8,11 +8,11 @@ export function HomeView({ filter, counters }: { filter: TaskFilter; counters: C
   // Total del filtro según los contadores; null si no están disponibles (misma regla que FilterNav).
   const total = counters.available ? counters[filter] : null;
   return (
-    <main className="mx-auto max-w-2xl p-4">
-      <h1 className="mb-4 text-2xl font-bold">To-Do App</h1>
+    <main className="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+      <h1 className="mb-6 text-3xl font-bold tracking-tight">To-Do App</h1>
       <FilterNav filter={filter} counters={counters} />
       {counters.available ? null : (
-        <p role="status" className="mt-2 text-sm text-red-700">
+        <p role="status" className="mt-2 text-sm text-red-800">
           No se pudieron cargar los contadores.
         </p>
       )}

@@ -1,16 +1,13 @@
 import Link from 'next/link';
 import type { Counters } from '../server/counters/counters';
 import type { TaskFilter } from '../lib/task-filter';
+import { PILL, PILL_COUNT } from '../lib/ui-classes';
 
 const LINKS: { filter: TaskFilter; label: string; href: string }[] = [
   { filter: 'all', label: 'Todas', href: '/' },
   { filter: 'completed', label: 'Completadas', href: '/?filter=completed' },
   { filter: 'pending', label: 'Pendientes', href: '/?filter=pending' },
 ];
-
-const LINK_CLASS =
-  'inline-flex min-h-11 min-w-11 items-center gap-1 rounded border px-3 py-1' +
-  ' aria-[current=page]:bg-gray-900 aria-[current=page]:text-white';
 
 const quantity = (counters: Counters, filter: TaskFilter) => (counters.available ? String(counters[filter]) : '—');
 
@@ -23,9 +20,9 @@ export function FilterNav({ filter, counters }: { filter: TaskFilter; counters: 
           key={item.filter}
           href={item.href}
           aria-current={item.filter === filter ? 'page' : undefined}
-          className={LINK_CLASS}
+          className={PILL}
         >
-          {item.label} <span>{quantity(counters, item.filter)}</span>
+          {item.label} <span className={PILL_COUNT}>{quantity(counters, item.filter)}</span>
         </Link>
       ))}
     </nav>
