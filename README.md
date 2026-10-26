@@ -1008,7 +1008,7 @@ editar `package.json`.
 - `server/`: todo lo que toca secretos, base de datos o Express; nunca llega al navegador.
 - `client/`: reservada para el código que corre en el navegador (aún no existe).
 
-Solo `app/` y `lib/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
+Solo `app/`, `lib/` y `server/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
 hay un alias menos que mantener entre `tsconfig` y Vitest.
 
 ### Cabeceras de seguridad
@@ -1017,6 +1017,34 @@ hay un alias menos que mantener entre `tsconfig` y Vitest.
 `Referrer-Policy: no-referrer` y `X-Frame-Options: DENY`. La lista sale de la función `securityHeaders()`
 (`src/lib/security-headers.ts`), que se prueba aparte. **Limitación:** no hay `Content-Security-Policy`. Una CSP útil
 con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el servidor) y queda como trabajo futuro.
+
+### Registros del frontend
+
+El servidor del frontend registra sus errores con un registro propio (`src/server/logging/`). Escribe una línea JSON
+por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Todavía nada lo
+llama: lo usarán la configuración y las rutas en tareas posteriores.
+
+- **Eventos cerrados.** `config_invalid` (configuración inválida) y `route_failed` (fallo inesperado de una ruta).
+- **Campos cerrados.** Solo estos, en este orden:
+  - `method`: `GET`, `POST`, `PUT` o `DELETE`. Otro valor se descarta.
+  - `route`: la plantilla `/api/tasks` o `/api/tasks/:id`, nunca la URL real. Cualquier otra ruta se descarta.
+  - `status`: entero de 100 a 599.
+  - `errorName`: nombre de la clase del error si cumple `^[A-Za-z][A-Za-z0-9_]{0,59}$`; si no, `Error`. Lo lanzado que
+    no es un `Error` deja solo su tipo (`string`, `object`...).
+  - `errorCode`: el `code` del error, o el de `cause`, solo si cumple `^[A-Z0-9_]{1,40}$` (por ejemplo `ECONNREFUSED`).
+    Si no, se omite.
+  - `variables`: solo nombres de la lista `BACKEND_URL`, `API_KEY`, `READER_DATABASE_URL` y `ALLOWED_HOSTS`. Nunca sus
+    valores.
+- **Nunca se registra:** el mensaje del error, la traza, URL, cabeceras, cuerpo, consulta, identificadores, la API key
+  ni valores de variables. Un mensaje o una traza pueden llevar una contraseña, una URL de conexión o un dato que envió
+  la persona usuaria.
+- **Por qué una lista cerrada.** Se permite lo que se conoce y se descarta lo demás, así que un campo nuevo no se cuela
+  por descuido. Alternativa descartada: quitar los datos sensibles con expresiones regulares, que es frágil.
+- **Por qué no `console.error(error)`.** Imprime el mensaje y la traza del error, que es justo lo que no puede salir.
+- **Sin código compartido con el backend.** Son paquetes separados: el registro del frontend sigue los mismos principios
+  (lista cerrada de campos, sin datos de usuario), pero no importa nada del backend.
+- **Robustez.** Un getter que lanza (en `code`, `name` o `cause`) no hace fallar el registro: esa lectura se omite.
+  Lo lanzado que no es un `Error` no se convierte a texto, así que su `toString` nunca se ejecuta.
 
 ### Por qué el proyecto se creó a mano
 
