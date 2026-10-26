@@ -321,7 +321,8 @@ bloquea.
 ## CORS
 
 CORS es el mecanismo con el que un navegador decide si una página de un origen puede leer las respuestas de otro. El
-servicio solo reconoce UN origen, el de `CORS_ORIGIN` (por ejemplo, `http://localhost:3000`). Una petición que trae
+servicio solo reconoce UN origen, el de `CORS_ORIGIN` (por ejemplo, `http://localhost:3001`, el frontend en
+desarrollo). Una petición que trae
 exactamente un `Origin` idéntico a ese valor recibe `Access-Control-Allow-Origin` con ese mismo valor; cualquier otra
 (otro dominio, otro puerto, otro esquema, `null`, una barra final, mayúsculas distintas, la cabecera repetida o sin
 `Origin`) no recibe ninguna cabecera `Access-Control-Allow-*` y se procesa igual que antes: CORS no rechaza nada, solo
@@ -976,8 +977,9 @@ El frontend se documenta en «Frontend (estado actual)».
 ## Frontend (estado actual)
 
 El frontend es una aplicación Next.js (App Router) con TypeScript estricto y Tailwind, en `frontend/`. Por ahora solo
-tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad y las herramientas de
-calidad. Todavía no hay configuración propia, acceso a datos, rutas del servidor ni lista de tareas.
+tiene la base del proyecto: una página provisional con el título, las cabeceras de seguridad, las herramientas de
+calidad y la configuración propia (ver «Configuración del frontend»). Todavía no hay acceso a datos, rutas del servidor
+ni lista de tareas.
 
 ### Comandos
 
@@ -988,6 +990,7 @@ Se ejecutan dentro de `frontend/` (primero `npm install`):
 | `npm run dev`       | Servidor de desarrollo en `127.0.0.1:3001`.                                 |
 | `npm run build`     | Compila para producción.                                                    |
 | `npm run start`     | Sirve lo compilado en `127.0.0.1:3001` (hay que ejecutar `build` antes).    |
+| `npm run verify:build` | Compila sin ninguna variable de configuración y falla si la compilación la necesita. |
 | `npm run lint`      | ESLint y comprobación de formato con Prettier.                              |
 | `npm run format`    | Da formato con Prettier.                                                    |
 | `npm run typecheck` | Comprueba los tipos con TypeScript.                                         |
@@ -1005,7 +1008,10 @@ editar `package.json`.
 - `app/`: rutas y páginas finas, sin lógica (`layout.tsx`, `page.tsx`, `globals.css`).
 - `components/`: componentes de servidor puros que reciben datos por props.
 - `lib/`: funciones puras sin secretos que puede importar cualquiera, incluida `next.config.ts`.
-- `server/`: todo lo que toca secretos, base de datos o Express; nunca llega al navegador.
+- `server/`: todo lo que toca secretos, base de datos o Express; nunca llega al navegador (`server/config/` valida la
+  configuración y `server/logging/` es el registro de errores). Cada archivo empieza con `import 'server-only'`, que
+  hace fallar la compilación si algo del navegador lo importa.
+- `instrumentation.ts`: el gancho de arranque de Next; valida la configuración al iniciar `dev` o `start`.
 - `client/`: reservada para el código que corre en el navegador (aún no existe).
 
 Solo `app/`, `lib/` y `server/` existen hoy; el resto se crea cuando hace falta. Las importaciones son relativas (sin alias `@/`):
@@ -1021,8 +1027,8 @@ con Next obliga a usar _nonces_ por petición (y a renderizar cada página en el
 ### Registros del frontend
 
 El servidor del frontend registra sus errores con un registro propio (`src/server/logging/`). Escribe una línea JSON
-por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Todavía nada lo
-llama: lo usarán la configuración y las rutas en tareas posteriores.
+por evento en la salida de error (`process.stderr`), con `time`, `level` (siempre `error`) y `event`. Hoy lo usa la
+configuración (`config_invalid`); las rutas lo usarán en tareas posteriores.
 
 - **Eventos cerrados.** `config_invalid` (configuración inválida) y `route_failed` (fallo inesperado de una ruta).
 - **Campos cerrados.** Solo estos, en este orden:
@@ -1045,6 +1051,64 @@ llama: lo usarán la configuración y las rutas en tareas posteriores.
   (lista cerrada de campos, sin datos de usuario), pero no importa nada del backend.
 - **Robustez.** Un getter que lanza (en `code`, `name` o `cause`) no hace fallar el registro: esa lectura se omite.
   Lo lanzado que no es un `Error` no se convierte a texto, así que su `toString` nunca se ejecuta.
+
+### Configuración del frontend
+
+El servidor del frontend lee su configuración de su PROPIO archivo `frontend/.env` (plantilla: `frontend/.env.example`;
+se copia con `Copy-Item .env.example .env` dentro de `frontend/`). No usa el `.env` de la raíz. Por qué: el proceso de
+Next solo recibe lo que necesita (ni la contraseña del dueño del esquema ni la de escritura) y no choca con el `PORT` del
+backend. Coste: hay dos archivos `.env` y la `API_KEY` está repetida. Alternativa descartada: un único `.env` en la
+raíz cargado desde las dos aplicaciones. `frontend/.env` está en `.gitignore`; `frontend/.env.example` sí se sube.
+
+| Variable              | Obligatoria | Regla                                                                                       |
+| --------------------- | ----------- | ------------------------------------------------------------------------------------------- |
+| `BACKEND_URL`         | sí          | `http://` o `https://` + host + puerto opcional; sin ruta, consulta, fragmento, barra final ni credenciales. Ejemplo: `http://127.0.0.1:3000`. Se guarda como origen en minúsculas. |
+| `API_KEY`             | sí          | La misma regla que en el backend: 43 a 128 caracteres de `A-Za-z0-9_-`, con al menos 10 distintos. El valor de ejemplo se rechaza. |
+| `READER_DATABASE_URL` | sí          | `postgresql://` o `postgres://`, usuario exactamente `reader` (también tras decodificar `%`), contraseña no vacía, host y nombre de base, sin parámetros de consulta. |
+| `ALLOWED_HOSTS`       | no          | Lista separada por comas de `host` o `host:puerto` en minúsculas, sin espacios ni comodines. Si falta, no se valida el `Host`. Si existe pero está vacía, es inválida. |
+
+- **Una variable obligatoria vacía, con espacios en los extremos o ausente es inválida.** El error nombra TODAS las
+  inválidas a la vez, en un orden fijo, y nunca sus valores. Los nombres son una lista cerrada.
+- **Ninguna lleva el prefijo público de Next.** Así Next nunca las copia a los archivos que descarga el navegador, y una
+  prueba automática lo vigila: ningún archivo del código tiene ese prefijo, y un archivo marcado `'use client'` (y lo que
+  importe, directa o transitivamente) no puede llegar a `src/server`, leer `process.env` ni importar `server-only`.
+- **La `API_KEY` debe ser EXACTAMENTE la del backend.** Se genera una vez (el comando está en `frontend/.env.example`) y
+  se pega en los dos archivos. Si no coincide, el backend rechaza cada petición del frontend y, tras 10 rechazos,
+  bloquea la IP del frontend durante la ventana de tiempo (15 minutos por defecto). Al rotarla, se reinician los dos
+  procesos a la vez.
+- **Contraseñas.** Next expande `$` dentro de los valores del `.env`: use solo `[A-Za-z0-9._~-]` en las contraseñas.
+- **`ALLOWED_HOSTS`.** Pensada para cuando se conozca el nombre público (protege frente a que un nombre ajeno apunte a
+  este servidor): una petición cuyo `Host` no esté en la lista recibirá 403 (llega con las rutas del servidor). Ejemplo:
+  `ALLOWED_HOSTS=localhost:3001,127.0.0.1:3001`.
+
+**Cuándo se valida.** La configuración es PEREZOSA: no se valida al importar el módulo. Se valida en dos momentos y el
+resultado (válido o inválido) queda en memoria:
+
+1. En el primer uso (la primera vez que algo pide la configuración).
+2. Al arrancar el servidor, con el gancho `register()` de `src/instrumentation.ts`. Solo actúa cuando el proceso es el
+   servidor de Node (`NEXT_RUNTIME === 'nodejs'`) y nunca durante `next build`.
+
+| Comando         | Sin `frontend/.env` o con variables inválidas                                                      |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| `npm run build` | Pasa. No valida ni abre ninguna conexión: se puede compilar en CI o en una imagen sin secretos.    |
+| `npm run dev`   | Se detiene con un mensaje que nombra las variables inválidas, sin valores.                         |
+| `npm run start` | Escribe el mismo mensaje y registra `config_invalid` una vez; el proceso sigue vivo pero TODA petición recibe 500 (no sirve nada útil). Hay que pararlo con Ctrl+C y corregir el `.env`. |
+
+Al cambiar `frontend/.env` hay que reiniciar `dev` o `start`: la configuración se lee una sola vez. Plan B: si algún día
+una versión de Next no impidiera servir cuando el gancho lanza, la validación quedaría solo en el primer uso; con la
+versión fijada de Next el gancho sí lo impide, así que ese plan no está activo. En el build de producción el nombre de la
+clase del error (`errorName`) puede salir abreviado por el minificador: el dato fiable del registro es `variables`.
+
+**Comprobar que `build` no necesita configuración:** `npm run verify:build` ejecuta `next build` pisando las cuatro
+variables con cadenas vacías (los valores del entorno mandan sobre el `.env`), de modo que el resultado no depende de que
+exista un `.env` real. Termina con código 0 si la compilación pasa. No va dentro de `npm test` porque tarda y comparte la
+carpeta `.next` con `npm run build`.
+
+**Ejemplos y demostraciones.** El `CORS_ORIGIN` de ejemplo del `.env` de la raíz es `http://localhost:3001` (el origen del
+frontend en desarrollo); si ya tiene un `.env` de la raíz con el valor anterior, cámbielo a mano. Para demostraciones, el
+mismo archivo trae comentados unos cupos más altos (`RATE_LIMIT_MAX=1000` y `RATE_LIMIT_POST_MAX=200`), porque la
+interfaz hace una lectura de la lista tras cada acción y con los cupos por defecto se agotarían pronto. Todos los
+usuarios comparten un único cupo, porque el backend ve siempre la IP del servidor del frontend.
 
 ### Por qué el proyecto se creó a mano
 

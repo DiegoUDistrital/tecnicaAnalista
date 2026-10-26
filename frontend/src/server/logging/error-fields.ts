@@ -1,3 +1,4 @@
+import 'server-only';
 const CLASS_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,59}$/;
 const CODE_PATTERN = /^[A-Z0-9_]{1,40}$/;
 

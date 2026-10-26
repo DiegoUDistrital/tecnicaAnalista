@@ -1,3 +1,4 @@
+import 'server-only';
 import { describeError, errorCode } from './error-fields';
 
 /** Eventos cerrados del registro. Añadir uno exige hacerlo aquí y en su test. */

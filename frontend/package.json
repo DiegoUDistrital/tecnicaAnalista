@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 3001",
     "build": "next build",
+    "verify:build": "node scripts/verify-build.mjs",
     "start": "next start -H 127.0.0.1 -p 3001",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
