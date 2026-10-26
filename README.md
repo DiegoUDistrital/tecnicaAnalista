@@ -1203,7 +1203,7 @@ La lista la pinta un componente de cliente: `client/task-manager.tsx` (la lista 
 acción, así que se pide desde el navegador. Alternativa descartada: pedir también la lista en el servidor (cada cambio
 recargaría la página entera).
 
-En esta versión la pantalla solo muestra la lista. Crear, completar, editar y borrar se añaden en pasos siguientes.
+En esta versión la pantalla muestra la lista y permite crear tareas. Completar, editar y borrar se añaden en pasos siguientes.
 
 **Estados de la lista:**
 
@@ -1213,8 +1213,8 @@ En esta versión la pantalla solo muestra la lista. Crear, completar, editar y b
 - **Vacía**: según el filtro, «Aún no hay tareas…», «No hay tareas completadas.» o «No hay tareas pendientes.». No es un error.
 - **Error**: si la carga falla, aparece un aviso con `role="alert"` y el botón «Reintentar», que repite solo esa petición.
 - **Truncado**: la API devuelve como mucho el tope de la lista (1 000 por defecto, `TASKS_LIST_LIMIT`). Si el total del filtro (de los contadores) es mayor que las
-  tareas recibidas, aparece «Mostrando las N tareas más recientes de M.». No aparece mientras hay una carga en curso
-  ni si los contadores no están disponibles.
+  tareas recibidas, aparece «Mostrando las N tareas más recientes de M.». No aparece mientras hay una carga en curso,
+  mientras Next recalcula los contadores tras una escritura, ni si los contadores no están disponibles.
 
 **El texto siempre se muestra como texto.** React escribe el título y la descripción como texto: un `<b>` o un
 `<img onerror=…>` se ven tal cual y no se ejecutan. Los saltos de línea de la descripción se conservan. El cliente no
@@ -1228,6 +1228,33 @@ locale fijo hace que la salida no dependa del idioma del equipo.
 - **Hace falta JavaScript**: sin él, los filtros y los contadores funcionan, pero la lista no se carga.
 - **Sin paginación ni virtualización**: se muestran todas las tareas recibidas (como mucho 1 000). Con ese número la
   página se pinta entera.
+
+### Crear una tarea
+
+El formulario está encima de la lista (`client/create-form.tsx` y `client/text-field.tsx`), con título y descripción.
+
+- **Validación previa:** antes de enviar se aplican las mismas reglas que en Express: se recortan los espacios de los
+  extremos, el título mide de 1 a 100 caracteres, la descripción hasta 500 y no se admiten el carácter NUL ni los
+  sustitutos sueltos. Los mensajes salen junto al campo («Debe tener entre 1 y 100 caracteres.», «Debe tener como máximo
+  500 caracteres.», «Contiene caracteres no permitidos.») y el foco va al primer campo inválido. Un contador `n/100` y
+  `n/500` cuenta puntos de código sobre el texto recortado; no se usa `maxLength` porque cuenta otra unidad y
+  rechazaría 100 emojis válidos. Es solo una comodidad: Express sigue siendo la autoridad y, si responde 400, sus
+  mensajes se muestran junto al campo (o como mensaje general si el campo es otro).
+- **Si falla:** lo escrito se conserva, el error aparece junto al formulario con `role="alert"` y no hay aviso de
+  éxito. Si el fallo es de red o un 502/504, el mensaje invita a revisar la lista antes de volver a enviar, porque la
+  tarea pudo crearse.
+- **Si sale bien:** el formulario se vacía, el foco vuelve al título y una región accesible anuncia «Tarea creada.».
+- **Sin doble envío:** un guardia síncrono (una marca que se escribe antes de que React repinte) hace que dos clics o dos
+  Enter seguidos envíen una sola petición. El botón se marca con `aria-disabled` en lugar de `disabled` para no perder
+  el foco.
+- **Lista y contadores tras cada escritura:** tras crear se vuelve a pedir la lista (en segundo plano, con el filtro
+  vigente, sin quitarla de la pantalla) y se pide a Next que renderice otra vez el Server Component de los contadores
+  (`router.refresh()`). **Por qué:** son dos caminos de lectura distintos (la lista por Express, los contadores por
+  Prisma) y pueden diferir un instante tras escribir; refrescar ambos lo resuelve. Si se cambia de filtro, el borrador
+  del formulario se conserva.
+- **Sin actualización optimista:** la tarea nueva aparece cuando llega la lista, no antes. **Por qué:** así la pantalla
+  nunca muestra algo que el servidor no confirmó. Alternativa descartada: insertarla al enviar y deshacerlo si falla
+  (más código y estados intermedios que explicar).
 
 ### Rutas del servidor del frontend
 

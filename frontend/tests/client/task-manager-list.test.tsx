@@ -13,6 +13,9 @@ import type { TaskFilter } from '../../src/lib/task-filter';
 import '../helpers/dom-cleanup';
 import { installFakeApi, jsonResponse, makeTask, type FakeApi } from '../helpers/fake-api';
 
+// TaskManager usa `useRouter` (refresco de contadores): fuera de Next hay que simularlo.
+vi.mock('next/navigation', async () => (await import('../helpers/router-mock')).navigationMock);
+
 // El hook es el real salvo en los tests que fijan su estado a mano (refresco fallido y refresco en curso).
 // Hasta T4 ninguna acción pide un refresco en segundo plano, así que esos estados no se alcanzan desde la pantalla.
 vi.mock('../../src/client/use-task-list', async (importOriginal) => {

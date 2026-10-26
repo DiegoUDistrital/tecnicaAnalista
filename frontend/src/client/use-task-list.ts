@@ -50,6 +50,7 @@ export function useTaskList(filter: TaskFilter): TaskList {
       setTasks([]);
       setStatus('loading');
       setLoadError(undefined);
+      setRefreshError(undefined);
     }
     setPending((count) => count + 1);
     const result = await fetchTasks(requested, current.signal);

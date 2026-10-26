@@ -126,6 +126,17 @@ describe('useTaskList', () => {
     expect(result.current.tasks).toEqual(B);
   });
 
+  it('RF-F6: una carga inicial limpia el error de un refresco anterior', async () => {
+    const { api, result, rerender } = setup();
+    await answer(api, 0, jsonResponse(200, A));
+    act(() => result.current.reload('background'));
+    await answer(api, 1, jsonResponse(500, {}));
+    expect(result.current.refreshError).toBe('No se pudo actualizar la lista.');
+    rerender({ filter: 'completed' });
+    expect(result.current.status).toBe('loading');
+    expect(result.current.refreshError).toBeUndefined();
+  });
+
   it('RF-F6: un refresco sin lista previa se comporta como carga inicial', async () => {
     const { api, result } = setup();
     await answer(api, 0, jsonResponse(500, {}));
