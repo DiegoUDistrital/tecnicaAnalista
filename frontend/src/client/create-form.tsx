@@ -1,7 +1,6 @@
 'use client';
 
 import { useRef, useState, type FormEvent } from 'react';
-import { POST_UNCONFIRMED_MESSAGE } from '../lib/api-error';
 import { validateDescription, validateTitle } from '../lib/task-text';
 import { fromInvalid, type FormErrors } from './form-errors';
 import { createTask } from './tasks-api';
@@ -56,7 +55,7 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
     } else if (result.kind === 'invalid') {
       setErrors(fromInvalid(result));
     } else {
-      setErrors({ general: result.kind === 'error' ? result.message : POST_UNCONFIRMED_MESSAGE });
+      setErrors({ general: result.message });
     }
   }
 

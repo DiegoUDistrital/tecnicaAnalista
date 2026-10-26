@@ -10,6 +10,9 @@ export type WriteResult =
   | { kind: 'invalid'; message: string; details: ErrorDetail[] }
   | { kind: 'error'; message: string };
 
+/** Crear nunca da not_found: write() solo lo devuelve para PUT y DELETE (el 404 de POST no entra en esa rama). */
+export type CreateResult = Exclude<WriteResult, { kind: 'not_found' }>;
+
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /** Código HTTP de éxito de cada método: cualquier otro se trata como error. */
@@ -90,8 +93,9 @@ export async function fetchTasks(filter: TaskFilter, signal?: AbortSignal): Prom
     : { kind: 'error', message: NO_CONNECTION_MESSAGE };
 }
 
-export function createTask(body: { title: string; description: string }): Promise<WriteResult> {
-  return write('POST', '/api/tasks', body);
+export function createTask(body: { title: string; description: string }): Promise<CreateResult> {
+  // El cast es seguro: write() no devuelve not_found para POST (ver la guarda `method !== 'POST'` de arriba).
+  return write('POST', '/api/tasks', body) as Promise<CreateResult>;
 }
 
 export function updateTask(id: string, body: { title?: string; description?: string; completed?: boolean }) {
