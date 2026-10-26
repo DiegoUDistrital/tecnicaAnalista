@@ -9,7 +9,7 @@ export type BodyReadResult = { status: 'ok'; bytes: Uint8Array } | { status: 'to
 type ReadStep = ReadableStreamReadResult<Uint8Array> | 'timeout';
 
 /** Une los trozos recibidos en un único `Uint8Array`. */
-function concat(chunks: Uint8Array[], total: number): Uint8Array {
+export function concat(chunks: Uint8Array[], total: number): Uint8Array {
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {

@@ -11,7 +11,7 @@ export type OwnErrorKind =
   | 'timeout'
   | 'internal';
 
-interface Detail {
+export interface Detail {
   field: string;
   message: string;
 }
@@ -23,7 +23,7 @@ interface OwnErrorSpec {
   details: Detail[];
 }
 
-const UNAVAILABLE = 'El servicio no está disponible. Inténtalo más tarde.';
+export const UNAVAILABLE_MESSAGE = 'El servicio no está disponible. Inténtalo más tarde.';
 const NOT_ALLOWED = { status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Operación no permitida.' } as const;
 
 /** Tabla cerrada de RF-F20 («respuestas generadas por el propio servidor»): ningún texto sale de la petición. */
@@ -65,7 +65,7 @@ const OWN_ERRORS: Readonly<Record<OwnErrorKind, OwnErrorSpec>> = {
     message: 'La petición tardó demasiado. Inténtalo de nuevo.',
     details: [],
   },
-  internal: { status: 500, code: 'INTERNAL_ERROR', message: UNAVAILABLE, details: [] },
+  internal: { status: 500, code: 'INTERNAL_ERROR', message: UNAVAILABLE_MESSAGE, details: [] },
 };
 
 /** Toda respuesta de las rutas lleva `no-store`: nada de lo que devuelven se guarda en cachés. */
@@ -86,6 +86,17 @@ export function jsonResponse(status: number, body: unknown, extraHeaders: Record
 
 export function emptyResponse(status: number, extraHeaders: Record<string, string> = {}): Response {
   return new Response(null, { status, headers: headers(extraHeaders) });
+}
+
+/** Error con la forma `{error:{code,message,details}}` para los estados que traduce el mapeo de Express. */
+export function errorResponse(
+  status: number,
+  code: string,
+  message: string,
+  details: Detail[] = [],
+  extraHeaders: Record<string, string> = {},
+): Response {
+  return jsonResponse(status, errorBody(code, message, details), extraHeaders);
 }
 
 export function ownError(kind: OwnErrorKind): Response {
