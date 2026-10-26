@@ -9,6 +9,7 @@ import { registerRoute } from './http/route-table';
 import type { Logger } from './logging/logger';
 import { createTaskRepository } from './repositories/task-repository';
 import { createAuthGuard } from './security/auth-guard';
+import { createSecurityHeaders, noStore } from './security/response-headers';
 import { registerTaskRoutes } from './routes/task-routes';
 import { createTaskService } from './services/task-service';
 
@@ -28,8 +29,9 @@ export interface CreateAppOptions {
  * sin `X-Powered-By` ni ETag (la respuesta no debe depender de cabeceras de la petición) y con
  * comparación estricta de rutas (`/Health` y `/health/` no coinciden con `/health`) y sin intérprete de consulta (la
  * consulta se evalúa cruda: el intérprete descarta claves como `__proto__` y trunca a 1 000 parámetros).
- * Orden: `/health` (la única ruta sin key), guarda de la API key, rutas de `/api/tasks`, rutas de prueba, 404 final y
- * manejador central de errores. La guarda es `app.use` sin ruta: protege TODO lo registrado después, así que una ruta
+ * Orden: cabeceras de `helmet` (toda respuesta), `/health` (la única ruta sin key), `Cache-Control: no-store`,
+ * guarda de la API key, rutas de `/api/tasks`, rutas de prueba, 404 final y manejador central de errores.
+ * La guarda es `app.use` sin ruta: protege TODO lo registrado después, así que una ruta
  * nueva nace protegida y la exención la decide el mismo enrutador que despacha `/health` (sin comparar cadenas).
  */
 export function createApp(options: CreateAppOptions): Express {
@@ -45,7 +47,9 @@ export function createApp(options: CreateAppOptions): Express {
     delete req.headers['if-none-match'];
     next();
   });
+  app.use(createSecurityHeaders());
   registerRoute(app, '/health', { GET: health });
+  app.use(noStore);
   app.use(createAuthGuard(options.security.apiKey));
   registerTaskRoutes(app, createTaskController(createTaskService(createTaskRepository(options.database))));
   options.registerRoutes?.(app);

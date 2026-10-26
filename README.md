@@ -16,6 +16,7 @@ Las versiones se fijan al crear cada proyecto.
 
 - Node.js
 - Express
+- helmet 8.3.0 (cabeceras de seguridad)
 - PostgreSQL
 - Next.js 15+ (App Router)
 - Prisma
@@ -39,8 +40,8 @@ Este PR deja el paquete del backend preparado (TypeScript estricto, ESLint, Pret
 del 95 %) y Prisma configurado para las migraciones. Express ya está instalado y existe la función que construye la aplicación; el servicio se arranca con `npm start`.
 Hay cuatro endpoints, `GET /api/tasks` (lectura), `POST /api/tasks` (creación), `PUT /api/tasks/:id` (actualización) y
 `DELETE /api/tasks/:id` (borrado) (ver «API de tareas»). La API exige API key (ver «Seguridad: API key»); todavía NO
-tiene límite de peticiones, CORS, cabeceras de seguridad ni tope de la lista: no debe exponerse hasta completar la
-seguridad.
+tiene límite de peticiones, CORS ni tope de la lista: no debe exponerse hasta completar la seguridad. Las respuestas
+llevan cabeceras de seguridad de `helmet` y `Cache-Control: no-store` (ver «Seguridad: cabeceras»).
 
 Comandos disponibles (dentro de `backend/`):
 
@@ -148,6 +149,29 @@ texto es idéntico para todas las causas, para no dar pistas a quien prueba clav
   aparece en los logs ni en las respuestas.
 - **Comparación.** Se compara el resumen SHA-256 de la key recibida con el de la configurada, ambos de 32 bytes, con
   `crypto.timingSafeEqual`: ninguna longitud distinta lanza error y el tiempo no depende del contenido.
+
+## Seguridad: cabeceras
+
+Toda respuesta de la aplicación (también `/health`, los `204` y los errores `401`, `404`, `405`, `413`, `415` y `500`)
+lleva las cabeceras de [`helmet`](https://helmetjs.github.io/) 8.3.0 con sus valores por defecto:
+`Content-Security-Policy` (`default-src 'self'`, `frame-ancestors 'self'`, `object-src 'none'`, entre otras),
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
+`Cross-Origin-Resource-Policy: same-origin`, `Cross-Origin-Opener-Policy: same-origin`, `Origin-Agent-Cluster`,
+`Strict-Transport-Security`, `X-DNS-Prefetch-Control: off`, `X-Download-Options: noopen`,
+`X-Permitted-Cross-Domain-Policies: none` y `X-XSS-Protection: 0`. `X-Powered-By` no se envía.
+
+- **Por qué valores por defecto.** Son suficientes para una API que solo devuelve JSON y son fáciles de explicar.
+  Alternativa descartada: ajustar cada política una a una, que obliga a justificar cada valor y arriesga romper algo
+  sin beneficio.
+- **`Cache-Control: no-store`.** Lo llevan todas las respuestas salvo `/health`, incluido el `401`: los datos son por
+  usuario y no deben guardarse en cachés del navegador ni intermedias. `/health` no es una ruta de la API y no devuelve
+  datos, por eso queda fuera.
+- **HSTS sin efecto en HTTP simple.** `Strict-Transport-Security` solo lo aplican los navegadores sobre HTTPS; con HTTP
+  simple se ignora. Se deja porque es el valor por defecto y no perjudica.
+- **`Cross-Origin-Resource-Policy: same-origin`.** Impide que otro origen incruste las respuestas en modo `no-cors`;
+  esta API no está pensada para incrustarse, y el frontend la llama desde su servidor.
+- **Limitación.** Las respuestas que Node genera antes de que la petición llegue a Express (por ejemplo `431` por
+  cabeceras demasiado grandes o una petición mal formada) no pasan por la aplicación y no llevan estas cabeceras.
 
 ## Contrato de errores
 
