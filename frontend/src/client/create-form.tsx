@@ -3,6 +3,8 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { validateDescription, validateTitle } from '../lib/task-text';
 import { fromInvalid, type FormErrors } from './form-errors';
+import { BTN_PRIMARY } from '../lib/ui-classes';
+import { PlusIcon } from './icons';
 import { createTask } from './tasks-api';
 import { TextField } from './text-field';
 
@@ -89,11 +91,8 @@ export function CreateForm({ onStart, onCreated }: CreateFormProps) {
           descriptionField.current = element;
         }}
       />
-      <button
-        type="submit"
-        aria-disabled={busy}
-        className="min-h-11 min-w-11 self-start rounded border px-4 py-2 aria-disabled:opacity-60"
-      >
+      <button type="submit" aria-disabled={busy} className={`${BTN_PRIMARY} self-start`}>
+        <PlusIcon />
         Crear tarea
       </button>
       {errors.general === undefined ? null : (

@@ -6,7 +6,7 @@ export const metadata = { title: 'To-Do App' };
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body className="bg-slate-50 text-slate-900">{children}</body>
     </html>
   );
 }

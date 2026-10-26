@@ -3,6 +3,8 @@
 import type { FormEvent, KeyboardEvent } from 'react';
 import type { Task } from '../lib/task';
 import type { Editing } from '../lib/task-ui-state';
+import { BTN_PRIMARY, BTN_SECONDARY } from '../lib/ui-classes';
+import { PlusIcon, XIcon } from './icons';
 import { TextField } from './text-field';
 
 export type EditableField = 'title' | 'description';
@@ -64,19 +66,13 @@ export function EditForm({ task, draft, busy, actions }: EditFormProps) {
         multiline
         inputRef={(element) => actions.registerField(task.id, 'description', element)}
       />
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          aria-disabled={busy}
-          className="min-h-11 min-w-11 rounded border px-4 py-2 aria-disabled:opacity-60"
-        >
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" aria-disabled={busy} className={BTN_PRIMARY}>
+          <PlusIcon />
           Guardar
         </button>
-        <button
-          type="button"
-          onClick={() => actions.cancel(task.id)}
-          className="min-h-11 min-w-11 rounded border px-4 py-2"
-        >
+        <button type="button" onClick={() => actions.cancel(task.id)} className={BTN_SECONDARY}>
+          <XIcon />
           Cancelar
         </button>
       </div>

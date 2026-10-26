@@ -4,7 +4,9 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useReducer, useRef, useTransition } from 'react';
 import type { TaskFilter } from '../lib/task-filter';
 import { initialUiState, uiReducer } from '../lib/task-ui-state';
+import { BTN_SECONDARY } from '../lib/ui-classes';
 import { CreateForm } from './create-form';
+import { RetryIcon } from './icons';
 import { TaskCard } from './task-card';
 import { useTaskActions } from './use-task-actions';
 import { useTaskList } from './use-task-list';
@@ -90,11 +92,8 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
         {status === 'error' ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{loadError}</p>
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border px-3 py-1"
-              onClick={() => reload('initial')}
-            >
+            <button type="button" className={BTN_SECONDARY} onClick={() => reload('initial')}>
+              <RetryIcon />
               Reintentar
             </button>
           </div>
@@ -102,11 +101,8 @@ export function TaskManager({ filter, total }: { filter: TaskFilter; total: numb
         {status === 'ready' && refreshError !== undefined ? (
           <div role="alert" className={ALERT_CLASS}>
             <p>{refreshError}</p>
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border px-3 py-1"
-              onClick={() => reload('background')}
-            >
+            <button type="button" className={BTN_SECONDARY} onClick={() => reload('background')}>
+              <RetryIcon />
               Reintentar
             </button>
           </div>

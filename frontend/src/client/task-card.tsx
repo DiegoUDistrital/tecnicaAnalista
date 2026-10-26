@@ -2,7 +2,9 @@ import { memo } from 'react';
 import type { Task } from '../lib/task';
 import { formatCreatedAt } from '../lib/task-date';
 import type { Editing } from '../lib/task-ui-state';
+import { BTN_DANGER, BTN_SECONDARY } from '../lib/ui-classes';
 import { EditForm, type EditActions } from './edit-form';
+import { CheckIcon, PencilIcon, TrashIcon } from './icons';
 
 interface TaskCardProps {
   task: Task;
@@ -52,32 +54,32 @@ export const TaskCard = memo(function TaskCard({
       </p>
       <p className="text-sm">{task.completed ? 'Completada' : 'Pendiente'}</p>
       {/* Nombre accesible fijo (no cambia con el estado); `aria-pressed` dice si está completada. */}
-      <button
-        type="button"
-        aria-pressed={task.completed}
-        aria-disabled={busy}
-        ref={(element) => registerToggle?.(task.id, element)}
-        onClick={() => onToggle?.(task)}
-        className="mt-2 min-h-11 min-w-11 rounded border px-3 py-1 text-left aria-disabled:opacity-60"
-      >
-        {`Marcar «${task.title}» como completada`}
-      </button>
-      <button
-        type="button"
-        ref={(element) => editActions?.registerButton(task.id, element)}
-        onClick={() => editActions?.open(task)}
-        className="mt-2 ml-2 min-h-11 min-w-11 rounded border px-3 py-1"
-      >
-        {`Editar «${task.title}»`}
-      </button>
-      <button
-        type="button"
-        aria-disabled={busy}
-        onClick={() => onDelete?.(task)}
-        className="mt-2 ml-2 min-h-11 min-w-11 rounded border px-3 py-1 aria-disabled:opacity-60"
-      >
-        {`Eliminar «${task.title}»`}
-      </button>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          aria-pressed={task.completed}
+          aria-disabled={busy}
+          ref={(element) => registerToggle?.(task.id, element)}
+          onClick={() => onToggle?.(task)}
+          className={`${BTN_SECONDARY} text-left`}
+        >
+          <CheckIcon />
+          {`Marcar «${task.title}» como completada`}
+        </button>
+        <button
+          type="button"
+          ref={(element) => editActions?.registerButton(task.id, element)}
+          onClick={() => editActions?.open(task)}
+          className={BTN_SECONDARY}
+        >
+          <PencilIcon />
+          {`Editar «${task.title}»`}
+        </button>
+        <button type="button" aria-disabled={busy} onClick={() => onDelete?.(task)} className={BTN_DANGER}>
+          <TrashIcon />
+          {`Eliminar «${task.title}»`}
+        </button>
+      </div>
       {error === undefined ? null : (
         <p role="alert" className="mt-2 text-sm text-red-700">
           {error}
