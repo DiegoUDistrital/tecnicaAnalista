@@ -58,14 +58,13 @@ describe('RF-S12: GET /health', () => {
 
       expect(res.status).toBe(405);
       expect(res.headers['allow']).toBe('GET');
+      if (method !== 'head') {
+        expect(res.body).toEqual({
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Método no permitido.', details: [] },
+        });
+      }
     },
   );
-
-  it('RF-S12: no consulta la BD (la app se construye sin dependencias de BD y responde 200)', async () => {
-    const res = await request(build().app).get('/health');
-
-    expect(res.status).toBe(200);
-  });
 
   it('RF-S11: GET /health (200) y GET /nada (404) no escriben ninguna línea en el log', async () => {
     const { app, lines } = build();

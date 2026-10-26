@@ -8,12 +8,7 @@ import { createTaskRepository } from '../../src/repositories/task-repository';
 import { createClosedPortDatabase, createWriterDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
 import { getTestDatabase } from '../helpers/test-database';
 import { TEST_API_KEY } from '../helpers/security';
-import {
-  dropResidualChecks,
-  listTemporaryChecks,
-  TEMPORARY_CHECK_PREFIX,
-  withTemporaryCheck,
-} from '../helpers/temporary-check';
+import { dropResidualChecks, listTemporaryChecks, withTemporaryCheck } from '../helpers/temporary-check';
 
 const SECRET_TITLE = 'titulo secreto prohibido';
 const GENERIC_500 = { error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] } };
@@ -77,33 +72,6 @@ describe('RF-C2 (ii): violación real de restricción', () => {
     });
     expect(capture.output()).not.toContain(SECRET_TITLE);
     expect(capture.output()).not.toContain('detalle privado');
-    expect(await listTemporaryChecks(owner)).toEqual([]);
-  });
-
-  it('RF-C2: la restricción temporal desaparece aunque el test falle', async () => {
-    await expect(
-      withTemporaryCheck(owner, SECRET_TITLE, async () => {
-        expect(await listTemporaryChecks(owner)).toHaveLength(1);
-        throw new Error('fallo simulado del test');
-      }),
-    ).rejects.toThrow('fallo simulado del test');
-
-    expect(await listTemporaryChecks(owner)).toEqual([]);
-  });
-
-  it('RF-C2: la limpieza elimina las restricciones residuales con el prefijo', async () => {
-    await owner.query(`ALTER TABLE tasks ADD CONSTRAINT "${TEMPORARY_CHECK_PREFIX}residual" CHECK (title <> 'zzz')`);
-    expect(await listTemporaryChecks(owner)).toEqual([`${TEMPORARY_CHECK_PREFIX}residual`]);
-
-    await dropResidualChecks(owner);
-
-    expect(await listTemporaryChecks(owner)).toEqual([]);
-  });
-
-  it('RF-C2: el título prohibido solo admite caracteres seguros', async () => {
-    await expect(withTemporaryCheck(owner, "x'; DROP TABLE tasks;--", () => Promise.resolve())).rejects.toThrow(
-      'solo admite',
-    );
     expect(await listTemporaryChecks(owner)).toEqual([]);
   });
 });

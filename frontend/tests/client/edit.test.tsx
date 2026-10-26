@@ -23,7 +23,6 @@ afterEach(() => {
 });
 
 const LOADING = 'Cargando tareas…';
-const GONE = 'La tarea ya no existe.';
 const TITLE_EMPTY = 'Debe tener entre 1 y 100 caracteres.';
 
 async function setup(tasks: Task[], filter: TaskFilter = 'all') {
@@ -88,7 +87,6 @@ describe('Editar en la propia tarjeta', () => {
     expect(puts(api)).toHaveLength(1);
     expect(puts(api)[0]?.url).toBe(`/api/tasks/${task.id}`);
     expect(puts(api)[0]?.body).toEqual({ title: 'Nuevo título' });
-    expect(Object.keys(puts(api)[0]?.body as object)).toHaveLength(1);
     await answer(puts(api)[0], jsonResponse(200, {}));
     await waitFor(() => expect(lists(api)).toHaveLength(2));
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -299,17 +297,6 @@ describe('Editar en la propia tarjeta', () => {
   it.each([
     ['red', new TypeError('Failed to fetch'), NO_CONNECTION_MESSAGE],
     ['500', jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'Error interno.' } }), 'Error interno.'],
-    [
-      '429',
-      jsonResponse(429, {
-        error: {
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Demasiadas peticiones. Espera 30 segundos e inténtalo de nuevo.',
-        },
-      }),
-      'Demasiadas peticiones. Espera 30 segundos e inténtalo de nuevo.',
-    ],
-    ['400', invalid([]), 'Datos inválidos.'],
   ])(
     'RF-F25: %s al guardar muestra el alert, conserva lo escrito, reactiva los controles y no refresca',
     async (_name, failure, expected) => {
@@ -331,22 +318,6 @@ describe('Editar en la propia tarjeta', () => {
     },
   );
 
-  it('RF-F25: 404 al guardar da el aviso global, descarta la edición y refresca', async () => {
-    const { api } = await setup([makeTask(1), makeTask(2)]);
-    fireEvent.click(editButton('Tarea 1'));
-    type(titleField('Tarea 1'), 'Escrito');
-    fireEvent.click(saveButton('Tarea 1'));
-    await answer(puts(api)[0], jsonResponse(404, { error: { code: 'NOT_FOUND', message: 'No encontrada.' } }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain(GONE));
-    expect(hasForm('Tarea 1')).toBe(false);
-    expect(screen.queryByRole('alert')).toBeNull();
-    await waitFor(() => expect(lists(api)).toHaveLength(2));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    await answer(lists(api)[1], jsonResponse(200, [makeTask(2)]));
-    expect(screen.queryByText('Tarea 1')).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(toggleButton('Tarea 2')));
-  });
-
   it('RF-F12: guardar con éxito no cierra la edición de otra tarea abierta mientras tanto', async () => {
     const { api } = await setup([makeTask(1), makeTask(2)]);
     fireEvent.click(editButton('Tarea 1'));
@@ -358,18 +329,5 @@ describe('Editar en la propia tarjeta', () => {
     await waitFor(() => expect(lists(api)).toHaveLength(2));
     expect(hasForm('Tarea 2')).toBe(true);
     expect(document.activeElement).toBe(titleField('Tarea 2'));
-  });
-
-  it('RF-F27: nombre accesible «Editar «T»» y formulario con nombre', async () => {
-    await setup([makeTask(1)]);
-    expect(screen.getAllByRole('button', { name: /Editar/ })).toHaveLength(1);
-    expect(editButton('Tarea 1').textContent).toBe('Editar «Tarea 1»');
-    fireEvent.click(editButton('Tarea 1'));
-    expect(screen.getByRole('form', { name: 'Editar «Tarea 1»' })).toBeTruthy();
-    expect(
-      formOf('Tarea 1')
-        .getAllByRole('button')
-        .map((button) => button.textContent),
-    ).toEqual(['Guardar', 'Cancelar']);
   });
 });

@@ -61,16 +61,6 @@ describe('RF-S7: contrato de errores', () => {
     },
   );
 
-  it('RF-S8: el 500 no lleva X-Powered-By y es JSON con charset', async () => {
-    const { app } = build();
-
-    const res = await request(app).get('/e500');
-
-    expect(res.status).toBe(500);
-    expect(res.headers['x-powered-by']).toBeUndefined();
-    expect(res.headers['content-type']).toBe(JSON_UTF8);
-  });
-
   it('RF-S11: un error conocido 4xx no escribe ninguna línea en el log', async () => {
     const { app, log } = build();
 

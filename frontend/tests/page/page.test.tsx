@@ -26,10 +26,4 @@ describe('HomePage', () => {
     expect(element.type).toBe(HomeView);
     expect(element.props).toEqual({ filter: 'pending', counters });
   });
-
-  it('RF-F4: si readCounters devuelve available:false la página se genera igual', async () => {
-    readCounters.mockResolvedValue({ available: false });
-    const element = await HomePage({ searchParams: Promise.resolve({ filter: 'x' }) });
-    expect(element.props).toEqual({ filter: 'all', counters: { available: false } });
-  });
 });

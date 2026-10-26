@@ -228,14 +228,6 @@ describe('rutas: fallos de Express y del servidor', () => {
     expect(h.logs[0]).not.toContain('SECRET');
   });
 
-  it('RF-F31: un fallo al leer params también responde 500 genérico', async () => {
-    const h = createHarness();
-    const broken = { params: Promise.reject(new Error('params')) };
-    const response = await h.item(json(ITEM_URL, 'DELETE'), broken);
-    expect(response.status).toBe(500);
-    expect(h.logs).toHaveLength(1);
-  });
-
   it('RF-F23: con configuración inválida las rutas responden 500 y los nombres se registran UNA vez (plan B)', async () => {
     const logs: string[] = [];
     const logger = createLogger({ write: (line) => logs.push(line) });

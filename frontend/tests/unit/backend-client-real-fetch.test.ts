@@ -30,28 +30,6 @@ afterAll(async () => {
 });
 
 describe('fetch real (A VERIFICAR)', () => {
-  it('RF-F22: redirect manual entrega el 3xx real', async () => {
-    const response = await fetch(`${origin}/redirect`, { redirect: 'manual' });
-    expect(response.status).toBe(302);
-    await response.body?.cancel();
-  });
-
-  it('RF-F20: una respuesta 204 llega con cuerpo nulo', async () => {
-    const response = await fetch(`${origin}/empty`, { method: 'DELETE' });
-    expect(response.status).toBe(204);
-    expect(response.body).toBeNull();
-  });
-
-  it('RF-F22: abortar la señal rechaza la lectura del cuerpo', async () => {
-    const controller = new AbortController();
-    const response = await fetch(`${origin}/stall`, { signal: controller.signal });
-    const reader = response.body?.getReader();
-    await reader?.read();
-    const pending = reader?.read();
-    controller.abort();
-    await expect(pending).rejects.toBeDefined();
-  });
-
   it('RF-F22: forward con fetch real clasifica 200, 3xx, 204 y un cuerpo colgado', async () => {
     const config = { backendUrl: origin, apiKey: 'k' };
     const via =

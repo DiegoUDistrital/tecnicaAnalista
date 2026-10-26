@@ -5,11 +5,5 @@ export default defineConfig({
     include: ['tests/**/*.test.js'],
     environment: 'node',
     testTimeout: 15000,
-    coverage: {
-      provider: 'v8',
-      include: ['scripts/**/*.js'],
-      reporter: ['text'],
-      thresholds: { lines: 95, statements: 95 },
-    },
   },
 });

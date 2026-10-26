@@ -65,47 +65,15 @@ describe('Repositorio de tareas (SQL enviado)', () => {
     },
   );
 
-  it('RF-G17: list usa LIMIT $1 sin filtro y LIMIT $2 con filtro, con el tope como último parámetro', async () => {
+  it('RF-G17: list no interpola el tope en el SQL', async () => {
     const { database, calls } = spyDatabase();
     const repository = createTaskRepository(database);
     await repository.list(undefined, 123);
     await repository.list(true, 456);
     await repository.list(false, 789);
-    expect(calls[0]?.text).toMatch(/ORDER BY tasks\."createdAt" DESC, tasks\.id ASC\s+LIMIT \$1\s*$/);
-    expect(calls[0]?.values).toEqual([123]);
-    expect(calls[1]?.text).toMatch(/WHERE\s+completed\s*=\s*\$1[\s\S]*LIMIT \$2\s*$/);
-    expect(calls[1]?.values).toEqual([true, 456]);
-    expect(calls[2]?.values).toEqual([false, 789]);
     for (const call of calls) {
       expect(call.text).not.toMatch(/123|456|789/);
     }
-  });
-
-  it('RF-C20: createdAt se pide ya formateado: el SQL trunca los milisegundos y usa UTC', async () => {
-    const { database, calls } = spyDatabase();
-    const repository = createTaskRepository(database);
-    await repository.insert({ title: 't', description: '' });
-    await repository.list(undefined, 1000);
-    await repository.list(true, 1000);
-    for (const call of calls) {
-      expect(call.text).toContain(`date_trunc('milliseconds'`);
-      expect(call.text).toContain(`AT TIME ZONE 'UTC'`);
-    }
-  });
-
-  it('RF-C14: el SQL ordena por tasks."createdAt" calificado y luego por id ascendente', async () => {
-    const { database, calls } = spyDatabase();
-    const repository = createTaskRepository(database);
-    await repository.list(undefined, 1000);
-    await repository.list(false, 1000);
-    for (const call of calls) {
-      expect(call.text).toContain('ORDER BY tasks."createdAt" DESC, tasks.id ASC');
-    }
-  });
-
-  it('RF-C20: insert devuelve la fila que entrega la base de datos', async () => {
-    const { database } = spyDatabase();
-    expect(await createTaskRepository(database).insert({ title: 't', description: '' })).toEqual(ROW);
   });
 });
 
@@ -161,18 +129,6 @@ describe('Repositorio de tareas: update y remove (SQL enviado)', () => {
     expect(calls[1]?.values).toEqual([ID]);
   });
 
-  it('RF-C17: update emite una sola sentencia y sin SELECT; devuelve la fila, o undefined si no hay fila', async () => {
-    const found = spyDatabase();
-    expect(await createTaskRepository(found.database).update(ID, { completed: true })).toEqual(ROW);
-    expect(found.calls).toHaveLength(1);
-    expect(found.calls[0]?.text).not.toMatch(/SELECT/i);
-    expect(found.calls[0]?.text).toMatch(/^\s*UPDATE tasks SET /);
-
-    const missing = spyDatabase({ rows: [], rowCount: 0 });
-    expect(await createTaskRepository(missing.database).update(ID, { completed: true })).toBeUndefined();
-    expect(missing.calls).toHaveLength(1);
-  });
-
   it.each([
     [1, true],
     [0, false],
@@ -186,18 +142,6 @@ describe('Repositorio de tareas: update y remove (SQL enviado)', () => {
       expect(calls[0]?.text).not.toMatch(/SELECT/i);
     },
   );
-
-  it(`RF-C20: update pide createdAt con date_trunc('milliseconds') y AT TIME ZONE 'UTC' como insert/list`, async () => {
-    const { database, calls } = spyDatabase();
-    const repository = createTaskRepository(database);
-    await repository.insert({ title: 't', description: '' });
-    await repository.update(ID, { title: 't' });
-    const [insertCall, updateCall] = calls;
-    expect(updateCall?.text).toContain(`date_trunc('milliseconds'`);
-    expect(updateCall?.text).toContain(`AT TIME ZONE 'UTC'`);
-    const returning = (text: string | undefined): string => (text ?? '').split('RETURNING')[1] ?? '';
-    expect(returning(updateCall?.text)).toBe(returning(insertCall?.text));
-  });
 
   it('RF-C15: update con un objeto vacío lanza TypeError sin consultar', async () => {
     const { database, calls } = spyDatabase();

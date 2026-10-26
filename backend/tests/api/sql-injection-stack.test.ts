@@ -7,6 +7,7 @@ import { getTestDatabase, truncateTasks } from '../helpers/test-database';
 // Pila completa (Express, validación, repositorio y PostgreSQL real) con la key válida que inyecta el ayudante.
 // Caracterización de la 005: estas pruebas nacen en verde; su fuerza está en las mutaciones de control.
 const INJECTED_TITLE = "'); DROP TABLE tasks;--";
+const INJECTED_DESCRIPTION = "x'; DELETE FROM tasks;--";
 const HOSTILE_ID = "' OR 1=1";
 const HOSTILE_COMPLETED = "true' OR '1'='1";
 const UUID = '3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f';
@@ -47,10 +48,12 @@ describe('RF-G19: inyección SQL con la pila completa y key válida', () => {
   it("RF-G19: título '); DROP TABLE tasks;-- se guarda literal (201) y la tabla queda intacta", async () => {
     await seed('existente');
 
-    const created = await request(api.app).post('/api/tasks').send({ title: INJECTED_TITLE });
+    const created = await request(api.app)
+      .post('/api/tasks')
+      .send({ title: INJECTED_TITLE, description: INJECTED_DESCRIPTION });
 
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ title: INJECTED_TITLE });
+    expect(created.body).toMatchObject({ title: INJECTED_TITLE, description: INJECTED_DESCRIPTION });
     expect(await tableExists()).toBe(true);
     expect(await storedTitles()).toHaveLength(2);
     expect(await storedTitles()).toContain('existente');

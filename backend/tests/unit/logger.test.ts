@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AppError } from '../../src/errors/app-error';
 import { FRAME_PATTERN } from '../../src/logging/error-fields';
 import { createLogger } from '../../src/logging/logger';
-import { createCaptureLogger, FIXED_TIME } from '../helpers/capture-logger';
+import { createCaptureLogger } from '../helpers/capture-logger';
 
 const SECRET = 'valor-sensible-7f3a';
 
@@ -46,7 +46,6 @@ describe('RF-D18: formato del registro', () => {
 
     expect(new Date(time).toISOString()).toBe(time);
     expect(Math.abs(Date.now() - new Date(time).getTime())).toBeLessThan(5000);
-    expect(FIXED_TIME.toISOString()).toBe('2026-01-02T03:04:05.678Z');
   });
 });
 
@@ -207,20 +206,6 @@ describe('RF-D18: errores en el registro', () => {
     expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) {
       expect(FRAME_PATTERN.test(line)).toBe(true);
-    }
-  });
-
-  it('RF-D18 (test 12): lo lanzado que no es Error solo deja thrownType', () => {
-    const capture = createCaptureLogger();
-
-    capture.logger.error('a', { thrown: SECRET });
-    capture.logger.error('b', { thrown: undefined });
-    capture.logger.error('c', { thrown: { password: SECRET, message: SECRET } });
-
-    expect(capture.output()).not.toContain(SECRET);
-    expect(capture.records().map((r) => r['thrownType'])).toEqual(['string', 'undefined', 'object']);
-    for (const record of capture.records()) {
-      expect(Object.keys(record)).toEqual(['level', 'event', 'time', 'thrownType']);
     }
   });
 

@@ -45,25 +45,15 @@ async function titles(completed: boolean | undefined, limit: number): Promise<st
 }
 
 describe('RF-G17: tope de filas de la lista (PostgreSQL real)', () => {
-  it('RF-G17: tope 3 con 5 tareas devuelve las 3 más recientes en orden', async () => {
-    await seed(5);
-    expect(await titles(undefined, 3)).toEqual(['t5', 't4', 't3']);
-  });
-
-  it('RF-G17: tope exacto devuelve todas y tope+1 omite la más antigua', async () => {
-    await seed(5);
-    expect(await titles(undefined, 5)).toEqual(['t5', 't4', 't3', 't2', 't1']);
-    expect(await titles(undefined, 4)).toEqual(['t5', 't4', 't3', 't2']);
-  });
-
-  it('RF-G17: un tope mayor que el total devuelve todas', async () => {
-    await seed(2);
-    expect(await titles(undefined, 1000)).toEqual(['t2', 't1']);
-  });
-
-  it('RF-G17: tope 1 devuelve solo la más reciente', async () => {
-    await seed(3);
-    expect(await titles(undefined, 1)).toEqual(['t3']);
+  it.each([
+    [5, 3, ['t5', 't4', 't3']],
+    [5, 5, ['t5', 't4', 't3', 't2', 't1']],
+    [5, 4, ['t5', 't4', 't3', 't2']],
+    [2, 1000, ['t2', 't1']],
+    [3, 1, ['t3']],
+  ])('RF-G17: con %i tareas y tope %i devuelve las más recientes en orden', async (total, limit, expected) => {
+    await seed(total);
+    expect(await titles(undefined, limit)).toEqual(expected);
   });
 
   it('RF-G17: con el mismo createdAt el empate se resuelve por id ascendente antes de cortar', async () => {

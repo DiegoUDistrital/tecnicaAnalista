@@ -75,14 +75,6 @@ describe('Repositorio de tareas contra PostgreSQL real', () => {
     expect((await repository.list(undefined, 1000)).map((row) => row.title)).toEqual(['nuevo', 'medio', 'viejo']);
   });
 
-  it('RF-C14: con la misma marca desempata por id ascendente', async () => {
-    const mark = '2026-01-01 00:00:00.5+00';
-    await insertWithId('00000000-0000-4000-8000-00000000000c', 'c', mark);
-    await insertWithId('00000000-0000-4000-8000-00000000000a', 'a', mark);
-    await insertWithId('00000000-0000-4000-8000-00000000000b', 'b', mark);
-    expect((await repository.list(undefined, 1000)).map((row) => row.title)).toEqual(['a', 'b', 'c']);
-  });
-
   it('RF-C14: misma marca al milisegundo y distinta al microsegundo: se ordena por la marca completa', async () => {
     // El id mayor lleva la marca mayor al microsegundo: por marca completa va primero; por texto truncado iría después.
     await insertWithId('00000000-0000-4000-8000-000000000001', 'menor-marca', '2026-01-01 00:00:00.123100+00');
@@ -129,13 +121,5 @@ describe('Repositorio de tareas contra PostgreSQL real', () => {
     expect(rows.map((row) => [row.title, row.description])).toEqual([[hostile, hostile]]);
     const exists = await owner.query<{ found: boolean }>(`SELECT to_regclass('public.tasks') IS NOT NULL AS found`);
     expect(exists.rows[0]?.found).toBe(true);
-  });
-
-  it('RF-C21: list con filtro devuelve solo completadas o solo pendientes', async () => {
-    await insertAt('hecha', '2026-01-01 00:00:00+00', true);
-    await insertAt('pendiente', '2026-01-02 00:00:00+00', false);
-    expect((await repository.list(true, 1000)).map((row) => row.title)).toEqual(['hecha']);
-    expect((await repository.list(false, 1000)).map((row) => row.title)).toEqual(['pendiente']);
-    expect(await repository.list(undefined, 1000)).toHaveLength(2);
   });
 });

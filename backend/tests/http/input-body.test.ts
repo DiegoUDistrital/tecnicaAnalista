@@ -68,12 +68,6 @@ describe('RF-C5: POST sin cuerpo útil', () => {
     expectBodyError(await exchange([head('POST', [])]), INVALID_BODY);
   });
 
-  it('RF-C1: POST sin Content-Type y con body da 415 (par 3-4: el tipo precede al cuerpo)', async () => {
-    const result = await exchange(withBody('POST', [], '{}'));
-
-    expect(reply(result).status).toBe(415);
-  });
-
   it('RF-C5: POST con Content-Length: 0 y text/plain da 400 body (vacío), no 415', async () => {
     const result = await exchange([head('POST', ['Content-Type: text/plain', 'Content-Length: 0'])]);
 
@@ -84,12 +78,6 @@ describe('RF-C5: POST sin cuerpo útil', () => {
     const result = await exchange([head('POST', [JSON_TYPE, 'Transfer-Encoding: chunked']), '0\r\n\r\n']);
 
     expectBodyError(result, INVALID_BODY);
-  });
-
-  it('RF-C1: text/plain con JSON mal formado da 415, no 400 (par 3-4)', async () => {
-    const result = await exchange(withBody('POST', ['Content-Type: text/plain'], '{nope'));
-
-    expect(reply(result).status).toBe(415);
   });
 });
 

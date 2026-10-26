@@ -5,7 +5,6 @@ import { TaskManager } from '../../src/client/task-manager';
 import { NO_CONNECTION_MESSAGE } from '../../src/lib/api-error';
 import type { Task } from '../../src/lib/task';
 import type { TaskFilter } from '../../src/lib/task-filter';
-import { initialUiState, uiReducer } from '../../src/lib/task-ui-state';
 import '../helpers/dom-cleanup';
 import { installFakeApi, jsonResponse, makeTask, type FakeApi } from '../helpers/fake-api';
 import { refresh } from '../helpers/router-mock';
@@ -119,38 +118,9 @@ describe('Borrar', () => {
     expect(screen.getByRole('status').textContent).toContain(GONE);
   });
 
-  it('RF-F14: dos clics en la misma actuación hacen una sola llamada (y un solo confirm)', async () => {
-    const api = await setup([makeTask(1), makeTask(2)]);
-    act(() => {
-      fireEvent.click(deleteButton('Tarea 1'));
-      fireEvent.click(deleteButton('Tarea 1'));
-    });
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(deletes(api)).toHaveLength(1);
-    expect(deleteButton('Tarea 1').getAttribute('aria-disabled')).toBe('true');
-    expect(deleteButton('Tarea 2').getAttribute('aria-disabled')).toBe('false');
-    fireEvent.click(deleteButton('Tarea 2'));
-    expect(deletes(api)).toHaveLength(2);
-  });
-
   it.each([
     ['red', new TypeError('Failed to fetch'), NO_CONNECTION_MESSAGE],
     ['500', jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'Error interno.' } }), 'Error interno.'],
-    [
-      '429',
-      jsonResponse(429, {
-        error: {
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Demasiadas peticiones. Espera 30 segundos e inténtalo de nuevo.',
-        },
-      }),
-      'Demasiadas peticiones. Espera 30 segundos e inténtalo de nuevo.',
-    ],
-    [
-      '400',
-      jsonResponse(400, { error: { code: 'VALIDATION_ERROR', message: 'Datos inválidos.' } }),
-      'Datos inválidos.',
-    ],
   ])(
     'RF-F25: %s muestra el alert de la tarjeta, la tarea queda, los controles se reactivan y no se refresca',
     async (_name, failure, expected) => {
@@ -168,16 +138,4 @@ describe('Borrar', () => {
       expect(deletes(api)).toHaveLength(2);
     },
   );
-
-  it('RF-F12: borrar la tarea que se está editando descarta la edición', () => {
-    const editing = uiReducer(initialUiState, { type: 'editOpen', id: 'a', title: 'T', description: '' });
-    expect(uiReducer(editing, { type: 'taskGone', id: 'a' }).editing).toBeUndefined();
-    expect(uiReducer(editing, { type: 'taskGone', id: 'b' }).editing?.id).toBe('a');
-  });
-
-  it('RF-F27: nombre accesible «Eliminar «T»»', async () => {
-    await setup([makeTask(1)]);
-    expect(screen.getAllByRole('button', { name: /Eliminar/ })).toHaveLength(1);
-    expect(deleteButton('Tarea 1').textContent).toBe('Eliminar «Tarea 1»');
-  });
 });

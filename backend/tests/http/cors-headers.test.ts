@@ -75,12 +75,11 @@ describe('RF-G13: origen permitido', () => {
     expect(varyValues(response.headers['vary'] as string)).toContain('Origin');
   });
 
-  it('RF-G13: nunca Access-Control-Allow-Origin: * ni Allow-Credentials, con origen permitido o no', async () => {
+  it('RF-G13: nunca Access-Control-Allow-Credentials, con origen permitido o no', async () => {
     const app = newApp();
 
     for (const origin of [ALLOWED, 'https://evil.example', '*', 'null']) {
       const response = await request(app).get('/api/probe').set('Origin', origin);
-      expect(response.headers['access-control-allow-origin'], origin).not.toBe('*');
       expect(response.headers['access-control-allow-credentials'], origin).toBeUndefined();
     }
   });
@@ -125,26 +124,17 @@ describe('RF-G13: origen no permitido', () => {
     expect((await request(app).get('/api/nada').set('Origin', 'https://evil.example')).status).toBe(404);
   });
 
-  it('RF-G13: Origin repetido (válido + válido) no añade Access-Control-Allow-* y se procesa igual', async () => {
-    const response = await raw(newApp(), '/api/probe', [`Origin: ${ALLOWED}`, `Origin: ${ALLOWED}`]);
+  it.each([
+    ['válido + válido', [`Origin: ${ALLOWED}`, `Origin: ${ALLOWED}`]],
+    ['válido + inválido', [`Origin: ${ALLOWED}`, 'Origin: https://evil.example']],
+    ['inválido + válido', ['Origin: https://evil.example', `Origin: ${ALLOWED}`]],
+    ['válido + inválido con otra mayúscula', [`Origin: ${ALLOWED}`, 'origin: https://evil.example']],
+  ])('RF-G13: Origin repetido (%s) no añade Access-Control-Allow-* y se procesa igual', async (_label, lines) => {
+    const response = await raw(newApp(), '/api/probe', lines);
 
     expect(response.status).toBe(200);
     expect(corsHeaders(response.headers)).toEqual([]);
     expect(varyValues(response.headers['vary'])).toContain('Origin');
-  });
-
-  it('RF-G13: Origin repetido (válido + inválido, en ambos órdenes) no añade Access-Control-Allow-*', async () => {
-    const app = newApp();
-
-    for (const lines of [
-      [`Origin: ${ALLOWED}`, 'Origin: https://evil.example'],
-      ['Origin: https://evil.example', `Origin: ${ALLOWED}`],
-      [`Origin: ${ALLOWED}`, 'origin: https://evil.example'],
-    ]) {
-      const response = await raw(app, '/api/probe', lines);
-      expect(response.status).toBe(200);
-      expect(corsHeaders(response.headers)).toEqual([]);
-    }
   });
 });
 

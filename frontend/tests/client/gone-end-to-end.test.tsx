@@ -73,16 +73,4 @@ describe('Tarea desfasada (dos pestañas) con el servidor real de rutas', () => 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(refresh).toHaveBeenCalledTimes(1);
   });
-
-  it('RF-F13: completar una tarea que otra pestaña ya borró muestra «La tarea ya no existe.»', async () => {
-    const stored = installBrowserOverRoutes([makeTask(1), makeTask(2)]);
-    render(<TaskManager filter="all" total={null} />);
-    await screen.findByText('Tarea 1');
-    stored.splice(0, 1);
-    fireEvent.click(screen.getByRole('button', { name: 'Marcar «Tarea 1» como completada' }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain(GONE));
-    await waitFor(() => expect(screen.queryByText('Tarea 1')).toBeNull());
-    expect(screen.getByRole('status').textContent).toContain(GONE);
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
 });

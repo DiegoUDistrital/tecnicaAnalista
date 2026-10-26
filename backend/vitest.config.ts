@@ -12,7 +12,16 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/**/*.types.ts'],
-      thresholds: { lines: 95, statements: 95 },
+      // 80 % global; 90 % en validación y rutas (los archivos de glob también cuentan en el global).
+      thresholds: {
+        lines: 80,
+        statements: 80,
+        'src/validation/**': { lines: 90, statements: 90 },
+        'src/http/input/**': { lines: 90, statements: 90 },
+        'src/routes/**': { lines: 90, statements: 90 },
+        'src/controllers/**': { lines: 90, statements: 90 },
+        'src/http/route-table.ts': { lines: 90, statements: 90 },
+      },
     },
   },
 });

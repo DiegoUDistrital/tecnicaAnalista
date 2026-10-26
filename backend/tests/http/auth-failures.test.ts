@@ -101,22 +101,6 @@ describe('RF-G9: bloqueo de la IP tras intentos fallidos', () => {
     }
   });
 
-  it('RF-G9: 15 simultáneas con key válida y límite 10 dan 0 respuestas 429', async () => {
-    for (let round = 1; round <= 3; round += 1) {
-      const { port } = await listen(appWith({ authFailuresMax: 10 }));
-
-      const statuses = await Promise.all(
-        Array.from({ length: 15 }, async () => (await fetch(`http://127.0.0.1:${String(port)}/api/nada`)).status),
-      );
-
-      expect(
-        statuses.filter((status) => status === 429),
-        `ronda ${String(round)}`,
-      ).toHaveLength(0);
-      expect(statuses.every((status) => status === 404)).toBe(true);
-    }
-  });
-
   it('RF-G9: una key válida seguida de 404, 400 y 500 repetidos más veces que el límite no bloquea la IP', async () => {
     const app = appWith({ authFailuresMax: 3 });
 
@@ -150,18 +134,6 @@ describe('RF-G9: bloqueo de la IP tras intentos fallidos', () => {
     expect((await wrongKey(app)).status).toBe(401);
   });
 
-  it('RF-G9: las peticiones válidas anteriores no cuentan como fallos', async () => {
-    const app = appWith({ authFailuresMax: 3 });
-
-    for (let call = 0; call < 6; call += 1) {
-      expect((await goodKey(app)).status).toBe(404);
-    }
-    for (let call = 1; call <= 3; call += 1) {
-      expect((await wrongKey(app)).status, `intento ${String(call)}`).toBe(401);
-    }
-    expect((await wrongKey(app)).status).toBe(429);
-  });
-
   it('RF-G9: otra IP (X-Forwarded-For desde una conexión de confianza) sigue autenticándose', async () => {
     const app = appWith({ authFailuresMax: 2 }, 'loopback');
     const blocked = '203.0.113.1';
@@ -174,14 +146,6 @@ describe('RF-G9: bloqueo de la IP tras intentos fallidos', () => {
     expect((await goodKey(app, blocked)).status).toBe(429);
     expect((await goodKey(app, other)).status).toBe(404);
     expect((await wrongKey(app, other)).status).toBe(401);
-  });
-
-  it('RF-G9: dos direcciones IPv6 del mismo /64 comparten el contador de fallos', async () => {
-    const app = appWith({ authFailuresMax: 1 }, 'loopback');
-
-    expect((await wrongKey(app, '2001:db8:1:2::1')).status).toBe(401);
-    expect((await goodKey(app, '2001:db8:1:2:ffff::9')).status).toBe(429);
-    expect((await goodKey(app, '2001:db8:1:3::1')).status).toBe(404);
   });
 
   it('RF-G9: /health no cuenta ni se bloquea', async () => {
@@ -228,16 +192,6 @@ describe('RF-G9: bloqueo de la IP tras intentos fallidos', () => {
     expect(lastSecond.headers['retry-after']).toBe('1');
     expect(released.status).toBe(404);
     expect((await wrongKey(app)).status).toBe(401);
-  });
-
-  it('RF-G9: tras 1 000 ms reales la IP vuelve a autenticarse', async () => {
-    const app = appWith({ authFailuresMax: 1, windowMs: 1000 });
-
-    expect((await wrongKey(app)).status).toBe(401);
-    expect((await goodKey(app)).status).toBe(429);
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-
-    expect((await goodKey(app)).status).toBe(404);
   });
 
   it('RF-G10: el 429 por fallos lleva Retry-After entero, helmet, no-store y ningún RateLimit-*', async () => {

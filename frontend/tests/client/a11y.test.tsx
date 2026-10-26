@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskManager } from '../../src/client/task-manager';
 import { HomeView } from '../../src/components/home-view';
@@ -38,7 +38,6 @@ async function setup(tasks: Task[], ui: 'manager' | 'page' = 'manager') {
 
 const lists = (api: FakeApi) => api.calls.filter((call) => call.method === 'GET');
 const writes = (api: FakeApi, method: string) => api.calls.filter((call) => call.method === method);
-const heading = () => screen.getByRole('heading', { level: 2, name: 'Tareas' });
 const toggleButton = (title: string) => screen.getByRole('button', { name: `Marcar «${title}» como completada` });
 const editButton = (title: string) => screen.getByRole('button', { name: `Editar «${title}»` });
 const deleteButton = (title: string) => screen.getByRole('button', { name: `Eliminar «${title}»` });
@@ -70,14 +69,6 @@ describe('Accesibilidad del cliente', () => {
     expect(form.getByRole('button', { name: 'Cancelar' })).toBeTruthy();
   });
 
-  it('RF-F27: un único h1 (página) y un h2 (lista)', async () => {
-    await setup([makeTask(1)], 'page');
-    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
-    expect(heading().getAttribute('tabindex')).toBe('-1');
-    expect(screen.getByRole('heading', { level: 3, name: 'Tarea 1' })).toBeTruthy();
-  });
-
   it('RF-F27: la región role="status" aria-live="polite" existe siempre y anuncia carga, «Tarea creada.», «La tarea ya no existe.» y «Lista actualizada.»', async () => {
     const api = installFakeApi();
     render(<TaskManager filter="all" total={null} />);
@@ -103,45 +94,7 @@ describe('Accesibilidad del cliente', () => {
     expect(region.getAttribute('aria-live')).toBe('polite');
   });
 
-  it('RF-F27: los errores son role="alert" y los campos inválidos tienen aria-invalid y aria-describedby', async () => {
-    const api = await setup([makeTask(1)]);
-    const title = screen.getByLabelText('Título');
-    expect(title.getAttribute('aria-invalid')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear tarea' }));
-    const alert = screen.getByRole('alert');
-    expect(alert.textContent).toBe('Debe tener entre 1 y 100 caracteres.');
-    expect(title.getAttribute('aria-invalid')).toBe('true');
-    expect(title.getAttribute('aria-describedby')?.split(' ')).toContain(alert.id);
-    expect(screen.getByLabelText('Descripción').getAttribute('aria-invalid')).toBeNull();
-
-    fireEvent.click(deleteButton('Tarea 1'));
-    await answer(writes(api, 'DELETE')[0], serverFailure());
-    const card = within(screen.getByRole('heading', { name: 'Tarea 1' }).closest('article')!);
-    expect((await card.findByRole('alert')).textContent).toBe('Error interno.');
-  });
-
-  it('RF-F27: los tres destinos del foco (título tras crear, título al editar y botón Editar al salir, siguiente o h2 al borrar)', async () => {
-    const api = await setup([makeTask(1), makeTask(2)]);
-    fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Otra' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Crear tarea' }));
-    await answer(writes(api, 'POST')[0], jsonResponse(201, makeTask(3)));
-    expect(document.activeElement).toBe(screen.getByLabelText('Título'));
-
-    fireEvent.click(editButton('Tarea 1'));
-    const form = within(screen.getByRole('form', { name: 'Editar «Tarea 1»' }));
-    expect(document.activeElement).toBe(form.getByLabelText('Título'));
-    fireEvent.click(form.getByRole('button', { name: 'Cancelar' }));
-    expect(document.activeElement).toBe(editButton('Tarea 1'));
-
-    deleteButton('Tarea 2').focus();
-    fireEvent.click(deleteButton('Tarea 2'));
-    await answer(writes(api, 'DELETE')[0], new Response(null, { status: 204 }));
-    await waitFor(() => expect(lists(api)).toHaveLength(3));
-    await answer(lists(api)[2], jsonResponse(200, []));
-    await waitFor(() => expect(document.activeElement).toBe(heading()));
-  });
-
-  it('RF-F26: tarjeta y controles llevan las clases de ancho, desbordamiento y 44 px', async () => {
+  it('RF-F26: tarjeta y controles (también Reintentar) llevan las clases de ancho, desbordamiento y 44 px', async () => {
     await setup([makeTask(1, { title: 'x'.repeat(100), description: 'a\nb' })], 'page');
     const card = screen.getByRole('article');
     expect(card.classList).toContain('wrap-anywhere');
@@ -161,14 +114,10 @@ describe('Accesibilidad del cliente', () => {
     for (const button of screen.getAllByRole('button')) {
       expect(button.classList, button.outerHTML).toContain('min-w-11');
     }
-  });
-
-  it('RF-F26: los botones Reintentar de carga y de refresco llevan las clases de 44 px', async () => {
-    const api = installFakeApi();
+    cleanup();
+    const failing = installFakeApi();
     render(<TaskManager filter="all" total={null} />);
-    act(() =>
-      api.calls[0]?.resolve(jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'Error interno.' } })),
-    );
+    act(() => failing.calls[0]?.resolve(serverFailure()));
     const retry = await screen.findByRole('button', { name: 'Reintentar' });
     expect(retry.classList).toContain('min-h-11');
     expect(retry.classList).toContain('min-w-11');

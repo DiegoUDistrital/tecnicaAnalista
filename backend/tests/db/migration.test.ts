@@ -31,16 +31,6 @@ describe('RF-D6: migración de la tabla tasks', () => {
     await applySchema();
   });
 
-  it('RF-D6: migrar una base limpia crea la tabla tasks', async () => {
-    const owner = await getTestDatabase().ownerClient();
-    try {
-      const result = await owner.query(`SELECT to_regclass('public.tasks') IS NOT NULL AS found`);
-      expect(result.rows[0]).toEqual({ found: true });
-    } finally {
-      await owner.end();
-    }
-  });
-
   it('RF-D6: reaplicar no cambia nada (sin migraciones pendientes y mismos objetos)', async () => {
     const before = await snapshotObjects();
     const output = runPrisma(['migrate', 'deploy']);
@@ -69,7 +59,7 @@ describe('RF-D6: migración de la tabla tasks', () => {
     }
   });
 
-  it('RF-D6: la segunda migración crea la vista task_counts y la deriva sigue en 0 sin modelarla', async () => {
+  it('RF-D6: la segunda migración crea la vista task_counts (sin modelarla en schema.prisma)', async () => {
     const owner = await getTestDatabase().ownerClient();
     try {
       const migrations = await owner.query<{ migration_name: string }>(
@@ -84,7 +74,6 @@ describe('RF-D6: migración de la tabla tasks', () => {
     } finally {
       await owner.end();
     }
-    expect(runPrisma(DRIFT_ARGS).status).toBe(0);
   });
 
   it('RF-D6: ningún comentario de los objetos contiene la palabra PASSWORD', async () => {

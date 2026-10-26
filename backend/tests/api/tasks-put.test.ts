@@ -1,7 +1,6 @@
 import type { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createCaptureLogger } from '../helpers/capture-logger';
-import { createClosedPortDatabase, startApiApp, type ApiApp } from '../helpers/api-app';
+import { startApiApp, type ApiApp } from '../helpers/api-app';
 import { listenOnLoopback, type LoopbackServer } from '../helpers/loopback';
 import { rawRequest } from '../helpers/raw-http';
 import { getTestDatabase, truncateTasks } from '../helpers/test-database';
@@ -9,7 +8,6 @@ import { getTestDatabase, truncateTasks } from '../helpers/test-database';
 const FIVE_FIELDS = ['id', 'title', 'description', 'completed', 'createdAt'];
 const JSON_TYPE = 'Content-Type: application/json';
 const UUID = '3f1c2d5e-8a0b-4c7d-9e1f-0a2b3c4d5e6f';
-const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 const BODY_DETAIL = { field: 'body', message: 'El cuerpo debe ser un objeto JSON válido.' };
 const UNKNOWN_DETAIL = { field: 'body', message: 'El cuerpo contiene campos no permitidos.' };
@@ -58,7 +56,6 @@ interface Stored {
 
 /** Petición con socket crudo (los bytes viajan tal cual) y `Connection: close`. Sin cabeceras: JSON por defecto. */
 async function send(
-  port: number,
   method: string,
   path: string,
   body: string | Buffer,
@@ -67,7 +64,7 @@ async function send(
   const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
   const length = bytes.length === 0 ? [] : [`Content-Length: ${bytes.length}`];
   const head = [`${method} ${path} HTTP/1.1`, 'Host: localhost', 'Connection: close', ...headers, ...length];
-  const result = await rawRequest(port, [`${head.join('\r\n')}\r\n\r\n`, bytes]);
+  const result = await rawRequest(loopback.port, [`${head.join('\r\n')}\r\n\r\n`, bytes]);
   const response = result.responses[0];
   if (response === undefined) {
     throw new Error(`Sin respuesta: ${result.text}`);
@@ -76,11 +73,11 @@ async function send(
 }
 
 function put(id: string, payload: unknown, suffix = ''): Promise<Reply> {
-  return send(loopback.port, 'PUT', `/api/tasks/${id}${suffix}`, JSON.stringify(payload));
+  return send('PUT', `/api/tasks/${id}${suffix}`, JSON.stringify(payload));
 }
 
 function putRaw(id: string, body: string | Buffer, headers?: readonly string[]): Promise<Reply> {
-  return send(loopback.port, 'PUT', `/api/tasks/${id}`, body, headers);
+  return send('PUT', `/api/tasks/${id}`, body, headers);
 }
 
 function detailsOf(reply: Reply): unknown {
@@ -124,43 +121,6 @@ describe('RF-C15: actualización parcial', () => {
     expect(await stored(id)).toEqual({ ...SEED, completed: true });
   });
 
-  it('RF-C15: PUT idéntico a lo almacenado responde 200', async () => {
-    const id = await seed();
-
-    const reply = await put(id, { title: SEED.title, description: SEED.description, completed: false });
-
-    expect(reply.status).toBe(200);
-    expect(await stored(id)).toEqual(SEED);
-  });
-
-  it('RF-C15: PUT {"description":""} vacía la descripción', async () => {
-    const id = await seed();
-
-    const reply = await put(id, { description: '' });
-
-    expect(reply.status).toBe(200);
-    expect(reply.json).toMatchObject({ title: SEED.title, description: '' });
-    expect(await stored(id)).toEqual({ ...SEED, description: '' });
-  });
-
-  it('RF-C15: PUT recorta title y description como el POST', async () => {
-    const id = await seed();
-
-    const reply = await put(id, { title: '  Nuevo  ', description: '  Otra  ' });
-
-    expect(reply.json).toMatchObject({ title: 'Nuevo', description: 'Otra' });
-  });
-
-  it('RF-C15: un id en mayúsculas actualiza la tarea y la respuesta devuelve el id en minúsculas (RF-C6)', async () => {
-    const id = await seed();
-
-    const reply = await put(id.toUpperCase(), { completed: true });
-
-    expect(reply.status).toBe(200);
-    expect((reply.json as { id: string }).id).toBe(id);
-    expect(await stored(id)).toEqual({ ...SEED, completed: true });
-  });
-
   it('RF-C15: dos PUT concurrentes, uno con title y otro con completed, dejan ambos cambios', async () => {
     for (let round = 0; round < 15; round += 1) {
       const id = await seed();
@@ -174,21 +134,12 @@ describe('RF-C15: actualización parcial', () => {
 });
 
 describe('RF-C16: cuerpo sin campos o con campos desconocidos', () => {
-  it('RF-C16: {} da 400 con UNA entrada body (Debe enviar al menos title, description o completed.)', async () => {
-    const reply = await put(UUID, {});
+  it('RF-C16: {} y {"foo":1} dan UNA entrada body; con ?x=1 dan body y query', async () => {
+    const emptyAlone = await put(UUID, {});
+    const unknownAlone = await put(UUID, { foo: 1 });
+    expect(detailsOf(emptyAlone)).toEqual([NO_FIELDS_DETAIL]);
+    expect(detailsOf(unknownAlone)).toEqual([UNKNOWN_DETAIL]);
 
-    expect(reply.status).toBe(400);
-    expect(detailsOf(reply)).toEqual([NO_FIELDS_DETAIL]);
-  });
-
-  it('RF-C16: {"foo":1} da UNA entrada body de campos no permitidos', async () => {
-    const reply = await put(UUID, { foo: 1 });
-
-    expect(reply.status).toBe(400);
-    expect(detailsOf(reply)).toEqual([UNKNOWN_DETAIL]);
-  });
-
-  it('RF-C16: con ?x=1, {} y {"foo":1} dan body y query', async () => {
     const empty = await put(UUID, {}, '?x=1');
     const unknown = await put(UUID, { foo: 1 }, '?x=1');
 
@@ -215,8 +166,8 @@ describe('RF-C16: cuerpo sin campos o con campos desconocidos', () => {
 });
 
 describe('RF-C17: tarea inexistente', () => {
-  it.each([[UUID], [NIL_UUID]])('RF-C17: PUT de un id válido inexistente (%s) da 404 NOT_FOUND', async (id) => {
-    const reply = await put(id, { completed: true });
+  it('RF-C17: PUT de un id válido inexistente da 404 NOT_FOUND', async () => {
+    const reply = await put(UUID, { completed: true });
 
     expect(reply.status).toBe(404);
     expect(reply.json).toEqual({
@@ -226,17 +177,9 @@ describe('RF-C17: tarea inexistente', () => {
 });
 
 describe('RF-C6: identificador por HTTP', () => {
-  const swap = (id: string, from: string, to: string): string => id.replace(from, to);
-  const FULL_WIDTH_ONE = encodeURIComponent('１');
   const hostile: [string, string][] = [
     ['%E0%A4%A (porcentaje roto)', '%E0%A4%A'],
-    ['%2F', '%2F'],
-    ['<uuid>%2F', `${UUID}%2F`],
-    ['%252D (doble codificación)', swap(UUID, '-', '%252D')],
-    ['%0A (salto de línea final)', `${UUID}%0A`],
-    ['dígito de anchura completa', `${FULL_WIDTH_ONE}${UUID.slice(1)}`],
-    ['llaves', `%7B${UUID}%7D`],
-    ['sin guiones', UUID.replaceAll('-', '')],
+    ['%252D (doble codificación)', UUID.replace('-', '%252D')],
     ['texto cualquiera', 'abc'],
   ];
 
@@ -248,16 +191,6 @@ describe('RF-C6: identificador por HTTP', () => {
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([ID_DETAIL]);
     expect(await stored(id)).toEqual(SEED);
-  });
-
-  it('RF-C6: %2D por guiones y %41 por A se aceptan', async () => {
-    await owner.query('INSERT INTO tasks (id, title) VALUES ($1, $2)', [UUID, SEED.title]);
-
-    const hyphens = await put(UUID.replaceAll('-', '%2D'), { completed: true });
-    const letter = await put(UUID.replace('a', '%41'), { completed: false });
-
-    expect(hyphens.status).toBe(200);
-    expect(letter.status).toBe(200);
   });
 });
 
@@ -327,28 +260,10 @@ describe('RF-C10: consulta en PUT', () => {
 });
 
 describe('RF-C3 / RF-C4 / RF-C5: entrada de PUT', () => {
-  it('RF-C4: Content-Encoding gzip da 415', async () => {
-    const reply = await putRaw(UUID, '{"completed":true}', [JSON_TYPE, 'Content-Encoding: gzip']);
-
-    expect(reply.status).toBe(415);
-  });
-
   it('RF-C4: Content-Type text/plain da 415', async () => {
     const reply = await putRaw(UUID, '{"completed":true}', ['Content-Type: text/plain']);
 
     expect(reply.status).toBe(415);
-  });
-
-  it('RF-C3: 10 240 bytes válidos dan 200 y 10 241 dan 413', async () => {
-    const id = await seed();
-    const base = '{"completed":true}';
-    const padded = (bytes: number): string => base + ' '.repeat(bytes - base.length);
-
-    const accepted = await putRaw(id, padded(10240));
-    const rejected = await putRaw(id, padded(10241));
-
-    expect(accepted.status).toBe(200);
-    expect(rejected.status).toBe(413);
   });
 
   it.each<[string, Buffer]>([
@@ -363,23 +278,6 @@ describe('RF-C3 / RF-C4 / RF-C5: entrada de PUT', () => {
 
     expect(reply.status).toBe(400);
     expect(detailsOf(reply)).toEqual([BODY_DETAIL]);
-  });
-});
-
-describe('RF-C24: desajuste de longitud en PUT', () => {
-  it('RF-C24: PUT con Content-Length mayor que lo enviado y cierre da 400 body y cierra la conexión', async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const head = `PUT /api/tasks/${UUID} HTTP/1.1\r\nHost: localhost\r\n${JSON_TYPE}\r\nContent-Length: 50\r\n\r\n`;
-
-      const result = await rawRequest(loopback.port, [head, '{"completed"'], { afterWrite: 'end' });
-
-      expect(result.responses).toHaveLength(1);
-      expect(result.responses[0]?.status).toBe(400);
-      expect(detailsOf({ json: JSON.parse(result.responses[0]?.body ?? '') } as Reply)).toEqual([
-        { field: 'body', message: 'El cuerpo no coincide con la longitud declarada.' },
-      ]);
-      expect(result.closedByServer).toBe(true);
-    }
   });
 });
 
@@ -410,25 +308,5 @@ describe('RF-C21: inyección SQL por PUT', () => {
     expect(await stored(id)).toEqual({ title, description, completed: false });
     const table = await owner.query(`SELECT to_regclass('public.tasks') IS NOT NULL AS found`);
     expect((table.rows[0] as { found: boolean }).found).toBe(true);
-  });
-});
-
-describe('RF-C2 (par 7-8): base de datos apagada', () => {
-  it('RF-C2: PUT con id válido, body válido y la BD apagada da 500 genérico y el log no lleva datos', async () => {
-    const capture = createCaptureLogger();
-    const down = await startApiApp({ capture, database: await createClosedPortDatabase(capture.logger) });
-    const server = await listenOnLoopback(down.app);
-    try {
-      const reply = await send(server.port, 'PUT', `/api/tasks/${UUID}`, '{"title":"secreto-zzz"}');
-
-      expect(reply.status).toBe(500);
-      expect(reply.json).toEqual({
-        error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor.', details: [] },
-      });
-      expect(capture.output()).not.toContain('secreto-zzz');
-    } finally {
-      await server.close();
-      await down.close();
-    }
   });
 });

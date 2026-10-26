@@ -104,10 +104,6 @@ describe('createTask, updateTask y deleteTask', () => {
     api.calls[0]?.resolve(jsonResponse(201, makeTask(1)));
     expect(await created).toEqual({ kind: 'ok' });
     expect(api.calls[0]).toMatchObject({ method: 'POST', url: '/api/tasks', body: { title: 'A', description: 'B' } });
-
-    const wrongStatus = createTask({ title: 'A', description: '' });
-    api.calls[1]?.resolve(jsonResponse(200, makeTask(1)));
-    expect((await wrongStatus).kind).toBe('error');
   });
 
   it('RF-F9: POST/PUT/DELETE solo son ok con 201/200/204 exactos', async () => {
@@ -119,6 +115,7 @@ describe('createTask, updateTask y deleteTask', () => {
       [() => updateTask(id, { completed: true }), 201, 'error'],
       [() => deleteTask(id), 204, 'ok'],
       [() => deleteTask(id), 200, 'error'],
+      [() => createTask({ title: 'A', description: '' }), 200, 'error'],
     ];
     for (const [call, status, kind] of cases) {
       const pending = call();

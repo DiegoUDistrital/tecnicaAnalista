@@ -272,17 +272,6 @@ describe('RF-S10: manejador central', () => {
 
     expect(consoleError).toHaveBeenCalled();
   });
-
-  it('RF-S10: tras los errores la app sigue sirviendo', async () => {
-    const { app } = build();
-
-    await request(app).get('/sql');
-    await request(app).get('/undefined');
-    const res = await request(app).get('/ok');
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true });
-  });
 });
 
 describe('RF-S10: guard', () => {

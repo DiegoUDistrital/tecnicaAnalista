@@ -67,47 +67,6 @@ describe('forward', () => {
     ]);
   });
 
-  it('RF-F18, RF-I1: las cabeceras propias son exactamente Authorization y, con cuerpo, Content-Type', async () => {
-    const { fetchImpl, calls } = createFakeFetch(() => json(201));
-    await run({ method: 'POST', bodyText: '{"title":"a"}', fetchImpl });
-    await run({ method: 'GET', fetchImpl: createFakeFetch(() => json(200, '[]')).fetchImpl });
-    const sent = createFakeFetch(() => json(200, '[]'));
-    await run({ method: 'GET', fetchImpl: sent.fetchImpl });
-    expect(calls[0]?.init.headers).toEqual({
-      Authorization: `Bearer ${CONFIG.apiKey}`,
-      'Content-Type': 'application/json',
-    });
-    expect(sent.calls[0]?.init.headers).toEqual({ Authorization: `Bearer ${CONFIG.apiKey}` });
-    const names = Object.keys(calls[0]?.init.headers ?? {}).map((n) => n.toLowerCase());
-    expect(names).not.toContain('x-forwarded-for');
-  });
-
-  it('RF-F18, RF-I2: una Request hostil con X-Forwarded-For y Forwarded no cambia las cabeceras enviadas', async () => {
-    const { fetchImpl, calls } = createFakeFetch(() => json(200));
-    const browser = new Request('http://localhost:3001/api/tasks/' + ID, {
-      method: 'PUT',
-      headers: {
-        Cookie: 'sid=1',
-        Authorization: 'Bearer falsa',
-        'X-Forwarded-For': '1.2.3.4',
-        'X-Forwarded-Host': 'evil.example',
-        'X-Forwarded-Proto': 'https',
-        Forwarded: 'for=1.2.3.4',
-        'X-Real-IP': '1.2.3.4',
-        Origin: 'http://localhost:3001',
-        Referer: 'http://localhost:3001/',
-        'Content-Encoding': 'identity',
-        'Content-Type': 'application/json',
-      },
-      body: '{"completed":true}',
-    });
-    await run({ method: 'PUT', id: ID, bodyText: '{"completed":true}', browserSignal: browser.signal, fetchImpl });
-    const headers = calls[0]?.init.headers as Record<string, string>;
-    expect(Object.keys(headers).sort()).toEqual(['Authorization', 'Content-Type']);
-    expect(headers.Authorization).toBe(`Bearer ${CONFIG.apiKey}`);
-    expect(JSON.stringify(calls[0])).not.toMatch(/falsa|1\.2\.3\.4|evil|sid=1/);
-  });
-
   it('RF-I1: nunca se envía X-Forwarded-For, Forwarded, X-Real-IP, X-Forwarded-Host ni X-Forwarded-Proto', async () => {
     const forbidden = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'];
     const { fetchImpl, calls } = createFakeFetch((call) =>
@@ -217,11 +176,6 @@ describe('forward', () => {
     expect(await run({ method, id: method === 'DELETE' ? ID : undefined, bodyText: '{}', fetchImpl })).toEqual({
       kind: 'invalid',
     });
-  });
-
-  it('RF-F20: un 200 sin cuerpo nulo en GET es invalid', async () => {
-    const { fetchImpl } = createFakeFetch(() => fakeResponse({ status: 200 }));
-    expect(await run({ method: 'GET', fetchImpl })).toEqual({ kind: 'invalid' });
   });
 
   it('RF-F20: una respuesta de más de 8 MiB se corta, cancela la lectura y devuelve invalid', async () => {

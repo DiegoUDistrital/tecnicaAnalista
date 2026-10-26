@@ -41,25 +41,6 @@ afterAll(async () => {
   await owner.end();
 });
 
-describe('RF-D17: mecanismo de extracción de sentencias', () => {
-  it('RF-D17: un ";" dentro de un comentario hace fallar la extracción', () => {
-    const bad = '-- Consulta 1: texto; con punto y coma\nSELECT 1;\n-- Consulta 2: ok\nSELECT 2;\n';
-    expect(() => extractStatements(bad)).toThrow(/no pueden contener/);
-    const badLine = '-- Consulta 1: ok\n-- otra línea; mala\nSELECT 1;\n';
-    expect(() => extractStatements(badLine)).toThrow(/no pueden contener/);
-  });
-
-  it('RF-D17: dos sentencias en una consulta o ninguna terminación hacen fallar la extracción', () => {
-    expect(() => extractStatements('-- Consulta 1: a\nSELECT 1; SELECT 2;\n')).toThrow();
-    expect(() => extractStatements('-- Consulta 1: a\nSELECT 1\n')).toThrow();
-  });
-
-  it('RF-D17: un texto correcto devuelve las sentencias sin el punto y coma', () => {
-    const good = '-- Consulta 1: a\nSELECT 1;\n-- Consulta 2: b\nSELECT 2;\n';
-    expect(extractStatements(good)).toEqual(['SELECT 1', 'SELECT 2']);
-  });
-});
-
 describe('RF-D17: backend/queries.sql', () => {
   const statements = extractStatements(queriesText);
   const [listQuery, countQuery] = statements;

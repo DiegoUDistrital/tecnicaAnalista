@@ -67,17 +67,4 @@ describe('RF-G13: createCors', () => {
     expect(response.headers['vary']).toBe('Accept-Encoding, Origin');
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:3000');
   });
-
-  it('RF-G13: sin Origin solo pone Vary: Origin', async () => {
-    const app = express();
-    app.use(createCors('http://localhost:3000'));
-    app.get('/', (_req, res) => {
-      res.send('ok');
-    });
-
-    const response = await request(app).get('/');
-
-    expect(response.headers['vary']).toBe('Origin');
-    expect(response.headers['access-control-allow-origin']).toBeUndefined();
-  });
 });

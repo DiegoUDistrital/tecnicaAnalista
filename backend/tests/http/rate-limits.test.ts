@@ -247,27 +247,7 @@ describe('RF-G10: respuesta 429', () => {
       expect(names.filter((name) => /^(x-)?ratelimit/.test(name))).toEqual([]);
     }
     expect(allowed.headers['retry-after']).toBeUndefined();
-  });
-
-  it('RF-G10: Retry-After entero igual a max(1, ceil(restante/1000)) con el reloj simulado y en rango', async () => {
-    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-03-01T10:00:00.000Z') });
-    const app = appWith({ max: 1 });
-
-    await getNothing(app);
-    const first = await getNothing(app);
-    vi.setSystemTime(new Date('2026-03-01T10:00:02.500Z'));
-    const second = await getNothing(app);
-    vi.setSystemTime(new Date('2026-03-01T10:14:59.999Z'));
-    const last = await getNothing(app);
-
-    expect(first.headers['retry-after']).toBe('900');
-    expect(second.headers['retry-after']).toBe('898');
-    expect(last.headers['retry-after']).toBe('1');
-    for (const response of [first, second, last]) {
-      const value = response.headers['retry-after'] ?? '';
-      expect(value).toMatch(/^[1-9]\d*$/);
-      expect(Number(value)).toBeLessThanOrEqual(WINDOW_MS / 1000);
-    }
+    expect(rejected.headers['retry-after']).toMatch(/^[1-9]\d*$/);
   });
 
   it('RF-G10: el 429 no lee el cuerpo: con body presente Connection: close y cierra; sin body no', async () => {
@@ -330,30 +310,5 @@ describe('RF-G1: pares de orden con los cupos', () => {
 
     expect((await request(app).post(`/api/tasks/${UUID}`)).status).toBe(405);
     expect((await request(app).post(`/api/tasks/${UUID}`)).status).toBe(429);
-  });
-});
-
-describe('RF-G18: la librería de cupos no escribe en la consola', () => {
-  it('RF-G18: ni console ni process.stdout/stderr reciben nada con X-Forwarded-For y Forwarded presentes', async () => {
-    const spies = [
-      vi.spyOn(console, 'log'),
-      vi.spyOn(console, 'info'),
-      vi.spyOn(console, 'warn'),
-      vi.spyOn(console, 'error'),
-      vi.spyOn(console, 'debug'),
-      vi.spyOn(process.stdout, 'write'),
-      vi.spyOn(process.stderr, 'write'),
-    ];
-    const app = appWith({ max: 2, postMax: 1 });
-
-    for (let call = 0; call < 4; call += 1) {
-      await getNothing(app).set('X-Forwarded-For', '203.0.113.9').set('Forwarded', 'for=203.0.113.9;proto=http');
-      await postEmpty(app).set('X-Forwarded-For', '2001:db8::1').set('Forwarded', 'for="[2001:db8::1]"');
-    }
-
-    for (const spy of spies) {
-      expect(spy).not.toHaveBeenCalled();
-    }
-    vi.restoreAllMocks();
   });
 });

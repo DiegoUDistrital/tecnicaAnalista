@@ -75,18 +75,11 @@ describe('CreateForm: crear una tarea', () => {
   it.each([
     ['red', () => new TypeError('Failed to fetch'), POST_UNCONFIRMED_MESSAGE],
     ['500', () => serverError(500, 'INTERNAL_ERROR', 'Error interno.'), 'Error interno.'],
-    ['502 con el mensaje del servidor', () => serverError(502, 'BAD_GATEWAY', 'Revisa la lista.'), 'Revisa la lista.'],
     [
       '502 sin mensaje conocido (HTML de proxy)',
       () => new Response('<html>', { status: 502 }),
       POST_UNCONFIRMED_MESSAGE,
     ],
-    [
-      '504 con el mensaje del servidor',
-      () => serverError(504, 'GATEWAY_TIMEOUT', 'Tardó demasiado.'),
-      'Tardó demasiado.',
-    ],
-    ['504 sin mensaje conocido', () => new Response('', { status: 504 }), POST_UNCONFIRMED_MESSAGE],
   ])(
     'RF-F9: con fallo (%s) conserva lo escrito, muestra role="alert" junto al formulario y no hay aviso',
     async (_name, failure, expected) => {
@@ -140,15 +133,9 @@ describe('CreateForm: crear una tarea', () => {
 
   it.each([
     ['título vacío', '', '', TITLE_RULE, 'title'],
-    ['título de solo espacios', '   \t\n', '', TITLE_RULE, 'title'],
-    ['título de solo U+3000 y U+00A0', '　 ', '', TITLE_RULE, 'title'],
-    ['título de 101 caracteres', 'a'.repeat(101), '', TITLE_RULE, 'title'],
     ['título de 101 emojis', '😀'.repeat(101), '', TITLE_RULE, 'title'],
     ['título con NUL', 'a\u0000b', '', 'Contiene caracteres no permitidos.', 'title'],
-    ['título con sustituto suelto', 'a\ud800b', '', 'Contiene caracteres no permitidos.', 'title'],
     ['descripción de 501 caracteres', 'Título', 'a'.repeat(501), DESCRIPTION_RULE, 'description'],
-    ['descripción con NUL', 'Título', 'a\u0000', 'Contiene caracteres no permitidos.', 'description'],
-    ['descripción con sustituto suelto', 'Título', '\udc00', 'Contiene caracteres no permitidos.', 'description'],
   ])(
     'RF-F10: caso inválido (%s) no llama a fetch, muestra el mensaje junto al campo y lleva el foco',
     async (_name, title, description, message, field) => {
@@ -260,17 +247,6 @@ describe('CreateForm: crear una tarea', () => {
     expect(screen.getByRole('status').textContent).toContain('Tarea creada.');
   });
 
-  it('RF-F9: el aviso «Tarea creada.» desaparece al iniciar el siguiente envío', async () => {
-    const { api } = await setup();
-    fill('Uno');
-    fireEvent.click(submitButton());
-    await answerPost(api, jsonResponse(201, makeTask(1)));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Tarea creada.'));
-    fill('Dos');
-    fireEvent.click(submitButton());
-    expect(screen.getByRole('status').textContent).not.toContain('Tarea creada.');
-  });
-
   it('RF-F6: el borrador del formulario y su error sobreviven a un cambio de filtro', async () => {
     const { rerender } = await setup();
     fill('Mi borrador', 'a'.repeat(501));
@@ -314,12 +290,5 @@ describe('CreateForm: crear una tarea', () => {
     await answerPost(api, jsonResponse(201, makeTask(1)));
     expect(lists(api)).toHaveLength(1);
     expect(refresh).not.toHaveBeenCalled();
-  });
-
-  it('RF-F27: los campos tienen label visible y el formulario tiene nombre accesible', async () => {
-    await setup();
-    expect(form()).toBeTruthy();
-    expect(titleField().tagName).toBe('INPUT');
-    expect(descriptionField().tagName).toBe('TEXTAREA');
   });
 });

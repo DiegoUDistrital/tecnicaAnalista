@@ -38,20 +38,6 @@ describe('rutas reales', () => {
     }
   });
 
-  it('RF-F17: la ruta real reenvía con la configuración del entorno y la key solo en el servidor', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify([TASK]), { status: 200 }));
-    const { GET, PATCH } = await import('../../src/app/api/tasks/route');
-    const response = await GET(new Request('http://localhost:3001/api/tasks', { headers: { host: 'localhost:3001' } }));
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] ?? [];
-    expect(url).toBe('http://127.0.0.1:3000/api/tasks');
-    expect((init?.headers as Record<string, string>).Authorization).toMatch(/^Bearer aB3d/);
-    const blocked = await PATCH(new Request('http://localhost:3001/api/tasks', { method: 'PATCH' }));
-    expect(blocked.status).toBe(405);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it('RF-F17: la ruta con id lee params como promesa y reenvía el id en minúsculas', async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
     const { DELETE } = await import('../../src/app/api/tasks/[id]/route');

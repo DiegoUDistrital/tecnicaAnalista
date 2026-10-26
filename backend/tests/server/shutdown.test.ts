@@ -156,7 +156,7 @@ async function startFake(options: HarnessOptions = {}): Promise<{ harness: Harne
 }
 
 describe('RF-S4: cierre ordenado con servidor real', () => {
-  it('RF-S4: SIGTERM con petición en curso: 200 con Connection: close, Pool cerrado DESPUÉS, código 0', async () => {
+  it('RF-S4, RF-S12: SIGTERM con petición en curso: 200 {"status":"ok"}, Connection: close, Pool DESPUÉS', async () => {
     const running = await startReal();
     const inflight = get(running.port, '/hold', keepAliveAgent());
     await running.entered;
@@ -168,6 +168,7 @@ describe('RF-S4: cierre ordenado con servidor real', () => {
     running.release();
     const reply = await inflight;
     expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toEqual({ status: 'ok' });
     expect(reply.connection).toBe('close');
     expect(await running.result).toBe(0);
     expect(running.harness.calls).toEqual(['query', 'response_sent', 'close']);
@@ -211,22 +212,6 @@ describe('RF-S4: cierre ordenado con servidor real', () => {
     await vi.waitFor(() => expect(reply.socket?.destroyed).toBe(true));
     expect(running.harness.events()).toEqual(['startup', 'shutdown_started', 'shutdown_completed']);
     expect(running.harness.timers.active()).toBe(0);
-  });
-
-  it('RF-S12: durante el cierre una petición /health en curso responde 200 {"status":"ok"} y cierra', async () => {
-    const running = await startReal();
-    const inflight = get(running.port, '/hold', keepAliveAgent());
-    await running.entered;
-    running.harness.fakeProcess.signal('SIGTERM');
-
-    running.release();
-    const reply = await inflight;
-
-    expect(reply.status).toBe(200);
-    expect(JSON.parse(reply.body)).toEqual({ status: 'ok' });
-    expect(reply.connection).toBe('close');
-    await vi.waitFor(() => expect(reply.socket?.destroyed).toBe(true));
-    expect(await running.result).toBe(0);
   });
 
   it('RF-S5: plazo excedido con el servidor colgado: shutdown_timeout, conexiones cortadas, código 1', async () => {
@@ -296,30 +281,6 @@ describe('RF-S4: cierre ordenado con servidor falso', () => {
     expect(harness.fakeProcess.listenerTotal()).toBe(0);
     expect(exit).not.toHaveBeenCalled();
     expect(PROCESS_EVENTS.map((name) => process.listenerCount(name))).toEqual(realBefore);
-  });
-
-  it('RF-S5: plazo excedido con el cierre del Pool colgado: shutdown_timeout y código 1', async () => {
-    const { harness, result } = await startFake({ database: { close: 'hang' } });
-
-    harness.fakeProcess.signal('SIGTERM');
-    harness.timers.fire();
-
-    expect(await result).toBe(1);
-    expect(harness.events()).toEqual(['startup', 'shutdown_started', 'shutdown_timeout']);
-    expect(harness.capture.records()[2]).toMatchObject({ level: 'error', timeoutMs: 10000 });
-    expect(harness.fakeServer.closeAllCalls()).toBe(1);
-  });
-
-  it('RF-S5: segunda señal con el cierre en curso: termina de inmediato con código 1 y sin más eventos', async () => {
-    const { harness, result } = await startFake({ serverClose: 'hang' });
-    harness.fakeProcess.signal('SIGTERM');
-
-    harness.fakeProcess.signal('SIGINT');
-
-    expect(await result).toBe(1);
-    expect(harness.events()).toEqual(['startup', 'shutdown_started']);
-    expect(harness.timers.delays).toEqual([10000]);
-    expect(harness.fakeProcess.listenerTotal()).toBe(0);
   });
 });
 

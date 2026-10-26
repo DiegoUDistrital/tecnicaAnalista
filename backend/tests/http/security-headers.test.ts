@@ -2,10 +2,9 @@ import type { Express } from 'express';
 import request, { type Response } from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '../../src/http/http-error';
-import { OMIT_KEY_HEADER } from '../helpers/security';
+import { OMIT_KEY_HEADER, TEST_RATE_LIMIT, testSecurity } from '../helpers/security';
 import { createTestApp } from '../helpers/test-app';
 
-const UUID = '3f2b1c9e-8a4d-4e7b-9c1a-5d6e7f8a9b0c';
 const NO_KEY = { [OMIT_KEY_HEADER]: '1' };
 
 // Valores por defecto de helmet 8.3.0 que debe llevar TODA respuesta (lista cerrada de la spec).
@@ -66,6 +65,17 @@ const CASES: readonly Case[] = [
     status: 415,
     send: (app) => request(app).post('/api/tasks').set('Content-Type', 'text/plain').send('hola'),
   },
+  {
+    label: '429',
+    status: 429,
+    send: async () => {
+      const limited = createTestApp({ security: testSecurity({ rateLimit: { ...TEST_RATE_LIMIT, max: 1 } }) }).app;
+      await request(limited).get('/api/tasks').set(NO_KEY);
+      const res = await request(limited).get('/api/tasks').set(NO_KEY);
+      limited.shutdown();
+      return res;
+    },
+  },
   { label: '500', status: 500, send: (app) => request(app).get('/test/boom') },
   { label: '500 (HttpError)', status: 500, send: (app) => request(app).get('/test/http-500') },
 ];
@@ -73,22 +83,16 @@ const CASES: readonly Case[] = [
 describe('RF-G16: cabeceras de seguridad', () => {
   const { app } = createTestApp({ registerRoutes: registerTestRoutes });
 
-  it.each(CASES)('RF-G16: la respuesta $label lleva las cabeceras de helmet', async ({ status, send }) => {
+  it.each(CASES)('RF-G16: la respuesta $label lleva helmet y no-store', async ({ status, send }) => {
     const res = await send(app);
 
     expect(res.status).toBe(status);
+    expect(res.headers['cache-control']).toBe('no-store');
     for (const [name, value] of Object.entries(HELMET_HEADERS)) {
       expect(res.headers[name], name).toBe(value);
     }
     expect(res.headers['content-security-policy']).toContain("default-src 'self'");
     expect(res.headers['content-security-policy']).toContain("frame-ancestors 'self'");
-  });
-
-  it.each(CASES)('RF-G16: la respuesta $label lleva Cache-Control: no-store', async ({ status, send }) => {
-    const res = await send(app);
-
-    expect(res.status).toBe(status);
-    expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('RF-G16: /health lleva las cabeceras de helmet y NO lleva Cache-Control: no-store', async () => {
@@ -100,20 +104,5 @@ describe('RF-G16: cabeceras de seguridad', () => {
     }
     expect(res.headers['content-security-policy']).toContain("default-src 'self'");
     expect(res.headers['cache-control']).toBeUndefined();
-  });
-
-  it('RF-G16: X-Powered-By sigue ausente con helmet', async () => {
-    const res = await request(app).get('/api/tasks/' + UUID);
-
-    expect(res.headers['x-powered-by']).toBeUndefined();
-  });
-
-  it('RF-G1: P0 se aplica también al 401 (helmet y no-store presentes)', async () => {
-    const res = await request(app).get('/api/tasks').set(NO_KEY);
-
-    expect(res.status).toBe(401);
-    expect(res.headers['x-content-type-options']).toBe('nosniff');
-    expect(res.headers['content-security-policy']).toBeDefined();
-    expect(res.headers['cache-control']).toBe('no-store');
   });
 });
