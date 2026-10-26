@@ -33,7 +33,7 @@ Las versiones se fijan al crear cada proyecto.
 - `frontend/`: aplicación Next.js (App Router) con TypeScript y Tailwind. Tiene la página principal con el filtro y los
   contadores, y la lista interactiva para crear, completar, editar y borrar tareas (ver «Frontend (estado actual)»).
 - `docker-compose.dev.yml` y `docker/postgres/init/`: PostgreSQL de desarrollo y script de roles y bases.
-- `docker-compose.yml`: orquestación de los servicios (próximamente).
+- `docker-compose.yml`: despliegue completo con Docker Compose (ver «Despliegue con Docker Compose»).
 - `backend/queries.sql`: consultas SQL de la prueba.
 
 ## Backend (estado actual)
@@ -1811,6 +1811,744 @@ dos consultas escritas a mano (filtro por `completed` y conteo agrupado por esta
 sobre `completed` (`tasks_completed_idx`). Justificación honesta del índice: con pocas filas aporta poco beneficio;
 se justifica por el patrón de consulta (casi todas las lecturas filtran por estado) y por el crecimiento esperado
 de la tabla.
+
+## Despliegue con Docker Compose
+
+Esta sección explica cómo se empaqueta y se ejecuta la aplicación completa con Docker: PostgreSQL, una tarea de un
+solo uso que migra la base (`migrate`), el backend y el frontend. Se va completando por partes: están las imágenes
+del backend y del frontend, el script de inicio de la base, las variables y la composición (`docker-compose.yml`) que
+las une; el endurecimiento y el cierre ordenado se documentan cuando se añadan.
+
+Aviso para quien ejecute comandos: en esta carpeta conviven dos archivos de Compose, el de desarrollo
+(`docker-compose.dev.yml`, solo PostgreSQL) y el de despliegue (`docker-compose.yml`). Por eso TODOS los comandos de
+despliegue llevan `-f docker-compose.yml` de forma explícita: sin él, Compose elegiría un archivo por su cuenta y
+podría tocar el contenedor equivocado.
+
+### Imagen del backend
+
+El archivo `backend/Dockerfile` construye la imagen en varias etapas. Cada etapa parte de una imagen limpia y solo
+se lleva a la siguiente lo que esa necesita; lo que no se copia no está en la imagen final.
+
+| Etapa       | Para qué sirve                                                                                      |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `deps`      | Instala todas las dependencias (con las de desarrollo: el compilador de TypeScript y Prisma).      |
+| `build`     | Compila TypeScript a `dist/`.                                                                       |
+| `prod-deps` | Instala solo las dependencias de ejecución (`express`, `helmet`, `pg`, `express-rate-limit`).       |
+| `runtime`   | Imagen del servicio: `dist/`, las dependencias de ejecución y `package.json`. Nada más.             |
+| `migrate`   | Imagen de la tarea de migración: añade las dependencias completas (la herramienta de Prisma) y `prisma/`. |
+
+Decisiones y su porqué:
+
+- **Varias etapas.** La imagen que se ejecuta no lleva el código fuente, las pruebas, el compilador ni las
+  dependencias de desarrollo: menos peso y menos cosas que un atacante pueda aprovechar si entra al contenedor.
+  Alternativa descartada: una sola etapa que compila y ejecuta (la imagen final arrastraría todo lo anterior).
+- **`migrate` es la excepción.** La herramienta que aplica las migraciones (Prisma) es una dependencia de desarrollo
+  y necesita los archivos de `prisma/` (migraciones y script de permisos). Por eso vive en su propia etapa, que se usa
+  solo para la tarea de un solo uso y nunca para el servicio expuesto. Alternativa descartada: instalar Prisma en la
+  imagen del servicio (herramientas innecesarias en lo que escucha peticiones).
+- **Un único `Dockerfile` con `migrate` como etapa.** Un archivo que explicar y Compose elige la etapa con `target`.
+  Alternativa descartada: un `Dockerfile` aparte para migrar.
+- **Usuario sin privilegios.** Las dos imágenes finales declaran `USER 10001:10001`. Se usa un número y no un nombre
+  para poder comprobar que no es `root` sin resolver nombres dentro de la imagen; Node no necesita que el usuario
+  exista en `/etc/passwd`. Los archivos se copian con `--chown` para que ese usuario pueda leerlos.
+- **Debian «slim» y no Alpine.** Prisma incluye programas nativos compilados para la biblioteca de C habitual de
+  Debian; en Alpine (otra biblioteca de C) pueden fallar de maneras difíciles de explicar. Alternativa descartada:
+  Alpine, más pequeña pero con ese riesgo. Nota: al migrar, Prisma avisa de que no detecta OpenSSL en la imagen
+  «slim» y usa su motor por defecto; el aviso es informativo y la migración se comprobó contra un PostgreSQL real.
+- **Versión de Node fija.** Todas las etapas usan `node:26.1.0-bookworm-slim`: la etiqueta completa (mayor, menor y
+  parche) y la misma versión mayor con la que se desarrolló y se probó, que además figura en el campo `engines` de
+  los dos paquetes. Nunca `latest` ni solo `26`: así, reconstruir la imagen mañana da lo mismo que hoy. Alternativa
+  descartada: una etiqueta flotante (un cambio externo podría romper la construcción sin que nadie toque el código).
+- **`node` directo y no `npm`.** El comando de la imagen es `node dist/index.js`. `npm` no reenvía bien las señales
+  de parada (`SIGTERM`) al programa y, con `npm start`, recompilaría en cada arranque. Con `node` como proceso
+  principal, el backend recibe la señal y puede cerrar ordenadamente. `migrate` ejecuta `node dist/db/migrate-cli.js`,
+  el mismo comando de despliegue de la migración, y recibe las variables de Compose (no lee ningún `.env`).
+- **Contexto recortado y sin `COPY . .`.** `backend/.dockerignore` deja fuera `.env` (y `.env.*` salvo
+  `.env.example`), `node_modules`, `.git`, `dist`, `coverage` y las pruebas. Además, cada `COPY` del `Dockerfile`
+  nombra exactamente lo que copia: aunque un archivo sensible llegara al contexto, no entraría en la imagen.
+- **Sin secretos en las capas.** Ninguna contraseña, URL ni key se escribe con `ARG` o `ENV`: las entrega Compose al
+  ejecutar. Riesgo residual declarado: las variables de un contenedor son visibles con `docker inspect` para quien
+  tenga acceso al socket de Docker, lo que equivale a ser administrador de la máquina. Alternativa descartada:
+  `secrets` de Docker o Swarm (más piezas, las aplicaciones leen variables y no archivos, y los orquestadores quedan
+  fuera de alcance).
+
+Construcción manual de una etapa (solo para probar; Compose lo hará por ti):
+
+```powershell
+docker build --target runtime -t todo-backend-runtime backend
+docker build --target migrate -t todo-backend-migrate backend
+```
+
+Las pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) comprueban sin Docker las etapas y su orden, el
+usuario numérico, la etiqueta de Node, la ausencia de credenciales y de `COPY . .`, el contenido de
+`backend/.dockerignore` y la forma de los comandos de arranque.
+
+### Imagen del frontend
+
+El archivo `frontend/Dockerfile` tiene tres etapas, con la misma etiqueta de Node que el backend
+(`node:26.1.0-bookworm-slim`):
+
+| Etapa    | Para qué sirve                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| `deps`   | Instala las dependencias (`npm ci`) y genera el cliente de Prisma (lo hace el `postinstall`).            |
+| `build`  | Compila la aplicación de Next.js en dos pasos (ver abajo).                                               |
+| `runner` | Imagen del servicio: solo el servidor independiente de Next y los archivos estáticos. Corre como 10001. |
+
+Decisiones y su porqué:
+
+- **Salida independiente (`output: 'standalone'`).** Next copia a `.next/standalone` solo los módulos que la
+  aplicación usa de verdad, junto con un `server.js` que se arranca con `node server.js`. La imagen final pesa mucho
+  menos y no lleva el código fuente ni las herramientas de desarrollo. Alternativa descartada: `next start` con todos
+  los `node_modules` dentro de la imagen (más peso y más superficie). Aviso: con esta opción, `next start` imprime un
+  aviso indicando que ya no es la forma recomendada de arrancar; en desarrollo (`npm run dev`) y en la prueba de
+  integración se sigue usando `next dev`/`next start` y funcionan igual.
+- **Compilación en dos pasos.** `npm run verify:build` compila con las variables de configuración vacías (demuestra
+  que la compilación no necesita secretos) y con valores falsos (y busca esos valores en los archivos que van al
+  navegador, para detectar fugas). Después `npm run build` compila de nuevo en limpio y ese resultado es el que se
+  copia. Costo: la construcción tarda más. Alternativa descartada: copiar el resultado del paso con valores falsos
+  (el artefacto saldría de una compilación hecha con un entorno falso).
+- **Sin variables de ejecución en la imagen.** La construcción no recibe `ARG` ni `ENV` de `BACKEND_URL`, `API_KEY`,
+  `READER_DATABASE_URL` ni `ALLOWED_HOSTS`: los secretos no deben quedar escritos en las capas de la imagen. Tampoco
+  se fijan `PORT` ni `HOSTNAME`: no pertenecen a la configuración del frontend y los entrega Compose al ejecutar.
+- **Cliente de Prisma siempre generado en la imagen.** `frontend/.dockerignore` excluye `src/generated`, `.next`,
+  `node_modules`, las pruebas, `.env` (y `.env.*` salvo `.env.example`), de modo que el cliente de Prisma sale de
+  `prisma generate` dentro de la construcción y no del equipo de quien construye. Cada `COPY` nombra lo que copia
+  (no hay `COPY . .`).
+- **Caché escribible.** Next escribe en `.next/cache` mientras funciona. La imagen crea ese directorio con dueño
+  `10001:10001`; así, si más adelante el sistema de archivos del contenedor se declara de solo lectura, basta con
+  montar ahí un directorio temporal.
+- **Sin `public/`.** El frontend no tiene la carpeta `public`, así que no se copia. Si algún día se crea, hay que
+  añadir su `COPY` a la etapa `runner` (la prueba estática falla para recordarlo).
+- **Usuario y arranque.** `USER 10001:10001` numérico, como en el backend, y `CMD ["node", "server.js"]` en forma de
+  lista: `node` es el proceso principal y recibe directamente las señales de parada.
+
+Construcción manual (solo para probar; Compose lo hará por ti):
+
+```powershell
+docker build -t todo-frontend frontend
+```
+
+Las mismas pruebas estáticas (`backend/tests/static/dockerfiles.test.ts`) cubren el frontend: etapas, usuario,
+etiqueta de Node común con el backend, ausencia de variables de ejecución en la construcción, `.dockerignore`,
+`output: 'standalone'` y el comando de arranque.
+
+### Base de datos de despliegue: roles y bases
+
+El script `docker/postgres/init/01-roles-and-databases.sh` crea los tres roles (`owner`, `writer` y `reader`) y la base
+de datos (`DB_NAME`). PostgreSQL lo ejecuta solo la primera vez, cuando el volumen de datos está vacío. En un arranque
+posterior el volumen ya tiene datos y el script no se repite.
+
+- **Base de pruebas opcional.** La base de pruebas (`DB_NAME_TEST`) se crea solo si la variable está definida y no
+  vacía. En desarrollo sí, porque su `.env` la define. En el despliegue no se define, así que no hay base de pruebas
+  junto a los datos de la aplicación. Alternativa descartada: crear siempre la base de pruebas (datos de prueba junto a
+  los de despliegue) o mantener un script distinto para el despliegue (dos scripts que mantener).
+- **Contraseñas fuera de la migración.** Las contraseñas de los roles llegan como variables de entorno y nunca se
+  escriben en una migración ni en un archivo versionado. Solo se aceptan caracteres `A-Za-z0-9._~-`, que no rompen las
+  URL de conexión; el script nombra la variable que falla, nunca su valor.
+- **Cambiar una contraseña en el `.env` no cambia el rol.** Como el script corre solo con el volumen vacío, editar la
+  contraseña después no la modifica en PostgreSQL. Para rotarla hay dos caminos: ejecutar `ALTER ROLE` dentro de la base
+  o recrear el volumen de despliegue (lo que borra sus datos).
+- **Aviso de orden.** Si `DB_NAME_TEST` está definida pero no es válida, el script falla después de crear los roles y la
+  base principal. Como el volumen ya no está vacío, un nuevo arranque no repite el script: hay que corregir la variable
+  y recrear el volumen de la base afectada.
+- **Finales de línea LF.** El archivo `.gitattributes` obliga a guardar los `.sh` con finales de línea LF. Con CRLF (lo
+  que Windows puede introducir por su configuración de Git), el script no se ejecuta dentro del contenedor Linux.
+
+### Variables del despliegue
+
+El `.env` de la raíz sirve al desarrollo y al despliegue: es un único archivo, copiado de `.env.example`. La
+composición no le pasa a cada servicio el archivo entero: cada servicio recibe solo sus variables, declaradas una a
+una en `environment` (sin `env_file`).
+
+| Servicio   | Variables que recibe                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `postgres` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD`, `READER_PASSWORD` y `DB_NAME`.                  |
+| `migrate`  | `OWNER_DATABASE_URL`, construida con el rol `owner` y el host `postgres`.                                                  |
+| `backend`  | `DATABASE_URL` (rol `writer`), `API_KEY`, `CORS_ORIGIN`, `HOST`, `PORT`, `TRUSTED_PROXIES`, `SHUTDOWN_TIMEOUT_MS` y los cuatro `RATE_LIMIT_*`. |
+| `frontend` | `BACKEND_URL` (`http://backend:3000`), `API_KEY`, `READER_DATABASE_URL` (rol `reader`), `ALLOWED_HOSTS`, `PORT` y `HOSTNAME`. |
+
+Las URL de conexión de la composición apuntan a `postgres:5432`, dentro de la red interna. Por eso las URL de
+desarrollo del `.env` (`DATABASE_URL`, `OWNER_DATABASE_URL`, `READER_DATABASE_URL` y las `TEST_*`, que apuntan a
+`127.0.0.1:5433`) no se usan en el despliegue, y `DB_NAME_TEST` no se pasa (así el script de inicio no crea la base de
+pruebas). `HOST`, `PORT`, `TRUSTED_PROXIES` y `SHUTDOWN_TIMEOUT_MS` tampoco se pasan desde el `.env`: la composición los
+fija. Las cuatro variables del backend que no aparecen en la tabla (`TASKS_LIST_LIMIT` y las tres `DB_POOL_*`) toman el
+valor por defecto del esquema de configuración.
+
+Decisiones y su porqué:
+
+- **Cada servicio ve solo lo suyo.** El frontend no conoce la contraseña de `owner` ni la de `writer`, y el backend no
+  conoce la de `owner`. Alternativa descartada: un `env_file` con el `.env` completo para todos los servicios (el
+  frontend vería la contraseña de `owner`).
+- **URL construidas en la composición.** Dentro de un contenedor, `127.0.0.1` es el propio contenedor, no el
+  anfitrión; por eso la composición arma sus URL contra el servicio `postgres`. Alternativa descartada: reutilizar las
+  URL de desarrollo del `.env` (no conectarían con la base del despliegue).
+- **Un solo `.env` y un solo `.env.example`.** Alternativa descartada: un `.env` por servicio (más archivos que
+  mantener y riesgo de que la `API_KEY` del backend y la del frontend difieran) o un `.env.example` de despliegue aparte
+  (dos plantillas con las mismas contraseñas y riesgo de que difieran).
+
+Hosts y origen (son independientes y cada uno tiene su función):
+
+- `ALLOWED_HOSTS` (por defecto `localhost:3001,127.0.0.1:3001`) lo usa el frontend para aceptar escrituras solo si el
+  `Host` de la petición está en la lista. Si la aplicación se publica con otro nombre, hay que añadirlo aquí.
+- `CORS_ORIGIN` (por defecto `http://localhost:3001`) lo usa el backend. El navegador solo habla con el frontend, que
+  llama a la API desde el servidor; por eso el CORS del backend solo cierra el acceso directo de un navegador a la API.
+  Si el nombre de publicación cambia, se cambian también `ALLOWED_HOSTS` y `CORS_ORIGIN`.
+
+Cupos de demostración: la composición usa 1000 peticiones generales y 200 de escritura por cada 15 minutos
+(`RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX`), para que una demostración no se agote pronto. Esos valores solo se aplican
+si el `.env` no define las dos variables. Una copia literal de `.env.example` las define en 100 y 20 (los cupos de
+desarrollo), y esos valores ganan: hay que borrar esas dos líneas o ponerlas en 1000 y 200. Todos los usuarios
+comparten un único cupo (cupo único compartido por diseño): el frontend no envía la IP del usuario al backend, así que
+el backend cuenta a todos como un solo cliente.
+
+Límites de recursos: `BACKEND_MEM_LIMIT` (512m), `BACKEND_CPUS` (1.0), `BACKEND_PIDS_LIMIT` (200), `FRONTEND_MEM_LIMIT`
+(768m), `FRONTEND_CPUS` (1.0) y `FRONTEND_PIDS_LIMIT` (300). Evitan que un proceso agote la máquina. Son valores
+generosos para que una demostración no falle. La composición los aplica al backend y al frontend (ver «Endurecimiento y
+cierre ordenado»), y los valores descomentados en el `.env` sustituyen a los de la composición.
+
+Generación de valores propios (en la terminal; el resultado se pega solo en el `.env`, nunca en un archivo que se
+versione):
+
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+La primera línea sirve para cada contraseña (`POSTGRES_PASSWORD`, `OWNER_PASSWORD`, `WRITER_PASSWORD`, `READER_PASSWORD`)
+y la segunda para `API_KEY`. Las contraseñas solo pueden tener los caracteres `[A-Za-z0-9._~-]`, que es lo que produce
+`base64url`; con otros caracteres (`@ : / ' %` y espacios) la URL de conexión o el script de inicio fallan. Los valores
+`change-me` de `.env.example` son de ejemplo, no son secretos, y los servicios rechazan la `API_KEY` de ejemplo.
+
+### Composición
+
+El archivo `docker-compose.yml` define el proyecto `todo-app-deploy` con cuatro servicios:
+
+| Servicio   | Para qué sirve                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| `postgres` | La base de datos (imagen `postgres:16.15`, etiqueta exacta). Guarda los datos en el volumen `todo_app_deploy_pgdata`. |
+| `migrate`  | Tarea de un solo uso: aplica las migraciones y los permisos con el rol `owner` y termina.               |
+| `backend`  | La API de Express (imagen `runtime`), con el rol `writer`.                                              |
+| `frontend` | La interfaz de Next.js (imagen `runner`), con el rol `reader` solo para los contadores.                 |
+
+**Orden de arranque.** `postgres` arranca primero. `migrate` espera a que esté sano. El backend espera a que
+`postgres` esté sano y a que `migrate` haya terminado con éxito. El frontend espera a que el backend esté sano y a que
+`postgres` esté sano (la página lee los contadores de la base). Porqué: la API no debe aceptar peticiones antes de que
+exista el esquema, y si la migración falla, ni el backend ni el frontend arrancan. Alternativa descartada: migrar al
+arrancar Express (el servicio expuesto necesitaría las credenciales y las herramientas del rol `owner`).
+
+**Credenciales por servicio.** Solo `migrate` recibe la URL del rol `owner`; el backend recibe la de `writer` y el
+frontend la de `reader`. Cada servicio ve únicamente lo suyo (ver «Variables del despliegue»). Alternativa descartada:
+`env_file` con el `.env` completo para todos.
+
+**Dos redes.**
+
+- `internal` (`todo_app_deploy_internal`) está marcada como interna: sus contenedores no tienen salida a internet y el
+  anfitrión no puede llegar a ellos. Están en ella los cuatro servicios. Docker le asigna la subred; no hay subred
+  asignada a mano.
+- `publish` (`todo_app_deploy_publish`) existe solo para publicar el puerto del frontend en el equipo. Sin una red
+  normal no se puede publicar un puerto. Honestidad: por estar en `publish`, el frontend SÍ tiene salida a internet;
+  la base de datos, el backend y `migrate` no.
+
+**Puertos.** Solo el frontend publica un puerto: `127.0.0.1:3001`, es decir, accesible desde este equipo y no desde
+otras máquinas. La base y la API no publican nada. Si el 3001 está ocupado, hay que liberarlo (el puerto está fijado
+también en el `ALLOWED_HOSTS` y en `CORS_ORIGIN`); si se cambia el puerto publicado, se mantiene `127.0.0.1` y se
+cambian esos dos valores. Para aceptar otro nombre de acceso, se añade a `ALLOWED_HOSTS` (y se ajusta `CORS_ORIGIN`).
+
+**Cupo compartido y `TRUSTED_PROXIES=none`.** El backend se configura con `TRUSTED_PROXIES=none` (valor fijo en la
+composición, no sobrescribible desde el `.env`): el frontend no envía cabeceras con la IP del usuario, así que Express
+no debe creerlas de nadie y ve a todos como un único cliente, el contenedor del frontend. Riesgo aceptado: un usuario
+puede agotar el cupo de todos y los fallos de la key bloquean a todos. Si algún día hubiera un proxy de confianza delante
+del frontend, se pondría su dirección en `TRUSTED_PROXIES`. `HOST` es `0.0.0.0` porque dentro de la red interna el
+backend debe aceptar conexiones de otro contenedor.
+
+**Comprobaciones de salud.** `postgres` usa `pg_isready` por TCP. El backend y el frontend usan un pequeño programa de
+Node que hace un `GET` (la imagen no lleva `curl` ni `wget`): al `/health` del backend y a `/` del frontend con un
+`Host` permitido. Limitaciones: `/health` no consulta la base, así que el backend sigue «sano» si la base cae; el
+frontend sí depende de la base y pasa a «no sano» sin reiniciarse.
+
+**Arranque.**
+
+```powershell
+docker compose -f docker-compose.yml up -d --build --wait
+```
+
+`--wait` espera a que los servicios estén sanos; `migrate` es de un solo uso y termina con salida 0. Versión de Compose
+comprobada: v5.3.1 (Docker 29.6.2). La primera vez crea el volumen de datos; `down` sin `-v` lo conserva.
+
+### Endurecimiento y cierre ordenado
+
+El backend y el frontend (los dos servicios que ejecutan código de la aplicación) llevan estas opciones:
+
+| Opción                                   | Qué hace y por qué                                                                                                                                                                  | Alternativa descartada                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `cap_drop: [ALL]`                        | Quita al proceso todas las capacidades especiales de Linux (cambiar propietarios, abrir puertos bajos, etc.). Ninguno las necesita: escuchan en puertos altos y corren como 10001. | Dejar las capacidades por defecto de Docker (más superficie sin necesidad).      |
+| `no-new-privileges:true`                 | Impide que un proceso gane privilegios con un binario especial (`setuid`). Si alguien entra al contenedor, no puede escalar.                                                        | No ponerlo.                                                                      |
+| `read_only: true` y `tmpfs`              | El sistema de archivos del contenedor es de solo lectura: un atacante no puede dejar archivos. Solo se escribe en `/tmp` y, en el frontend, en la caché de Next (`/app/.next/cache`), ambos en memoria y con el usuario 10001. | Dejar el disco escribible (más fácil, pero cualquier fallo permite persistir código). |
+| `mem_limit`, `cpus`, `pids_limit`        | Tope de memoria, CPU y procesos por servicio: un servicio fuera de control no se come toda la máquina.                                                                              | Sin límites (un error podría tumbar el equipo).                                  |
+| `restart: unless-stopped`                | Si el proceso cae, Docker lo levanta de nuevo; solo se queda parado si alguien lo detuvo a mano.                                                                                    | `always` (reinicia también tras una parada manual al reiniciar Docker) o ningún reinicio. |
+
+Valores por defecto de los límites: backend 512m, 1.0 CPU y 200 procesos; frontend 768m, 1.0 CPU y 300 procesos. Para
+cambiarlos, se descomenta la variable correspondiente en el `.env` (`BACKEND_MEM_LIMIT`, `BACKEND_CPUS`,
+`BACKEND_PIDS_LIMIT`, `FRONTEND_MEM_LIMIT`, `FRONTEND_CPUS`, `FRONTEND_PIDS_LIMIT`) y se ejecuta de nuevo
+`docker compose -f docker-compose.yml up -d`. Con la aplicación en reposo, el backend usa unos 25 MiB y el frontend
+unos 85 MiB, así que los valores dejan mucho margen.
+
+**Qué queda fuera.** `postgres` y `migrate` no llevan `cap_drop` ni `read_only`: la imagen oficial de PostgreSQL cambia
+de propietario y escribe en su directorio de datos al arrancar, y `migrate` es una tarea que termina sola. `postgres`
+sí lleva `no-new-privileges:true` (arrancó y quedó sano con ella) y `restart: unless-stopped`. `migrate` lleva
+`restart: "no"`: si la migración falla, debe verse el fallo y no repetirse en bucle. Excepciones aplicadas por fallo
+de arranque: ninguna (`no-new-privileges` en `postgres` y `read_only` en el frontend funcionaron en Docker Desktop).
+
+**Plazos de cierre.** Al parar un servicio, Docker envía `SIGTERM` y, pasado `stop_grace_period`, fuerza la parada con
+`SIGKILL`. El backend cierra de forma ordenada en `SHUTDOWN_TIMEOUT_MS`, que en la composición es el literal `10000`
+(10 s); su `stop_grace_period` es de 20 s, es decir, al menos 5 s más que el cierre, para que Express termine solo antes
+de que Docker lo fuerce. El frontend tiene 15 s y `postgres` 30 s. `SHUTDOWN_TIMEOUT_MS` y los plazos no se pueden
+sobrescribir desde el `.env`: la relación entre ellos debe mantenerse y un test estático la comprueba. No se cambia
+`stop_signal`: cada imagen usa el suyo (la de PostgreSQL envía `SIGINT`, que provoca su cierre rápido y seguro).
+Observado al parar uno a uno: el backend y `postgres` terminan con código 0; el frontend termina con 143 (128 + 15,
+es decir, `SIGTERM` sin salida propia de Next.js). Es una limitación conocida del servidor de Next y no pierde datos:
+el frontend no escribe en la base.
+
+**Datos y volumen.** Los datos viven en el volumen `todo_app_deploy_pgdata`, distinto del de desarrollo.
+`docker compose -f docker-compose.yml down` conserva los datos. `down -v` los **BORRA**. Para reiniciar solo el
+despliegue, y nunca el proyecto de desarrollo, el comando de borrado se escribe siempre con el archivo y el proyecto
+explícitos, tras comprobar con `docker compose ls` cuál es cuál:
+
+```powershell
+docker compose -f docker-compose.yml -p todo-app-deploy down -v
+```
+
+**Rotación y mantenimiento.**
+
+- Contraseñas de roles: cambiarlas en el `.env` no cambia la del rol dentro de la base (el script de inicio solo corre
+  con el volumen vacío); se rota con `ALTER ROLE` o recreando el volumen de despliegue, y después se recrean los
+  servicios afectados.
+- `API_KEY`: se cambia en el `.env` y se recrean el backend y el frontend a la vez
+  (`docker compose -f docker-compose.yml up -d --force-recreate backend frontend`); si solo se recrea uno, la
+  aplicación recibe 401.
+- Base que cae con la aplicación en marcha: `postgres` se reinicia solo; el frontend pasa a «no sano» mientras tanto y
+  las peticiones a la API devuelven un error genérico 500; al volver la base se recuperan sin reiniciar nada.
+- Reconstrucción tras cambiar código: `docker compose -f docker-compose.yml up -d --build`.
+
+### Comprobación manual
+
+Los tests estáticos leen los archivos, pero no ejecutan Docker. Esta lista de veinte pasos comprueba a mano, en Docker
+Desktop, lo que solo se ve con los contenedores en marcha. Reglas de la lista:
+
+- Se ejecuta en PowerShell desde la raíz del repositorio, con un `.env` creado a partir de `.env.example` (ver
+  «Variables del despliegue»). Ningún paso imprime el contenido del `.env`.
+- Todos los comandos de Compose llevan `-f docker-compose.yml` (conviven dos archivos de Compose en la carpeta). La
+  única excepción es el listado de proyectos (`docker compose ls`), que no depende de ningún archivo. La
+  configuración se valida siempre con `config --quiet` (sin ese `--quiet`, Compose imprimiría los valores de las
+  variables, entre ellos las contraseñas).
+- `down` conserva los datos. `down -v` los **BORRA**: solo se usa en el paso 2, siempre con
+  `-f docker-compose.yml -p todo-app-deploy` explícitos, y NUNCA contra el proyecto de desarrollo.
+- Versión de Compose con la que se preparó la composición: v5.3.1 (Docker 29.6.2). La versión del equipo del usuario no
+  se ha anotado. Con una versión anterior, `--wait` y `service_completed_successfully` podrían no comportarse igual; no
+  se ha probado.
+
+**Nota sobre `SIGTERM`.** Docker Desktop ejecuta contenedores Linux, así que parar un servicio con `stop` envía un `SIGTERM`
+real al proceso principal (en Windows nativo no existe, ver «Cierre ordenado»). El paso 14 lo comprueba con el
+backend: debe registrar `shutdown_started` y `shutdown_completed`, y terminar con código 0. El paso 14a comprobó esa
+señal real en el backend, que era la comprobación pendiente de la fase del servicio; los pasos 14b, 14c y 14d (cierre
+con una petición en curso, frontend y PostgreSQL) no se ejecutaron.
+
+1. **`.env` vacío falla; con el `.env` real, la configuración es válida.** Prueba que las variables obligatorias se
+   exigen y que el error no muestra valores.
+
+   ```powershell
+   New-Item $env:TEMP\vacio.env -ItemType File -Force | Out-Null
+   docker compose -f docker-compose.yml --env-file $env:TEMP\vacio.env config --quiet; $LASTEXITCODE
+   docker compose -f docker-compose.yml config --quiet; $LASTEXITCODE
+   Remove-Item $env:TEMP\vacio.env
+   ```
+
+   Esperado: el primero termina con código distinto de 0 y un mensaje que nombra una variable obligatoria (por ejemplo
+   `API_KEY` o `POSTGRES_USER`, según el orden en que Compose las evalúe), sin ningún valor. El segundo no imprime nada
+   y termina con código 0.
+
+2. **Estado inicial limpio.** Comprueba que no hay datos de pruebas anteriores y que el despliegue no se confunde con
+   el desarrollo.
+
+   ```powershell
+   docker volume ls --filter name=todo_app_deploy
+   docker compose ls -a
+   ```
+
+   Esperado: ningún volumen `todo_app_deploy_pgdata` y ningún proyecto `todo-app-deploy` en el listado (el proyecto de
+   desarrollo, si aparece, tiene otro nombre y no se toca). Si el volumen existe de pruebas anteriores, se borra solo el
+   del despliegue (esto BORRA sus datos) y se repite la comprobación:
+
+   ```powershell
+   docker compose -f docker-compose.yml -p todo-app-deploy down -v
+   ```
+
+3. **Arranque en frío sano.** Construye las imágenes, crea el volumen, migra y espera a que todo esté sano.
+
+   ```powershell
+   $inicio = Get-Date
+   docker compose -f docker-compose.yml up -d --build --wait; $LASTEXITCODE
+   ((Get-Date) - $inicio).TotalSeconds
+   docker compose -f docker-compose.yml ps -a
+   ```
+
+   Esperado: código 0; `postgres`, `backend` y `frontend` en `healthy`; `migrate` en `Exited (0)`. Anotar el tiempo.
+
+4. **Roles, permisos, índice y ausencia de la base de pruebas.** Consulta el catálogo de la base desde dentro del
+   contenedor, con el usuario administrador de la imagen (las consultas entran por la entrada estándar para no
+   depender de las comillas de PowerShell).
+
+   ```powershell
+   $consultas = @(
+     '\l',
+     "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname IN ('owner','writer','reader') ORDER BY 1;",
+     '\dt', '\dv', '\di',
+     "SELECT has_table_privilege('reader','tasks','SELECT') AS reader_tasks, has_table_privilege('reader','task_counts','SELECT') AS reader_counts, (has_table_privilege('writer','tasks','SELECT') AND has_table_privilege('writer','tasks','INSERT') AND has_table_privilege('writer','tasks','UPDATE') AND has_table_privilege('writer','tasks','DELETE')) AS writer_crud, has_schema_privilege('writer','public','CREATE') AS writer_create;"
+   )
+   $consultas | docker compose -f docker-compose.yml exec -T postgres sh -c 'psql -U $POSTGRES_USER -d $DB_NAME'
+   ```
+
+   Esperado: aparece la base de `DB_NAME` (`todo_app` por defecto) y NINGUNA base terminada en `_test`; los tres roles
+   con todos los atributos privilegiados en `f`; `\dt` lista `tasks`, `\dv` lista `task_counts` y `\di` lista
+   `tasks_completed_idx`; la última consulta da `reader_tasks = f`, `reader_counts = t`, `writer_crud = t` y
+   `writer_create = f`.
+
+5. **Migración repetible.** Repite el arranque y la migración y comprueba que nada cambia.
+
+   ```powershell
+   $huella = "SELECT (SELECT count(*) FROM _prisma_migrations) AS migraciones, (SELECT md5(string_agg(relname || COALESCE(relacl::text, ''), ',' ORDER BY relname)) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r','v')) AS permisos;"
+   $huella | docker compose -f docker-compose.yml exec -T postgres sh -c 'psql -U $POSTGRES_USER -d $DB_NAME'
+   docker compose -f docker-compose.yml up -d --wait; $LASTEXITCODE
+   docker compose -f docker-compose.yml run --rm --no-deps migrate
+   $huella | docker compose -f docker-compose.yml exec -T postgres sh -c 'psql -U $POSTGRES_USER -d $DB_NAME'
+   ```
+
+   Esperado: el segundo comando termina con código 0 (como `migrate` ya terminó y no cambió, Compose no lo ejecuta
+   otra vez; por eso el tercero lo ejecuta de forma explícita); la salida de `migrate` indica que no hay migraciones
+   pendientes y termina con código 0; las dos huellas (número de migraciones y resumen de permisos) son idénticas.
+
+6. **Una migración fallida impide arrancar el resto.** Se usa una contraseña falsa para `owner` en un archivo
+   temporal; el `.env` real no se modifica ni se muestra.
+
+   ```powershell
+   docker compose -f docker-compose.yml down
+   (Get-Content .env) -replace '^OWNER_PASSWORD=.*', 'OWNER_PASSWORD=contrasena-falsa-123' | Set-Content $env:TEMP\malo.env
+   docker compose -f docker-compose.yml --env-file $env:TEMP\malo.env up -d --wait; $LASTEXITCODE
+   docker inspect -f '{{.State.ExitCode}}' (docker compose -f docker-compose.yml ps -a -q migrate)
+   docker compose -f docker-compose.yml ps -a
+   docker compose -f docker-compose.yml logs --no-color migrate
+   docker compose -f docker-compose.yml logs --no-color migrate | Select-String -SimpleMatch -Quiet 'contrasena-falsa-123'
+   Remove-Item $env:TEMP\malo.env
+   docker compose -f docker-compose.yml up -d --wait; $LASTEXITCODE
+   ```
+
+   Esperado: el primer `up` termina con código distinto de 0; el código de salida de `migrate` es distinto de 0;
+   `backend` y `frontend` no arrancaron (en `ps -a` aparecen `Created` o no aparecen); el registro de `migrate` nombra
+   el fallo de autenticación del rol `owner` y la búsqueda de la contraseña falsa da `False` (el registro no la
+   muestra). El último `up`, con el `.env` real, termina con código 0 y deja todo sano.
+
+7. **Puertos publicados.** Solo el frontend, solo en este equipo.
+
+   ```powershell
+   docker compose -f docker-compose.yml ps
+   (Test-NetConnection 127.0.0.1 -Port 3001 -WarningAction SilentlyContinue).TcpTestSucceeded
+   (Test-NetConnection 127.0.0.1 -Port 3000 -WarningAction SilentlyContinue).TcpTestSucceeded
+   (Test-NetConnection 127.0.0.1 -Port 5432 -WarningAction SilentlyContinue).TcpTestSucceeded
+   $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127|169\.254)\.' } | Select-Object -First 1).IPAddress
+   (Test-NetConnection $ip -Port 3001 -WarningAction SilentlyContinue).TcpTestSucceeded
+   ```
+
+   Esperado: solo `frontend` muestra `127.0.0.1:3001->3001/tcp`; las pruebas dan `True` (3001 en 127.0.0.1), `False`
+   (3000), `False` (5432) y `False` (3001 con la IP de la red local del equipo).
+
+8. **Red interna sin salida a internet.** Prueba que la base y la API no pueden salir, y que el anfitrión no llega a
+   la API.
+
+   ```powershell
+   docker network inspect todo_app_deploy_internal -f '{{.Internal}}'
+   docker compose -f docker-compose.yml exec -T backend node -e "require('node:https').get('https://example.com',(r)=>{console.log('SALIDA',r.statusCode);process.exit(0)}).on('error',(e)=>{console.log('SIN SALIDA',e.code);process.exit(0)})"
+   docker compose -f docker-compose.yml exec -T postgres bash -c '(echo > /dev/tcp/1.1.1.1/443) 2>/dev/null && echo SALIDA || echo SIN SALIDA'
+   $idBackend = docker compose -f docker-compose.yml ps -q backend
+   $ipBackend = docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $idBackend
+   (Test-NetConnection $ipBackend -Port 3000 -WarningAction SilentlyContinue).TcpTestSucceeded
+   docker compose -f docker-compose.yml exec -T frontend node -e "require('node:https').get('https://example.com',(r)=>{console.log('SALIDA',r.statusCode);process.exit(0)}).on('error',(e)=>{console.log('SIN SALIDA',e.code);process.exit(0)})"
+   ```
+
+   Esperado: `true`; `SIN SALIDA` con un código de red (`ENOTFOUND`, `EAI_AGAIN` o `ENETUNREACH`) desde el backend;
+   `SIN SALIDA` desde `postgres`; `False` desde el anfitrión hacia la IP interna del backend. La última línea, desde el
+   frontend, SÍ muestra `SALIDA` con un código HTTP: es lo esperado y está documentado (el frontend está en `publish`).
+
+9. **Salud de los servicios.**
+
+   ```powershell
+   docker compose -f docker-compose.yml ps -a
+   docker inspect -f '{{.State.Health.Status}}' (docker compose -f docker-compose.yml ps -q postgres backend frontend)
+   ```
+
+   Esperado: el mismo estado que en el paso 3; las tres líneas de `docker inspect` dicen `healthy`.
+
+10. **Aplicación en el navegador.** Abrir `http://127.0.0.1:3001` y también `http://localhost:3001`. Crear, completar,
+    desmarcar, editar y borrar una tarea; abrir `http://127.0.0.1:3001/?filter=completed`. Esperado: sin errores
+    visibles; los contadores Todas, Completadas y Pendientes son correctos tras cada acción y el filtro funciona.
+
+    ```powershell
+    Start-Process http://127.0.0.1:3001
+    ```
+
+11. **Archivos estáticos y cabecera `Host`.** Prueba que los estáticos del servidor independiente se sirven y que una
+    escritura con un `Host` ajeno se rechaza.
+
+    ```powershell
+    $html = (curl.exe -s http://127.0.0.1:3001/) -join "`n"
+    $ruta = [regex]::Match($html, '/_next/static/[^"]+\.(js|css)').Value
+    curl.exe -s -o NUL -w "%{http_code}`n" "http://127.0.0.1:3001$ruta"
+    curl.exe -s -o NUL -w "%{http_code}`n" -H "Host: 127.0.0.1:3001" http://127.0.0.1:3001/
+    curl.exe -s -o NUL -w "%{http_code}`n" -X POST -H "Host: otro.example" -H "Content-Type: application/json" -d "{}" http://127.0.0.1:3001/api/tasks
+    ```
+
+    Esperado: `200`, `200` y `403`.
+
+12. **Cupo compartido.** Primero se lee el valor efectivo; después se baja el cupo con un archivo temporal para ver el
+    429 sin lanzar cientos de peticiones.
+
+    ```powershell
+    docker compose -f docker-compose.yml exec -T backend printenv RATE_LIMIT_MAX RATE_LIMIT_POST_MAX
+    Get-Content .env | Where-Object { $_ -notmatch '^(RATE_LIMIT_MAX|RATE_LIMIT_POST_MAX|RATE_LIMIT_AUTH_FAILURES_MAX)=' } | Set-Content $env:TEMP\cupo.env
+    Add-Content $env:TEMP\cupo.env 'RATE_LIMIT_MAX=10'
+    Add-Content $env:TEMP\cupo.env 'RATE_LIMIT_POST_MAX=5'
+    Add-Content $env:TEMP\cupo.env 'RATE_LIMIT_AUTH_FAILURES_MAX=5'
+    docker compose -f docker-compose.yml --env-file $env:TEMP\cupo.env up -d --wait; $LASTEXITCODE
+    1..12 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3001/api/tasks }
+    curl.exe -s -o NUL -w "%{http_code}`n" -H "X-Forwarded-For: 203.0.113.9" http://127.0.0.1:3001/api/tasks
+    Remove-Item $env:TEMP\cupo.env
+    docker compose -f docker-compose.yml up -d --wait; $LASTEXITCODE
+    docker compose -f docker-compose.yml exec -T backend printenv RATE_LIMIT_MAX RATE_LIMIT_POST_MAX
+    ```
+
+    Esperado: la primera lectura da `1000` y `200` si el `.env` no define los cupos (si da `100` y `20`, el `.env` es
+    una copia literal de `.env.example` y manda sobre los de demostración: anotarlo, es el comportamiento
+    documentado); con el cupo reducido, las doce peticiones empiezan con `200` y las últimas dan `429`; la petición con
+    otra cabecera `X-Forwarded-For` TAMBIÉN da `429`: es el cupo único compartido por diseño, no un fallo, y la
+    cabecera enviada no cambia el resultado. Al restaurar, `backend` se recrea y su contador se reinicia; la última
+    lectura vuelve al valor inicial.
+
+13. **API key mal puesta.** Se simula un frontend con una key equivocada y se comprueba el bloqueo y su recuperación.
+
+    ```powershell
+    1..12 | ForEach-Object { docker compose -f docker-compose.yml exec -T frontend node -e "fetch('http://backend:3000/api/tasks',{headers:{Authorization:'Bearer clave-falsa'}}).then((r)=>console.log(r.status))" }
+    curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3001/api/tasks
+    docker compose -f docker-compose.yml up -d --force-recreate backend
+    curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3001/api/tasks
+    ```
+
+    Esperado: diez respuestas `401` (con el valor por defecto de `RATE_LIMIT_AUTH_FAILURES_MAX`, 10) y después `429`;
+    la interfaz (segunda línea) también recibe `429`, porque el backend solo ve la IP del frontend y la bloquea
+    entera; tras recrear el backend, el contador se reinicia y la tercera línea da `200`. Rotar la key: generar una
+    nueva con `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`, ponerla en `API_KEY`
+    del `.env` y ejecutar:
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --force-recreate backend frontend
+    ```
+
+    Esperado: la aplicación vuelve a funcionar (`http://127.0.0.1:3001`) con la key nueva en los dos servicios a la vez.
+
+14. **`SIGTERM` real.** Cuatro paradas, una por servicio, con el subcomando `stop` (envía `SIGTERM`).
+
+    (a) Backend en reposo:
+
+    ```powershell
+    $idBackend = docker compose -f docker-compose.yml ps -q backend
+    Measure-Command { docker compose -f docker-compose.yml stop backend } | Select-Object TotalSeconds
+    docker compose -f docker-compose.yml logs --no-color backend
+    docker inspect -f '{{.State.ExitCode}} {{.State.OOMKilled}}' $idBackend
+    ```
+
+    Esperado: la parada tarda menos de 10 s (`SHUTDOWN_TIMEOUT_MS`); el registro contiene `shutdown_started` y
+    `shutdown_completed`; `docker inspect` da `0 false`.
+
+    (b) Con una petición en curso. En una terminal, abrir una conexión que envía las cabeceras de un `POST` con
+    `Content-Length: 100` y solo una parte del cuerpo, y la deja abierta (la key se lee dentro del contenedor y no se
+    imprime):
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --wait backend
+    docker compose -f docker-compose.yml exec -T backend node -e "const s=require('node:net').connect(3000,'127.0.0.1',()=>{s.write('POST /api/tasks HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer '+process.env.API_KEY+'\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{');console.log('ABIERTO')});s.on('close',()=>{console.log('CERRADO');process.exit(0)})"
+    ```
+
+    En otra terminal, mientras la primera sigue abierta:
+
+    ```powershell
+    $idBackend = docker compose -f docker-compose.yml ps -q backend
+    docker compose -f docker-compose.yml stop backend
+    docker compose -f docker-compose.yml logs --no-color backend
+    docker inspect -f '{{.State.ExitCode}}' $idBackend
+    ```
+
+    Esperado (según «Cierre ordenado»): una petición que no termina agota el plazo de 10 s (`SHUTDOWN_TIMEOUT_MS`):
+    el registro contiene `shutdown_started` y `shutdown_timeout`, el código de salida es `1` (no `137`: el cierre
+    forzado ocurre antes de los 20 s de `stop_grace_period`) y la primera terminal imprime `CERRADO`. Si el
+    contenedor responde y cierra la conexión sin llegar al plazo, o si no se puede simular, se anota lo observado
+    («no simulable» y por qué).
+
+    (c) Frontend:
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --wait
+    $idFrontend = docker compose -f docker-compose.yml ps -q frontend
+    docker compose -f docker-compose.yml stop frontend
+    docker inspect -f '{{.State.ExitCode}}' $idFrontend
+    ```
+
+    Esperado: `143` (128 + 15) es la limitación conocida del servidor de Next (ver «Plazos de cierre»); si da `0`, se
+    anota. Lo que no puede pasar es `137` (cierre forzado).
+
+    (d) PostgreSQL:
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --wait
+    $idPostgres = docker compose -f docker-compose.yml ps -q postgres
+    docker compose -f docker-compose.yml stop postgres
+    docker inspect -f '{{.State.ExitCode}}' $idPostgres
+    docker compose -f docker-compose.yml up -d --wait
+    ```
+
+    Esperado: `0` (cierre rápido de su imagen); el último `up` deja todo sano otra vez.
+
+15. **Persistencia de los datos.** Crear una tarea en la interfaz (`http://127.0.0.1:3001`) y reiniciar sin `-v`.
+
+    ```powershell
+    docker compose -f docker-compose.yml down
+    docker compose -f docker-compose.yml up -d --wait; $LASTEXITCODE
+    docker compose -f docker-compose.yml logs --no-color postgres | Select-String 'Skipping initialization|CREATE ROLE'
+    ```
+
+    Esperado: la tarea sigue en la interfaz; el filtro del registro muestra solo la línea que indica que se omite la
+    inicialización (el directorio de datos ya contiene una base) y ninguna línea `CREATE ROLE`.
+
+16. **Sin secretos en imágenes ni en registros.** Primero las imágenes, con archivos centinela que coinciden con
+    `.env.*` (no se toca ningún `.env` real):
+
+    ```powershell
+    Set-Content backend\.env.centinela 'CENTINELA_8f3a1c'
+    Set-Content frontend\.env.centinela 'CENTINELA_8f3a1c'
+    docker compose -f docker-compose.yml build --no-cache backend frontend migrate
+    docker run --rm --entrypoint sh todo-app-deploy-backend -c "grep -r --exclude-dir=proc --exclude-dir=sys CENTINELA_8f3a1c / 2>/dev/null; ls -a /app"
+    docker run --rm --entrypoint sh todo-app-deploy-migrate -c "grep -r --exclude-dir=proc --exclude-dir=sys CENTINELA_8f3a1c / 2>/dev/null; ls -a /app"
+    docker run --rm --entrypoint sh todo-app-deploy-frontend -c "grep -r --exclude-dir=proc --exclude-dir=sys CENTINELA_8f3a1c / 2>/dev/null; ls -a /app"
+    docker history --no-trunc todo-app-deploy-backend | Select-String CENTINELA_8f3a1c
+    docker history --no-trunc todo-app-deploy-migrate | Select-String CENTINELA_8f3a1c
+    docker history --no-trunc todo-app-deploy-frontend | Select-String CENTINELA_8f3a1c
+    Remove-Item backend\.env.centinela, frontend\.env.centinela
+    ```
+
+    Después los registros: se guardan en un archivo temporal y se busca cada secreto del `.env` sin imprimirlo; solo
+    se escribe el nombre si aparece.
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --wait
+    docker compose -f docker-compose.yml logs --no-color > $env:TEMP\logs.txt
+    $lineas = Get-Content .env
+    foreach ($nombre in 'API_KEY', 'POSTGRES_PASSWORD', 'OWNER_PASSWORD', 'WRITER_PASSWORD', 'READER_PASSWORD') {
+      $linea = $lineas | Where-Object { $_ -like "$nombre=*" } | Select-Object -First 1
+      $valor = $linea.Substring($nombre.Length + 1)
+      if (Select-String -Path $env:TEMP\logs.txt -SimpleMatch -Pattern $valor -Quiet) { "FUGA: $nombre" }
+    }
+    Remove-Item $env:TEMP\logs.txt
+    ```
+
+    Esperado: ninguna coincidencia con `CENTINELA_8f3a1c` (ni en los archivos ni en el historial), `ls -a /app` sin
+    ningún `.env` en las tres imágenes, y ningún «FUGA». Riesgo residual que se anota: `docker inspect` de un
+    contenedor en marcha muestra sus variables a quien tenga acceso al socket de Docker, que equivale a ser
+    administrador del equipo.
+
+17. **Usuario sin privilegios.**
+
+    ```powershell
+    docker compose -f docker-compose.yml run --rm --no-deps --entrypoint id backend -u
+    docker compose -f docker-compose.yml run --rm --no-deps --entrypoint id frontend -u
+    docker compose -f docker-compose.yml run --rm --no-deps --entrypoint id migrate -u
+    docker compose -f docker-compose.yml exec -T backend sh -c 'grep ^Uid /proc/1/status'
+    docker compose -f docker-compose.yml exec -T frontend sh -c 'grep ^Uid /proc/1/status'
+    ```
+
+    Esperado: `10001` en las tres primeras líneas; en las dos últimas, `Uid:` seguido de `10001` cuatro veces.
+
+18. **Finales de línea del script de inicio.**
+
+    ```powershell
+    git check-attr eol docker/postgres/init/01-roles-and-databases.sh
+    docker compose -f docker-compose.yml exec -T postgres sh -c 'grep -c -P \\r /docker-entrypoint-initdb.d/01-roles-and-databases.sh'
+    ```
+
+    Esperado: `eol: lf`; el recuento de retornos de carro dentro del contenedor es `0`. El arranque en frío del paso 3
+    ya demuestra que el script se ejecutó (los roles y la base existen).
+
+19. **Salud con la base caída.** Prueba la limitación documentada: el backend no consulta la base en su salud y el
+    frontend sí.
+
+    ```powershell
+    docker compose -f docker-compose.yml stop postgres
+    Start-Sleep -Seconds 120
+    docker compose -f docker-compose.yml ps -a
+    curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3001/api/tasks
+    docker compose -f docker-compose.yml start postgres
+    Start-Sleep -Seconds 120
+    docker compose -f docker-compose.yml ps -a
+    curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3001/api/tasks
+    ```
+
+    Esperado: con la base parada, `frontend` pasa a `unhealthy` (no se reinicia) y `backend` sigue `healthy`; la
+    petición da `500` con un cuerpo genérico, sin detalles. Tras arrancar de nuevo la base, en unos minutos todo vuelve
+    a `healthy` y la petición da `200`.
+
+20. **Reconstrucción y limpieza.**
+
+    ```powershell
+    docker compose -f docker-compose.yml up -d --build --wait; $LASTEXITCODE
+    docker compose -f docker-compose.yml ps -a
+    docker compose -f docker-compose.yml down
+    ```
+
+    Esperado: código 0 y todo sano; `migrate` sigue en `Exited (0)` (si nada cambió, Compose no lo ejecuta de nuevo; se
+    puede forzar con el comando del paso 5); los datos siguen. El `down` final conserva los datos. Reinicio completo
+    opcional (BORRA los datos del despliegue; nunca contra el proyecto de desarrollo):
+
+    ```powershell
+    docker compose -f docker-compose.yml -p todo-app-deploy down -v
+    ```
+
+**Tabla de resultados.** Columna «Resultado»: `cumple` (el paso se comprobó completo), `parcial` (solo una parte; la
+observación dice cuál), `no ejecutado` o `no cumple`. La observación recoge lo medido (tiempos, códigos, el valor
+efectivo de los cupos).
+
+| Paso | Qué se comprueba | Resultado | Observación |
+| --- | --- | --- | --- |
+| 1 | `.env` vacío falla; `.env` real válido | cumple | Ejecutado el 2026-10-26 por el usuario en Docker Desktop; sin observaciones. |
+| 2 | Estado inicial limpio | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 3 | Arranque en frío sano | cumple | Ejecutado el 2026-10-26; sin observaciones. Tiempo no anotado. |
+| 4 | Roles, permisos, índice, sin base de pruebas | parcial | Solo la lista de bases (`\l`): aparece la base de desarrollo y ninguna base de pruebas. Roles, permisos, catálogo e índice no se ejecutaron. |
+| 5 | Migración repetible | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 6 | Migración fallida impide arrancar el resto | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 7 | Puertos publicados | parcial | Comprobado en 127.0.0.1. La prueba con la IP de la red local no se ejecutó. |
+| 8 | Red interna sin salida | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 9 | Salud de los servicios | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 10 | Aplicación en el navegador | cumple | Ejecutado el 2026-10-26; sin observaciones. |
+| 11 | Estáticos y cabecera `Host` | parcial | Solo la respuesta `403` con `Host` ajeno. Los estáticos y el `Host` correcto no se ejecutaron. |
+| 12 | Cupo compartido | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 13 | API key mal puesta y rotación | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 14 | `SIGTERM` real (backend, frontend, base) | parcial | Solo 14a (backend en reposo): `shutdown_started` y `shutdown_completed`, código de salida 0 y `OOMKilled` falso. Los pasos 14b, 14c y 14d no se ejecutaron. |
+| 15 | Persistencia de los datos | cumple | Ejecutado el 2026-10-26; sin observaciones. |
+| 16 | Sin secretos en imágenes ni registros | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 17 | Usuario sin privilegios | parcial | Solo la parte `run --rm` con `id -u`. Las comprobaciones con los servicios en marcha (`/proc/1/status`) no se ejecutaron. |
+| 18 | Finales de línea del script de inicio | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 19 | Salud con la base caída | no ejecutado | Queda como lista de verificación para quien despliegue. |
+| 20 | Reconstrucción y limpieza | parcial | Solo el `down` final, sin `-v`. La reconstrucción con `up -d --build --wait` no se ejecutó. |
+
+**Cobertura de la comprobación (2026-10-26).** El usuario ejecutó en Docker Desktop 10 de los 20 pasos, total o
+parcialmente: los pasos 1, 3, 10 y 15 completos, y los pasos 4, 7, 11, 14, 17 y 20 solo en parte. Los 10 pasos
+restantes (2, 5, 6, 8, 9, 12, 13, 16, 18 y 19) no se ejecutaron y quedan como lista de verificación para quien
+despliegue.
 
 ## Despliegue en Ubuntu
 
