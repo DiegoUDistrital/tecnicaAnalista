@@ -24,7 +24,7 @@ afterEach(async () => {
 /** App real con cupos explícitos; `trusted` es el texto de TRUSTED_PROXIES (por defecto, nadie). */
 function appWith(rateLimit: Partial<RateLimit>, trusted = 'none'): ReturnType<typeof createTestApp>['app'] {
   const security = testSecurity({
-    rateLimit: { windowMs: WINDOW_MS, max: 10000, postMax: 10000, ...rateLimit },
+    rateLimit: { windowMs: WINDOW_MS, max: 10000, postMax: 10000, authFailuresMax: 1000, ...rateLimit },
     trustedProxies: testProxies(trusted),
   });
   return createTestApp({ security }).app;

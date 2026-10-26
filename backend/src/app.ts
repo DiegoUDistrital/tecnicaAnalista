@@ -34,11 +34,12 @@ export type ShutdownApp = Express & { readonly shutdown: () => void };
  * comparación estricta de rutas (`/Health` y `/health/` no coinciden con `/health`) y sin intérprete de consulta (la
  * consulta se evalúa cruda: el intérprete descarta claves como `__proto__` y trunca a 1 000 parámetros).
  * Orden: cabeceras de `helmet` (toda respuesta), `/health` (la única ruta sin key), `Cache-Control: no-store`,
- * cupo general (429), guarda de la API key (401), cupo de `POST` (429), rutas de `/api/tasks`, rutas de prueba, 404
- * final y manejador central de errores. El cupo general va ANTES de la guarda: cuenta también las peticiones sin key
- * y el 429 gana a un 401; el de `POST` va después, así que solo cuenta los `POST` autenticados que pasaron el general.
- * Cupo y guarda son `app.use` sin ruta: protegen TODO lo registrado después, así que una ruta
- * nueva nace protegida y la exención la decide el mismo enrutador que despacha `/health` (sin comparar cadenas).
+ * cupo general (429), guarda de la API key (401, o 429 si la IP acumuló demasiados intentos fallidos), cupo de `POST`
+ * (429), rutas de `/api/tasks`, rutas de prueba, 404 final y manejador central de errores. El cupo general va ANTES
+ * de la guarda: cuenta también las peticiones sin key y el 429 gana a un 401; el de `POST` va después, así que solo
+ * cuenta los `POST` autenticados que pasaron el general. Cupo y guarda son `app.use` sin ruta: protegen TODO lo
+ * registrado después, así que una ruta nueva nace protegida y la exención la decide el mismo enrutador que
+ * despacha `/health` (sin comparar cadenas).
  */
 export function createApp(options: CreateAppOptions): ShutdownApp {
   const app = express();
@@ -56,9 +57,16 @@ export function createApp(options: CreateAppOptions): ShutdownApp {
   app.use(createSecurityHeaders());
   registerRoute(app, '/health', { GET: health });
   app.use(noStore);
-  const limiters = createRateLimiters(options.security.rateLimit, options.security.trustedProxies);
+  const { apiKey, trustedProxies, rateLimit } = options.security;
+  const limiters = createRateLimiters(rateLimit, trustedProxies);
   app.use(limiters.general);
-  app.use(createAuthGuard(options.security.apiKey));
+  app.use(
+    createAuthGuard(apiKey, {
+      trusted: trustedProxies,
+      windowMs: rateLimit.windowMs,
+      maxFailures: rateLimit.authFailuresMax,
+    }),
+  );
   app.use(limiters.post);
   registerTaskRoutes(app, createTaskController(createTaskService(createTaskRepository(options.database))));
   options.registerRoutes?.(app);

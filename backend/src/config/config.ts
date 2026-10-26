@@ -20,8 +20,8 @@ export interface AppConfig {
     apiKey: string;
     /** Direcciones de las que se cree `X-Forwarded-For`. */
     trustedProxies: TrustedProxies;
-    /** Cupos por IP: ventana fija, cupo general y cupo de `POST`. */
-    rateLimit: { windowMs: number; max: number; postMax: number };
+    /** Límites por IP: ventana fija, cupo general, cupo de `POST` y fallos de key tolerados antes de bloquear la IP. */
+    rateLimit: { windowMs: number; max: number; postMax: number; authFailuresMax: number };
   };
 }
 
@@ -49,6 +49,7 @@ const VARIABLES: readonly VariableSpec[] = [
   { name: 'RATE_LIMIT_WINDOW_MS', kind: 'int', min: 1000, max: 3600000, fallback: 900000 },
   { name: 'RATE_LIMIT_MAX', kind: 'int', min: 1, max: 10000, fallback: 100 },
   { name: 'RATE_LIMIT_POST_MAX', kind: 'int', min: 1, max: 10000, fallback: 20 },
+  { name: 'RATE_LIMIT_AUTH_FAILURES_MAX', kind: 'int', min: 1, max: 1000, fallback: 10 },
 ];
 
 /** Nombres de las variables del esquema (los usa el test de `.env.example`). */
@@ -57,6 +58,8 @@ export const CONFIG_VARIABLE_NAMES: readonly string[] = VARIABLES.map((variable)
 const URL_FORMAT_MESSAGE = 'DATABASE_URL: formato inválido';
 /** Un cupo de `POST` mayor que el general sería inalcanzable: nombra las dos variables, sin valores. */
 const CROSS_MESSAGE = 'RATE_LIMIT_POST_MAX: no puede superar RATE_LIMIT_MAX';
+/** Más fallos tolerados que peticiones generales sería inalcanzable (el general cuenta también los 401). */
+const FAILURES_CROSS_MESSAGE = 'RATE_LIMIT_AUTH_FAILURES_MAX: no puede superar RATE_LIMIT_MAX';
 const URL_ROLE_MESSAGE = 'DATABASE_URL: debe usar el rol writer';
 
 /** Dirección IP literal (v4 o v6) sin corchetes ni zona (`%eth0`): no se admiten nombres de host. */
@@ -170,6 +173,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
   ) {
     messages.push(CROSS_MESSAGE);
   }
+  if (
+    values.has('RATE_LIMIT_MAX') &&
+    values.has('RATE_LIMIT_AUTH_FAILURES_MAX') &&
+    Number(values.get('RATE_LIMIT_AUTH_FAILURES_MAX')) > Number(values.get('RATE_LIMIT_MAX'))
+  ) {
+    messages.push(FAILURES_CROSS_MESSAGE);
+  }
 
   if (messages.length > 0) {
     throw new ConfigError(messages);
@@ -195,6 +205,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
         windowMs: Number(values.get('RATE_LIMIT_WINDOW_MS')),
         max: Number(values.get('RATE_LIMIT_MAX')),
         postMax: Number(values.get('RATE_LIMIT_POST_MAX')),
+        authFailuresMax: Number(values.get('RATE_LIMIT_AUTH_FAILURES_MAX')),
       },
     },
   };

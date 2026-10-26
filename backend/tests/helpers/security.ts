@@ -21,9 +21,15 @@ export function testProxies(raw: string | undefined): TrustedProxies {
 
 /**
  * Cupos de la app de pruebas: tan altos que ningún test que no trate de los límites puede recibir un 429 (los tests
- * de límites piden valores pequeños explícitos).
+ * de límites piden valores pequeños explícitos). Los intentos fallidos también: 1000, para que un test que mande
+ * varias keys erróneas no bloquee su IP.
  */
-export const TEST_RATE_LIMIT: AppConfig['security']['rateLimit'] = { windowMs: 900000, max: 10000, postMax: 10000 };
+export const TEST_RATE_LIMIT: AppConfig['security']['rateLimit'] = {
+  windowMs: 900000,
+  max: 10000,
+  postMax: 10000,
+  authFailuresMax: 1000,
+};
 
 /**
  * Ajustes de seguridad de la app de pruebas: la key válida, `TRUSTED_PROXIES=none` (ninguna cabecera de proxy

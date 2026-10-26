@@ -261,6 +261,40 @@ seguridad y no se registra en el log.
   variables (nunca sus valores). Como el defecto de `RATE_LIMIT_POST_MAX` es 20, bajar solo `RATE_LIMIT_MAX` por debajo
   de 20 obliga a bajar también `RATE_LIMIT_POST_MAX`.
 
+## Bloqueo por intentos fallidos
+
+Además de los cupos, el servicio bloquea la IP que acierta mal la key demasiadas veces. Un intento fallido es una
+petición que acaba en `401` (sin `Authorization`, mal formada, repetida o con la key equivocada). Tras
+`RATE_LIMIT_AUTH_FAILURES_MAX` intentos fallidos (10 por defecto) dentro de la ventana de la IP, TODA petición de esa IP
+recibe `429` con `Retry-After` hasta que la ventana termina, incluso si trae la key buena. `/health` ni cuenta ni se
+bloquea.
+
+- **Por qué se bloquea toda la IP y no solo las keys erróneas.** Si la IP bloqueada pudiera entrar con la key buena, quien
+  adivina la clave seguiría probando con éxito posible: un acierto se notaría porque deja de ser rechazado. Con el
+  bloqueo total, tras agotar los intentos no obtiene ninguna información más hasta que termine la ventana.
+- **Contador propio, síncrono y solo al emitir un `401`.** Es un contador de ventana fija por IP real (la misma ventana
+  fija de 15 minutos de los cupos, que empieza con el primer fallo de esa IP) que vive en memoria. La guarda lee el
+  contador, compara la key y suma en el mismo cuerpo síncrono, sin `await`: con peticiones simultáneas la cifra es exacta
+  (20 peticiones simultáneas con key errónea y límite 3 dan exactamente 3 respuestas `401` y 17 respuestas `429`). Una
+  petición con key válida nunca suma, acabe como acabe (`400`, `404`, `405`, `413`, `415`, `429` o `500`), y un `429`
+  tampoco. El contador no usa temporizadores: caduca de forma perezosa y barre las IP vencidas como mucho una vez por
+  ventana, así que no mantiene vivo el proceso ni necesita cierre.
+- **Alternativa descartada: `skipSuccessfulRequests` de la librería de cupos.** Cuenta cada petición al entrar y descuenta
+  las exitosas al responder; con peticiones simultáneas la cifra intermedia es inexacta (15 peticiones válidas
+  simultáneas con límite 10 llegarían a bloquear a quien nunca falló).
+- **Orden.** El cupo general va antes (un `429` por cupo gana a todo) y el bloqueo por fallos va justo antes de mirar la
+  key; el cupo de `POST` va después de la key.
+- **Coste.** Quien pueda falsificar un `X-Forwarded-For` ajeno desde una dirección de `TRUSTED_PROXIES` puede hacer que la
+  IP de otro acumule fallos y quede bloqueada. Por eso `TRUSTED_PROXIES` debe incluir solo la red del frontend (ver «IP
+  real del cliente y proxies de confianza»). Los contadores están en memoria de una instancia: se pierden al reiniciar.
+- **Rotar la API key.** Si se cambia `API_KEY` y el frontend sigue enviando la antigua, cada petición del frontend es un
+  intento fallido y la IP del frontend queda bloqueada hasta 15 minutos (el resto de usuarios, que llegan por esa misma
+  IP si el frontend no reenvía la suya, también). Reinicie Express y el frontend a la vez con la key nueva.
+- **Variable.** `RATE_LIMIT_AUTH_FAILURES_MAX` (entero 1-1000, por defecto 10). No puede superar `RATE_LIMIT_MAX`: el
+  cupo general también cuenta los `401`, y más fallos tolerados que peticiones permitidas serían inalcanzables. Si lo
+  supera, el servicio no arranca y el error nombra las dos variables (nunca sus valores). Como el defecto es 10, bajar
+  solo `RATE_LIMIT_MAX` por debajo de 10 obliga a bajar también esta variable.
+
 ## Contrato de errores
 
 Todo error sale como `{"error":{"code","message","details"}}` con `Content-Type: application/json; charset=utf-8`.
@@ -305,6 +339,7 @@ una restricción violada) llegan sin cambios. El cierre del Pool espera a que te
 | `RATE_LIMIT_WINDOW_MS` | entero 1000-3600000 | `900000` | Duración, en milisegundos, de la ventana de los cupos (15 minutos). |
 | `RATE_LIMIT_MAX` | entero 1-10000 | `100` | Cupo general por IP y ventana. |
 | `RATE_LIMIT_POST_MAX` | entero 1-10000, no mayor que `RATE_LIMIT_MAX` | `20` | Cupo de `POST` por IP y ventana (ver «Límite de peticiones»). |
+| `RATE_LIMIT_AUTH_FAILURES_MAX` | entero 1-1000, no mayor que `RATE_LIMIT_MAX` | `10` | Intentos fallidos de key por IP y ventana antes de bloquear la IP (ver «Bloqueo por intentos fallidos»). |
 
 `API_KEY` se genera con 32 bytes aleatorios, que dan 43 caracteres:
 

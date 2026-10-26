@@ -97,6 +97,15 @@ describe('RF-D2: .env.example', () => {
     expect(postComment).toContain('RATE_LIMIT_MAX');
   });
 
+  it('RF-G12: RATE_LIMIT_AUTH_FAILURES_MAX figura en .env.example con defecto 10 y comentario', () => {
+    expect(CONFIG_VARIABLE_NAMES).toContain('RATE_LIMIT_AUTH_FAILURES_MAX');
+    expect(values['RATE_LIMIT_AUTH_FAILURES_MAX']).toBe('10');
+    const comment = /((?:^#.*\r?\n)+)RATE_LIMIT_AUTH_FAILURES_MAX=/m.exec(raw)?.[1] ?? '';
+    expect(comment).toContain('RATE_LIMIT_MAX');
+    expect(comment).toContain('429');
+    expect(comment).toContain('key');
+  });
+
   it('RF-D2 (v): DB_NAME y DB_NAME_TEST cumplen [a-z0-9_]{1,63} y DB_NAME_TEST termina en _test', () => {
     expect(values['DB_NAME']).toMatch(/^[a-z0-9_]{1,63}$/);
     expect(values['DB_NAME_TEST']).toMatch(/^[a-z0-9_]{1,63}$/);
