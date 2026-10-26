@@ -67,7 +67,7 @@ describe('forward', () => {
     ]);
   });
 
-  it('RF-F18: las cabeceras propias son exactamente Authorization y, con cuerpo, Content-Type', async () => {
+  it('RF-F18, RF-I1: las cabeceras propias son exactamente Authorization y, con cuerpo, Content-Type', async () => {
     const { fetchImpl, calls } = createFakeFetch(() => json(201));
     await run({ method: 'POST', bodyText: '{"title":"a"}', fetchImpl });
     await run({ method: 'GET', fetchImpl: createFakeFetch(() => json(200, '[]')).fetchImpl });
@@ -82,7 +82,7 @@ describe('forward', () => {
     expect(names).not.toContain('x-forwarded-for');
   });
 
-  it('RF-F18: el cliente solo recibe parámetros explícitos, ninguna cabecera del navegador llega a Express', async () => {
+  it('RF-F18, RF-I2: una Request hostil con X-Forwarded-For y Forwarded no cambia las cabeceras enviadas', async () => {
     const { fetchImpl, calls } = createFakeFetch(() => json(200));
     const browser = new Request('http://localhost:3001/api/tasks/' + ID, {
       method: 'PUT',
@@ -106,6 +106,23 @@ describe('forward', () => {
     expect(Object.keys(headers).sort()).toEqual(['Authorization', 'Content-Type']);
     expect(headers.Authorization).toBe(`Bearer ${CONFIG.apiKey}`);
     expect(JSON.stringify(calls[0])).not.toMatch(/falsa|1\.2\.3\.4|evil|sid=1/);
+  });
+
+  it('RF-I1: nunca se envía X-Forwarded-For, Forwarded, X-Real-IP, X-Forwarded-Host ni X-Forwarded-Proto', async () => {
+    const forbidden = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'];
+    const { fetchImpl, calls } = createFakeFetch((call) =>
+      call.init.method === 'DELETE' ? fakeResponse({ status: 204 }) : json(200, '[]'),
+    );
+    await run({ method: 'GET', fetchImpl });
+    await run({ method: 'POST', bodyText: '{"title":"a"}', fetchImpl });
+    await run({ method: 'PUT', id: ID, bodyText: '{"completed":true}', fetchImpl });
+    await run({ method: 'DELETE', id: ID, fetchImpl });
+    expect(calls).toHaveLength(4);
+    for (const call of calls) {
+      const names = Object.keys(call.init.headers as Record<string, string>).map((name) => name.toLowerCase());
+      expect(names.filter((name) => forbidden.includes(name))).toEqual([]);
+      expect(names).toEqual(call.init.body === undefined ? ['authorization'] : ['authorization', 'content-type']);
+    }
   });
 
   it('RF-F22: usa redirect manual y no reintenta (una sola llamada) ni ante error ni ante 429', async () => {

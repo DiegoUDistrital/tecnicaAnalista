@@ -199,12 +199,15 @@ lleva las cabeceras de [`helmet`](https://helmetjs.github.io/) 8.3.0 con sus val
 ## IP real del cliente y proxies de confianza
 
 El servicio calcula una «clave de cliente» a partir de la IP de quien llama. La usa para contar las peticiones
-de cada persona en el límite de peticiones (ver «Límite de peticiones»); este apartado explica cómo se obtiene y cómo
-se configura.
+en el límite de peticiones (ver «Límite de peticiones»); este apartado explica cómo se obtiene y cómo se configura.
 
-- **Por qué hace falta.** El navegador no llama a Express: lo hace el servidor del frontend. Para Express, todas las
-  peticiones vienen de ese servidor. Si el límite contara su IP, un solo usuario agotaría el cupo de todos. Por eso el
-  frontend debe pasar la IP del usuario en `X-Forwarded-For` y Express debe leerla, pero solo cuando se puede creer.
+Es una capacidad del backend que hoy NO se aprovecha con el frontend de este repositorio: el servidor de Next nunca
+envía `X-Forwarded-For`, así que Express cuenta la dirección de la conexión (ver «Cupo compartido por diseño
+(desviación declarada)»). Queda disponible para cuando haya un proxy de confianza delante del backend.
+
+- **Para qué sirve.** Si un proxy de confianza estuviera entre los usuarios y Express, para Express todas las peticiones
+  vendrían de ese proxy y un solo usuario agotaría el cupo de todos. Con el proxy en `TRUSTED_PROXIES`, Express lee la
+  IP del usuario en `X-Forwarded-For`, pero solo cuando se puede creer.
 - **Cuándo se cree `X-Forwarded-For`.** Solo si la conexión TCP viene de una dirección de la lista
   `TRUSTED_PROXIES`. Si viene de otra, la cabecera se ignora y cuenta la dirección de la conexión: quien falsifique
   la cabecera desde fuera no evade nada. `Forwarded` y `X-Real-IP` no se leen nunca.
@@ -237,21 +240,41 @@ se configura.
     dirección de la conexión.
   - Ausente equivale a `loopback`. Vacía, con entradas vacías (`a,,b`), `true`, `/0`, `None`, `NONE` o cualquier otro
     texto es inválida y el servicio no arranca (el error nombra la variable, nunca su valor).
-- **Contrato para el frontend.** El servidor de Next debe escribir en `X-Forwarded-For` UNA sola IP: la dirección de su
-  propio socket entrante (la de quien le llama, que el servidor ve en la conexión). Debe SOBRESCRIBIR cualquier valor que
-  traiga el navegador: nunca copiarlo ni anteponerlo, porque un cliente podría falsificar su IP.
-  Si Next estuviera detrás de otro proxy, su socket vería la IP de ese proxy; ese caso se decide al desplegar, no se
-  resuelve copiando cabeceras.
-- **Riesgo.** Si el frontend no envía la cabecera, o `TRUSTED_PROXIES` no incluye la red desde la que se conecta, todos
-  los usuarios comparten una misma clave y un solo usuario podría agotar el cupo de todos.
-- **Despliegue (pendiente).** Cuando el frontend y la API estén en Docker Compose, la red desde la que Next llama a
-  Express debe figurar en `TRUSTED_PROXIES` como subred fija (IP/prefijo), no como `loopback`. Esa configuración se
-  documentará con el despliegue.
+- **Requisito del proxy de confianza.** Un proxy que se ponga delante debe SOBRESCRIBIR `X-Forwarded-For` con la
+  dirección de su socket entrante, nunca copiar ni anteponer lo que traiga el navegador, y su dirección debe figurar en
+  `TRUSTED_PROXIES`. Sin eso la cabecera sería falsificable.
+- **Sin cabecera.** Si no llega `X-Forwarded-For` (el caso del frontend de este repositorio), cuenta la dirección de la
+  conexión y todos los usuarios del frontend comparten un solo cupo (ver «Cupo compartido por diseño (desviación
+  declarada)»).
+
+## Cupo compartido por diseño (desviación declarada)
+
+El servidor del frontend **nunca envía `X-Forwarded-For` ni otra cabecera de IP**, y ninguna cabecera del navegador
+llega a Express (se comprobó con procesos reales y un Express sustituto que registra lo que recibe, en doce casos).
+Por tanto Express cuenta a todos los
+usuarios del frontend como una sola IP: la de loopback en desarrollo y la interna de la red de Docker en el despliegue.
+Todos los usuarios comparten el cupo de peticiones y la IP no aparece en respuestas ni en registros del frontend.
+
+- **Por qué.** Next 16.4.3 conserva el `X-Forwarded-For` que mande el navegador (solo lo rellena cuando falta) y el
+  código de las rutas del servidor no ve el socket de la conexión. Enviar a Express una IP que el navegador pueda
+  falsificar permitiría esquivar el límite o hacer que se bloquee a otra persona.
+- **Alternativas descartadas.**
+  - Copiar o anexar la cabecera del navegador: es falsificable.
+  - Un servidor Node propio delante de Next que fije la IP del socket: añade piezas que la prueba no pide.
+- **Riesgo aceptado.** Un usuario puede agotar el cupo de todos, y los fallos de key bloquean a todos hasta que
+  termina la ventana (ver «Bloqueo por intentos fallidos»). En una demo con varias personas, súbanse `RATE_LIMIT_MAX` y
+  `RATE_LIMIT_POST_MAX` (el segundo no puede superar al primero); `.env.example` trae comentados 1000 y 200.
+- **`TRUSTED_PROXIES`.** Vale `loopback` por defecto, que mientras el frontend no envíe la cabecera equivale a `none`
+  (no cambia el resultado). En Docker y en las pruebas extremo a extremo se usa `TRUSTED_PROXIES=none`.
+- **Con un proxy de confianza delante.** Si un proxy sobrescribe `X-Forwarded-For` con la IP de la conexión del
+  usuario, el backend ya soporta la IP real (ver «IP real del cliente y proxies de confianza»); no hace falta cambiar
+  código.
 
 ## Límite de peticiones
 
 El servicio limita cuántas peticiones puede hacer cada IP con la librería `express-rate-limit` 8.7.1. Hay dos cupos,
-que se cuentan por separado y por la IP real del cliente (ver «IP real del cliente y proxies de confianza»):
+que se cuentan por separado y por la IP de la conexión (ver «IP real del cliente y proxies de confianza» y «Cupo
+compartido por diseño (desviación declarada)»):
 
 - **Cupo general (100 por ventana).** Cuenta toda petición a una ruta que no sea `/health`, con cualquier método y con o
   sin key: incluye las que acaban en `401`, `404` o `405`. `/health` no cuenta ni se limita.
@@ -295,7 +318,7 @@ bloquea.
 - **Por qué se bloquea toda la IP y no solo las keys erróneas.** Si la IP bloqueada pudiera entrar con la key buena, quien
   adivina la clave seguiría probando con éxito posible: un acierto se notaría porque deja de ser rechazado. Con el
   bloqueo total, tras agotar los intentos no obtiene ninguna información más hasta que termine la ventana.
-- **Contador propio, síncrono y solo al emitir un `401`.** Es un contador de ventana fija por IP real (la misma ventana
+- **Contador propio, síncrono y solo al emitir un `401`.** Es un contador de ventana fija por IP de la conexión (la misma ventana
   fija de 15 minutos de los cupos, que empieza con el primer fallo de esa IP) que vive en memoria. La guarda lee el
   contador, compara la key y suma en el mismo cuerpo síncrono, sin `await`: con peticiones simultáneas la cifra es exacta
   (20 peticiones simultáneas con key errónea y límite 3 dan exactamente 3 respuestas `401` y 17 respuestas `429`). Una
@@ -897,6 +920,102 @@ cd backend
 npm ci
 ```
 
+La raíz del repositorio tiene su propio `package.json`, solo con herramientas de desarrollo (Vitest, ESLint, Prettier,
+TypeScript y `@types/node`, todas con versión exacta). Sirve para escribir y comprobar los scripts de la raíz
+(`scripts/`) con las mismas garantías que el resto. Desde la raíz se ejecutan:
+
+- `npm run dev`: arranque conjunto (ver «Arranque conjunto»).
+- `npm run lint`, `npm run format`, `npm run typecheck` y `npm test` (con cobertura mínima del 95 % sobre `scripts/`).
+- `npm run test:integration`: pruebas con procesos reales (un Express sustituto y `next start`, y el arranque conjunto
+  con un `.env` inválido); no usan la base de datos.
+
+Se instala con `npm ci` en la raíz.
+
+Por qué un `package.json` propio: una sola forma de comprobar los scripts y ninguna herramienta extra para lanzar
+procesos (no se usa `concurrently`). Alternativa descartada: reutilizar las herramientas del frontend, porque ataría los
+scripts de la raíz a un paquete que no les pertenece.
+
+## Arranque conjunto
+
+Un solo comando desde la raíz levanta la base de datos, el backend y el frontend:
+
+```powershell
+npm run dev
+```
+
+Qué hace, en este orden:
+
+1. Comprueba que existen `.env`, `frontend/.env` y las dependencias de `backend/` y `frontend/`, y que los puertos 3000
+   y 3001 están libres. Si algo falta o está ocupado, lo dice (con el nombre del archivo o del puerto, nunca valores) y
+   termina con código 1 sin lanzar nada.
+2. Levanta PostgreSQL con `docker compose -f docker-compose.dev.yml up -d --wait` (el puerto de la base de datos es el
+   5433). Si ya está levantado, no lo recrea.
+3. Compila el backend.
+4. Arranca el backend en `127.0.0.1:3000` y el frontend (`next dev`) en `127.0.0.1:3001`. Los puertos son fijos: el
+   backend recibe `PORT` y `HOST` desde el script y estos mandan sobre lo que diga el `.env`.
+
+La salida de cada proceso lleva un prefijo (`[db]`, `[backend]`, `[frontend]`; el propio script usa `[dev]`). Si algún
+proceso termina o falla, se detiene el otro y el código es 1. Con Ctrl+C se detienen el backend y el frontend y el
+código es 0.
+
+Lo que NO hace, y por qué:
+
+- **No instala dependencias** y no copia los `.env`: son pasos de la primera vez (ver abajo), y mezclar instalación y
+  ejecución hace el arranque lento e imprevisible.
+- **No migra la base de datos.** La migración exige el rol `owner`, que no se usa en ejecución (mínimo privilegio): se
+  hace aparte con `npm run db:deploy`.
+- **No ejecuta `down -v`:** nunca borra el contenedor ni el volumen; las tareas guardadas sobreviven a Ctrl+C.
+- **No pasa secretos a los procesos.** Cada hijo recibe un entorno cerrado (solo `PATH` y, en Windows, `SystemRoot`,
+  `TEMP` y `TMP`, que Windows necesita para ejecutar programas; ninguna es secreta). El backend lee el `.env` de la
+  raíz con `--env-file` y Next lee `frontend/.env` por sí mismo; ningún valor viaja en los argumentos. No se usa shell:
+  los hijos son procesos directos de Node.
+
+Decisiones:
+
+- **Un script de Node en la raíz** (`scripts/dev.js`). Alternativas descartadas: `concurrently` (una dependencia más
+  para lanzar tres procesos) y tres terminales a mano (se olvidan pasos y puertos).
+- **Hijos sin shell**, para que ningún valor se interprete ni quede en una línea de comandos visible.
+
+### Primera vez
+
+Con Docker Desktop en marcha, desde la raíz del repositorio:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item frontend/.env.example frontend/.env
+```
+
+1. Edite `.env` (contraseñas de los roles y `API_KEY`) y `frontend/.env` (`API_KEY` y la contraseña de
+   `READER_DATABASE_URL`). La `API_KEY` debe ser **la misma `API_KEY` en los dos archivos**. Genérela una vez con:
+   `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Si no coincide, el backend
+   rechaza al frontend y, tras 10 rechazos, bloquea a todos hasta que termina la ventana.
+2. Instale las dependencias en los tres paquetes:
+
+   ```powershell
+   npm ci
+   cd backend; npm ci; cd ..
+   cd frontend; npm ci; cd ..
+   ```
+
+3. Levante la base de datos: `docker compose -f docker-compose.dev.yml up -d --wait`.
+4. Migre y aplique los permisos con el rol `owner` (dentro de `backend/`): `npm run db:deploy`.
+5. Solo si cambia el esquema de la base de datos, regenere el del frontend con `prisma db pull` (ver «Contadores y
+   Prisma en el frontend»).
+6. Desde la raíz: `npm run dev`, y abra `http://127.0.0.1:3001`.
+
+### Avisos y limitaciones del arranque conjunto
+
+- **Windows: cierre del backend.** Windows no entrega `SIGTERM` a los procesos hijos, así que el script termina el
+  árbol de procesos con `taskkill /T /F` y el backend no hace su cierre ordenado (en otras plataformas se envía
+  `SIGTERM` y, si no sale a tiempo, `SIGKILL`). Compruebe en el
+  Administrador de tareas que no queda ningún proceso `node` huérfano.
+- **`next build` y `next dev` comparten carpeta** (`.next`): no ejecute `next build` mientras corre `npm run dev`.
+- **Sin login ni HTTPS.** No exponga estos puertos a una red: el frontend y el backend escuchan solo en `127.0.0.1`.
+- **Cupo compartido.** Todos los usuarios del frontend comparten el cupo del backend (ver «Cupo compartido por diseño
+  (desviación declarada)»).
+- **La `API_KEY` distinta** entre `.env` y `frontend/.env` bloquea a todos los usuarios (la IP de la conexión del
+  frontend) durante la ventana.
+
 ## Arranque
 
 La función de arranque del servicio sigue siempre el mismo orden:
@@ -1105,8 +1224,8 @@ raíz cargado desde las dos aplicaciones. `frontend/.env` está en `.gitignore`;
   importe, directa o transitivamente) no puede llegar a `src/server`, leer `process.env` ni importar `server-only`.
 - **La `API_KEY` debe ser EXACTAMENTE la del backend.** Se genera una vez (el comando está en `frontend/.env.example`) y
   se pega en los dos archivos. Si no coincide, el backend rechaza cada petición del frontend y, tras 10 rechazos,
-  bloquea la IP del frontend durante la ventana de tiempo (15 minutos por defecto). Al rotarla, se reinician los dos
-  procesos a la vez.
+  bloquea a todos los usuarios del frontend (que para Express son una sola IP) durante la ventana de tiempo (15
+  minutos por defecto). Al rotarla, se reinician los dos procesos a la vez.
 - **Contraseñas.** Next expande `$` dentro de los valores del `.env`: use solo `[A-Za-z0-9._~-]` en las contraseñas.
 - **`ALLOWED_HOSTS`.** Pensada para cuando se conozca el nombre público (protege frente a que un nombre ajeno apunte a
   este servidor): una petición cuyo `Host` no esté en la lista recibirá 403 (lo aplican las rutas del servidor). Ejemplo:
@@ -1139,7 +1258,7 @@ carpeta `.next` con `npm run build`.
 frontend en desarrollo); si ya tiene un `.env` de la raíz con el valor anterior, cámbielo a mano. Para demostraciones, el
 mismo archivo trae comentados unos cupos más altos (`RATE_LIMIT_MAX=1000` y `RATE_LIMIT_POST_MAX=200`), porque la
 interfaz hace una lectura de la lista tras cada acción y con los cupos por defecto se agotarían pronto. Todos los
-usuarios comparten un único cupo, porque el backend ve siempre la IP del servidor del frontend.
+usuarios comparten un único cupo, por diseño (ver «Cupo compartido por diseño (desviación declarada)»).
 
 ### Contadores y Prisma en el frontend
 
@@ -1383,8 +1502,8 @@ Las cinco acciones (crear, completar, desmarcar, editar y borrar) siguen las mis
   backend puede contar las dos peticiones.
 - **Demos rápidas.** Con los cupos por defecto (`RATE_LIMIT_MAX=100` peticiones generales y `RATE_LIMIT_POST_MAX=20`
   de `POST` por IP, en ventanas de 15 minutos: `RATE_LIMIT_WINDOW_MS=900000`), una demo rápida puede recibir `429`.
-- **Cupo compartido.** Todos los usuarios cuentan como una sola IP hasta que el frontend reenvíe la IP real del cliente.
-  Para una demo con varias personas, suba `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (el segundo no puede superar al
+- **Cupo compartido.** Todos los usuarios cuentan como una sola IP, por diseño (ver «Cupo compartido por diseño
+  (desviación declarada)»). Para una demo con varias personas, suba `RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX` (el segundo no puede superar al
   primero). `.env.example` trae comentados los valores 1000 y 200. Ver «Variables del servicio».
 
 #### Comprobaciones manuales del cliente
@@ -1535,12 +1654,12 @@ navegador** (`Cookie`, `Authorization`, `X-Forwarded-*`, `Forwarded`, `X-Real-IP
 `Content-Encoding`). Por qué: copiarlas permitiría falsificar la IP que cuenta el límite de peticiones y reenviar
 credenciales ajenas.
 
-- **Todavía no se envía `X-Forwarded-For`** (llegará con la integración, que enviará la IP real del socket
-  sobrescribiendo, nunca copiando). Consecuencia: **el backend ve a todos los usuarios como un único cliente**, con un
+- **Nunca se envía `X-Forwarded-For` ni otra cabecera de IP**, por diseño (ver «Cupo compartido por diseño
+  (desviación declarada)»). Consecuencia: **el backend ve a todos los usuarios como un único cliente**, con un
   único cupo compartido de peticiones. En una demo con varias personas, súbanse los cupos del backend
   (`RATE_LIMIT_MAX` y `RATE_LIMIT_POST_MAX`, ver «Variables del servicio»).
-- **Sin límite de peticiones propio en el frontend:** el límite por IP está en Express; duplicarlo aquí sin conocer la
-  IP real no aportaría nada.
+- **Sin límite de peticiones propio en el frontend:** el límite por IP está en Express; duplicarlo aquí, donde las
+  rutas no conocen la IP de quien llama, no aportaría nada.
 - **Sin login:** la key autentica a la aplicación, no a la persona; quien alcance el frontend usa la API.
 - **Sin `Content-Security-Policy`** (ver «Cabeceras de seguridad»): trabajo futuro.
 
@@ -1641,8 +1760,8 @@ de key (ver «Bloqueo por intentos fallidos») y aplica CORS a un solo origen (`
 devuelve como máximo `TASKS_LIST_LIMIT` tareas (ver «Tope de la lista»). Aun así, no debe exponerse a internet: no tiene
 HTTPS propio ni login de usuarios. Quien tenga la key puede crear, modificar y borrar tareas.
 
-La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). La aplicación completa se documentará
-cuando exista el frontend.
+La base de datos se prepara con `npm run db:deploy` (dentro de `backend/`). Para arrancar la aplicación completa con un
+solo comando, ver «Arranque conjunto».
 
 ## Pruebas
 
@@ -1735,7 +1854,7 @@ tiempo depende de dónde falla) y comprobar la longitud antes (la revela). La gu
 registrar `/health`, y no con una comparación de rutas, porque dos lógicas distintas podrían discrepar (`/health;x`,
 `//health`) y dejar una ruta sin proteger.
 
-**g) Rate limiting.** Dos cupos por IP real (general y de `POST`) con `express-rate-limit`, ventana fija, almacén en
+**g) Rate limiting.** Dos cupos por IP de la conexión (general y de `POST`) con `express-rate-limit`, ventana fija, almacén en
 memoria y valores configurables por variables de entorno (ver «Límite de peticiones»). Se eligió la librería porque
 hace el trabajo sin código propio de más; el almacén en memoria basta para una sola instancia. Alternativas
 descartadas: un contador propio para estos dos cupos (más código y deja la librería sin uso) y Redis (sin problema de
@@ -1802,8 +1921,10 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
   registra con `app.use` y no compara rutas (las exenciones están en su propio manejador, antes de la guarda). Alternativa descartada: una lista de rutas protegidas, donde una ruta nueva nacería sin protección.
 - **La key antes que `404` y `405`.** Quien no tiene key no averigua qué rutas ni métodos existen. Alternativa
   descartada: responder primero el `404` o el `405`.
-- **Límites por IP real.** Cada persona tiene su cupo y el frontend no consume el de todos. Alternativa descartada: contar
-  la IP de la conexión, que para el frontend es siempre la misma.
+- **Cupo compartido por diseño.** Los límites cuentan la IP de la conexión, que para el frontend es siempre la misma:
+  todos los usuarios comparten el cupo. Alternativa descartada: reenviar una IP real desde el frontend, porque Next
+  conserva la cabecera del navegador y las rutas no ven el socket, así que la IP sería falsificable (esquivar el límite
+  o bloquear a otro). Ver «Cupo compartido por diseño (desviación declarada)».
 - **Bloqueo total de la IP tras fallos.** Si la IP bloqueada pudiera entrar con la key buena, quien adivina seguiría
   obteniendo señal. Alternativa descartada: bloquear solo las keys erróneas.
 - **Contador propio de fallos.** Es síncrono y suma solo al emitir el `401`, así que es exacto con peticiones
@@ -1829,8 +1950,8 @@ falla con un `500` antes de decidir el método. Con esto un identificador mal fo
   entre instancias.
 - Rotar `API_KEY` con el frontend sin reiniciar: la IP del frontend queda bloqueada hasta que termine la ventana (ver
   «Bloqueo por intentos fallidos»).
-- Hasta que el frontend envíe `X-Forwarded-For` (ver el contrato en «IP real del cliente y proxies de confianza»), todos
-  los usuarios comparten un solo cupo.
+- Todos los usuarios del frontend comparten un solo cupo, porque el frontend nunca envía `X-Forwarded-For` (ver «Cupo
+  compartido por diseño (desviación declarada)»).
 - `GET /api/tasks` devuelve como máximo `TASKS_LIST_LIMIT` tareas (las más recientes, sin paginación) y no avisa de que
   la lista está truncada; la tabla puede seguir creciendo (ver «Tope de la lista»).
 - No se puede leer una tarea por su identificador: `GET /api/tasks/<id>` da `405`, porque nadie lo ha pedido.

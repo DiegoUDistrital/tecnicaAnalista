@@ -174,9 +174,9 @@ async function classify(
 
 /**
  * Reenvía la petición a Express (RF-F17, F18, F22) y clasifica el resultado. Únicas cabeceras propias:
- * `Authorization` y, con cuerpo, `Content-Type` (nada del navegador; sin `X-Forwarded-For` hasta la 007). Plazo único
- * que cubre también la lectura de la respuesta, sin redirecciones y sin reintentos nunca (un `POST` reintentado
- * crearía duplicados). Nunca lanza: todo fallo es un `BackendResult`.
+ * `Authorization` y, con cuerpo, `Content-Type` (nada del navegador; nunca se envía `X-Forwarded-For`: el cupo de
+ * Express es compartido por diseño). Plazo único que cubre también la lectura de la respuesta, sin redirecciones y
+ * sin reintentos nunca (un `POST` reintentado crearía duplicados). Nunca lanza: todo fallo es un `BackendResult`.
  */
 export async function forward({
   config,
