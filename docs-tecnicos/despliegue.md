@@ -341,9 +341,9 @@ docker compose -f docker-compose.yml -p todo-app-deploy down -v
 ## Despliegue en Ubuntu
 
 Esta sección explica cómo desplegar la aplicación en un servidor Ubuntu con Docker Engine y el plugin de Compose. Todos
-los pasos de esta sección están documentados, no probados: no hubo una máquina Ubuntu donde ejecutarlos. Lo que sí se
-probó es la misma composición en Docker Desktop de Windows (ver «Comprobación manual»). Los comandos usan el mismo
-`docker-compose.yml`, así que se espera que se comporten igual, pero eso no está comprobado.
+los pasos de esta sección se ejecutaron en una máquina virtual Ubuntu (Hyper-V): instalación de Docker, `.env`,
+`up -d --build --wait`, acceso a la aplicación por un túnel SSH al puerto 3001 y datos de ejemplo. La comprobación
+manual completa (ver «Comprobación manual») se hizo en Docker Desktop de Windows y no se repitió en Ubuntu.
 
 ### Requisitos
 
@@ -364,7 +364,7 @@ resuelve.
 Siga la guía oficial de Docker para Ubuntu (https://docs.docker.com/engine/install/ubuntu/), que incluye el plugin de
 Compose. Este README no copia sus comandos ni fija versiones: cambian con el tiempo y la guía oficial es la fuente
 correcta. Al terminar, compruebe que `docker --version` y `docker compose version` responden. Las versiones con las que
-se comprobó la composición en Windows están en «Versiones usadas»; en Ubuntu no se probó ninguna.
+se comprobó la composición en Windows están en «Versiones usadas»; las de la VM Ubuntu no se registraron.
 
 ### Clonar y configurar
 

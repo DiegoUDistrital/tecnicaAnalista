@@ -16,8 +16,7 @@ Qué incluye:
 - Una base de datos PostgreSQL con los roles `owner`, `writer` y `reader`.
 - Una composición de Docker que levanta todo con un comando, y un arranque conjunto para desarrollar.
 
-Fuera de alcance: login de usuarios, HTTPS, pruebas en una máquina Ubuntu (los pasos se documentan, no se probaron),
-Redis y límites por persona (ver «Trabajo futuro» y «Cupo compartido por diseño (desviación declarada)»).
+Fuera de alcance: login de usuarios, HTTPS, Redis y límites por persona (ver «Trabajo futuro» y «Cupo compartido por diseño (desviación declarada)»).
 
 ## Índice
 
@@ -113,7 +112,8 @@ Luego abra `http://127.0.0.1:3001`. Detalle (variables, límites y avisos) en
 Se interpreta el despliegue en Ubuntu como despliegue con Docker: Node y PostgreSQL van dentro de las imágenes y no se
 instalan en el servidor. Porqué: es el mismo entorno que en desarrollo y no hay que instalar versiones a mano.
 Alternativa descartada: instalación nativa con `apt` (versiones del sistema distintas de las probadas, más pasos
-manuales y sin probar). **No se probó en Ubuntu**; los pasos están documentados.
+manuales y versiones del sistema distintas de las probadas). **Probado en una máquina virtual Ubuntu** (Hyper-V):
+`up -d --build --wait`, la aplicación en `http://127.0.0.1:3001` y los datos de ejemplo.
 
 1. Instale Docker Engine con el plugin de Compose siguiendo la
    [guía oficial para Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
@@ -411,8 +411,8 @@ Esta es la única sección de riesgos del README; la lista completa de límites 
 - **Sin login.** Quien alcance la página puede crear, editar y borrar tareas; un cliente que no es un navegador
   (`curl`) pasa la defensa de origen. Por eso el servidor escucha solo en `127.0.0.1`.
 - **Sin HTTPS propio.** No exponga la aplicación a internet sin un proxy con TLS delante.
-- **Ubuntu: documentados, no probados.** Los pasos de [Despliegue en Ubuntu](docs-tecnicos/despliegue.md#despliegue-en-ubuntu)
-  no se ejecutaron en una máquina Ubuntu.
+- **Ubuntu: probado solo en una máquina virtual.** El arranque con Compose se comprobó en una VM Ubuntu (Hyper-V); la
+  comprobación manual completa no se repitió allí.
 - **Comprobación manual incompleta.** Resultado registrado: 4 cumple, 6 parcial y 10 no ejecutado (pasos 2, 5, 6, 8, 9,
   12, 13, 16, 18 y 19).
 - **Memoria y ventana fija.** Los contadores viven en la memoria de una instancia (se pierden al reiniciar) y en la
@@ -426,8 +426,7 @@ Esta es la única sección de riesgos del README; la lista completa de límites 
 - Redis para caché y para un contador de rate limiting compartido entre varias instancias.
 - Login de usuarios, implementado de forma completa.
 - HTTPS (terminación TLS) antes de exponer la aplicación fuera de la red local.
-- Ejecutar en una máquina Ubuntu los pasos documentados y los pasos 2, 5, 6, 8, 9, 12, 13, 16, 18 y 19 de la
-  comprobación manual.
+- Ejecutar los pasos 2, 5, 6, 8, 9, 12, 13, 16, 18 y 19 de la comprobación manual (también en Ubuntu).
 
 ## Documentación técnica
 
