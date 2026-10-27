@@ -47,6 +47,38 @@ services:
     networks:
       - internal
 
+  # Datos de ejemplo (opt-in): el perfil `seed` evita que `up -d` lo cree. Se ejecuta a mano y termina:
+  #   docker compose -f docker-compose.yml --profile seed run --rm seed
+  # Es repetible: las tareas tienen id fijo y las que ya existen no se tocan. Usa el rol writer (solo INSERT).
+  # Si cambió el código del backend, añada --build al comando.
+  seed:
+    profiles:
+      - seed
+    build:
+      context: ./backend
+      target: runtime
+    command: ["node", "dist/db/seed-cli.js"]
+    environment:
+      DATABASE_URL: postgresql://writer:${WRITER_PASSWORD:?defina WRITER_PASSWORD en .env}@postgres:5432/${DB_NAME:?defina DB_NAME en .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    restart: "no"
+    networks:
+      - internal
+
   backend:
     build:
       context: ./backend
