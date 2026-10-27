@@ -264,6 +264,25 @@ docker compose -f docker-compose.yml up -d --build --wait
 `--wait` espera a que los servicios estén sanos; `migrate` es de un solo uso y termina con salida 0. Versión de Compose
 comprobada: v5.3.1 (Docker 29.6.2). La primera vez crea el volumen de datos; `down` sin `-v` lo conserva.
 
+### Datos de ejemplo
+
+El servicio `seed` de `docker-compose.yml` pertenece al perfil `seed`: `docker compose -f docker-compose.yml up -d`
+NO lo crea ni lo ejecuta. Para cargar 15 tareas de ejemplo (ids fijos, pendientes y completadas, con y sin descripción):
+
+```powershell
+docker compose -f docker-compose.yml --profile seed run --rm seed
+```
+
+- **Dependencias.** Con `run`, Compose levanta `postgres` y `migrate` si hacen falta (sirve también como primer
+  arranque de una base nueva). Usa la imagen `runtime` del backend; si cambió el código, añada `--build`.
+- **Rol.** Recibe la URL del rol `writer` (como el backend), no la de `owner`. No publica puertos y corre en la red
+  `internal`.
+- **Repetible.** No duplica ni pisa ediciones; una tarea de ejemplo borrada se vuelve a crear.
+- **Salida.** Una línea JSON del logger con el resumen en `event`: la primera vez
+  `Datos de ejemplo: 15 insertadas, 0 ya existían`; las siguientes `Datos de ejemplo: 0 insertadas, 15 ya existían`.
+- **Por qué no es una migración.** Una migración corre una sola vez, es del esquema y llenaría de datos de prueba un
+  despliegue real. Alternativa descartada: sembrar dentro de `migrate`.
+
 ### Endurecimiento y cierre ordenado
 
 El backend y el frontend (los dos servicios que ejecutan código de la aplicación) llevan estas opciones:

@@ -182,6 +182,28 @@ La ejecuta quien implementa y la revisa quien revisa; el resto se cubre con test
    `docker compose -f docker-compose.dev.yml logs postgres`: no debe volver a ejecutarse el script de inicio
    (aparece el aviso de que el directorio ya contiene una base de datos).
 
+## Datos de ejemplo
+
+Carga 15 tareas de ejemplo con identificadores fijos, para ver la interfaz con contenido. Con la base de desarrollo
+arriba y migrada (`npm run db:deploy`), dentro de `backend/`:
+
+```powershell
+npm run db:seed
+```
+
+`db:seed` compila el backend y ejecuta `dist/db/seed-cli.js` con el `.env` de la raíz. Solo necesita `DATABASE_URL`, y
+debe ser la del rol `writer`: con la URL de otro rol, el comando falla sin mostrar el valor.
+
+- **Opt-in.** `npm run dev` no lo ejecuta; hay que lanzarlo a mano.
+- **Repetible.** Inserta con `ON CONFLICT (id) DO NOTHING`: no duplica ni pisa lo que el usuario editó. Si se borra una
+  tarea de ejemplo, el comando la vuelve a crear. Porqué: `writer` ya tiene `INSERT`. Alternativa descartada:
+  `DO UPDATE`, que pisaría las ediciones.
+- **Salida.** Una línea JSON del logger con el resumen en `event`: la primera vez
+  `Datos de ejemplo: 15 insertadas, 0 ya existían`; las siguientes `Datos de ejemplo: 0 insertadas, 15 ya existían`.
+  Termina con código 0; si falla, con código distinto de 0 y sin valores (URL, contraseña, datos) en la salida.
+- **No es una migración** (una migración corre una sola vez, es del esquema y llenaría de datos de prueba un
+  despliegue real).
+
 ## Base de datos
 
 Incluye: migración documentada de la tabla `tasks` (ver «Esquema y migraciones»), `backend/queries.sql` con

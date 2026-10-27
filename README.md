@@ -24,6 +24,7 @@ Redis y límites por persona (ver «Trabajo futuro» y «Cupo compartido por dis
 - [Resumen y alcance](#resumen-y-alcance)
 - [Arranque rápido](#arranque-rápido), [Desarrollo local](#desarrollo-local) y
   [Despliegue en Ubuntu (resumen)](#despliegue-en-ubuntu-resumen)
+- [Datos de ejemplo](#datos-de-ejemplo)
 - [Arquitectura](#arquitectura) y [Recorrido de una petición](#recorrido-de-una-petición)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Versiones usadas](#versiones-usadas)
@@ -134,6 +135,19 @@ manuales y sin probar). **No se probó en Ubuntu**; los pasos están documentado
    ```
 
 Detalle en [Despliegue en Ubuntu](docs-tecnicos/despliegue.md#despliegue-en-ubuntu).
+
+## Datos de ejemplo
+
+Comando opcional que carga 15 tareas de ejemplo con ids fijos (pendientes y completadas, con y sin descripción). No se
+ejecuta con el `up` normal. Desarrollo (en `backend/`, con la base migrada): `npm run db:seed`. Docker:
+`docker compose -f docker-compose.yml --profile seed run --rm seed`. Es repetible: no duplica ni pisa ediciones, y si
+borra una tarea de ejemplo, el comando la vuelve a crear. Usa el rol `writer` (mínimo privilegio).
+
+- **Por qué no es una migración de Prisma:** una migración corre una sola vez, es del esquema y llenaría de datos de
+  prueba un despliegue real. Alternativa descartada: sembrar los datos dentro de una migración.
+
+Detalle en [Desarrollo](docs-tecnicos/desarrollo.md#datos-de-ejemplo) y
+[Despliegue](docs-tecnicos/despliegue.md#datos-de-ejemplo).
 
 ## Arquitectura
 
