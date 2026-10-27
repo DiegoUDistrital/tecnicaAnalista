@@ -123,6 +123,22 @@ function checkWriterUrl(raw: string): string | undefined {
 }
 
 /**
+ * Valida solo `DATABASE_URL` (rol writer) para los comandos que no necesitan el resto de la configuración,
+ * como el de datos de ejemplo. Lanza `ConfigError` con un mensaje fijo, sin incluir nunca el valor.
+ */
+export function loadWriterDatabaseUrl(env: Readonly<Record<string, string | undefined>>): string {
+  const raw = env['DATABASE_URL'];
+  if (raw === undefined) {
+    throw new ConfigError(['DATABASE_URL: obligatoria']);
+  }
+  const message = checkWriterUrl(raw);
+  if (message !== undefined) {
+    throw new ConfigError([message]);
+  }
+  return raw;
+}
+
+/**
  * Valida las variables de entorno recibidas (no lee `process.env`). Si alguna falta o es inválida,
  * lanza `ConfigError` nombrando todas las inválidas, sin incluir nunca sus valores.
  */
